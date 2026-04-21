@@ -33,6 +33,7 @@ import {
   Tooltip,
   Tabs,
   TabPane,
+  Tag,
 } from '@douyinfe/semi-ui';
 import { SiAlipay, SiWechat, SiStripe } from 'react-icons/si';
 import {

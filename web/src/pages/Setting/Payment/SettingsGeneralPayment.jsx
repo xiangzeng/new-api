@@ -122,13 +122,13 @@ export default function SettingsGeneralPayment(props) {
       if (originInputs.AmountOptions !== inputs.AmountOptions) {
         options.push({
           key: 'payment_setting.amount_options',
-          value: inputs.AmountOptions,
+          value: inputs.AmountOptions.trim() === '' ? '[]' : inputs.AmountOptions,
         });
       }
       if (originInputs.AmountDiscount !== inputs.AmountDiscount) {
         options.push({
           key: 'payment_setting.amount_discount',
-          value: inputs.AmountDiscount,
+          value: inputs.AmountDiscount.trim() === '' ? '{}' : inputs.AmountDiscount,
         });
       }
 
