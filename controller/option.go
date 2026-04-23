@@ -3,6 +3,8 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -317,4 +319,81 @@ func UpdateOption(c *gin.Context) {
 		"message": "",
 	})
 	return
+}
+
+var allowedLogoExts = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true,
+	".gif": true, ".svg": true, ".ico": true, ".webp": true,
+}
+
+func UploadLogo(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "未找到上传文件",
+		})
+		return
+	}
+
+	const maxSize = 2 << 20 // 2MB
+	if file.Size > maxSize {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "文件大小不能超过 2MB",
+		})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if !allowedLogoExts[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "不支持的文件格式，仅支持 png/jpg/jpeg/gif/svg/ico/webp",
+		})
+		return
+	}
+
+	uploadDir := "./uploads"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "创建上传目录失败",
+		})
+		return
+	}
+
+	// Remove old logo files
+	entries, _ := os.ReadDir(uploadDir)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "logo.") {
+			os.Remove(filepath.Join(uploadDir, entry.Name()))
+		}
+	}
+
+	savePath := filepath.Join(uploadDir, "logo"+ext)
+	if err := c.SaveUploadedFile(file, savePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "保存文件失败",
+		})
+		return
+	}
+
+	logoURL := "/uploads/logo" + ext
+	err = model.UpdateOption("Logo", logoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "更新 Logo 设置失败",
+		})
+		return
+	}
+	common.Logo = logoURL
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    logoURL,
+	})
 }

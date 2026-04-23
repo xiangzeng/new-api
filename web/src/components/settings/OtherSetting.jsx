@@ -27,6 +27,7 @@ import {
   Modal,
   Space,
   Card,
+  Upload,
 } from '@douyinfe/semi-ui';
 import { API, showError, showSuccess, timestamp2string } from '../../helpers';
 import { marked } from 'marked';
@@ -170,14 +171,25 @@ const OtherSetting = () => {
   };
 
   // 个性化设置 - Logo
-  const submitLogo = async () => {
+  const submitLogo = async (fileInstance) => {
     try {
       setLoadingInput((loadingInput) => ({ ...loadingInput, Logo: true }));
-      await updateOption('Logo', inputs.Logo);
-      showSuccess('Logo 已更新');
+      const formData = new FormData();
+      formData.append('file', fileInstance);
+      const res = await API.post('/api/option/upload/logo', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const { success, message, data } = res.data;
+      if (success) {
+        setInputs((inputs) => ({ ...inputs, Logo: data }));
+        localStorage.setItem('logo', data);
+        showSuccess(t('Logo 已更新'));
+      } else {
+        showError(message);
+      }
     } catch (error) {
       console.error('Logo 更新失败', error);
-      showError('Logo 更新失败');
+      showError(t('Logo 更新失败'));
     } finally {
       setLoadingInput((loadingInput) => ({ ...loadingInput, Logo: false }));
     }
@@ -435,15 +447,36 @@ const OtherSetting = () => {
               >
                 {t('设置系统名称')}
               </Button>
-              <Form.Input
-                label={t('Logo 图片地址')}
-                placeholder={t('在此输入 Logo 图片地址')}
-                field={'Logo'}
-                onChange={handleInputChange}
-              />
-              <Button onClick={submitLogo} loading={loadingInput['Logo']}>
-                {t('设置 Logo')}
-              </Button>
+              <Form.Slot label={t('Logo 图片')}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {inputs.Logo && (
+                    <img
+                      src={inputs.Logo}
+                      alt="Logo"
+                      style={{
+                        maxHeight: 64,
+                        maxWidth: 200,
+                        objectFit: 'contain',
+                        borderRadius: 4,
+                      }}
+                    />
+                  )}
+                  <Upload
+                    action=""
+                    accept="image/png,image/jpeg,image/gif,image/svg+xml,image/x-icon,image/webp"
+                    limit={1}
+                    maxSize={2048}
+                    showUploadList={false}
+                    customRequest={({ file }) => {
+                      submitLogo(file);
+                    }}
+                  >
+                    <Button loading={loadingInput['Logo']}>
+                      {t('上传 Logo')}
+                    </Button>
+                  </Upload>
+                </div>
+              </Form.Slot>
               <Form.TextArea
                 label={t('首页内容')}
                 placeholder={t(
