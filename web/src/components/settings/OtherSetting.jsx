@@ -467,8 +467,8 @@ const OtherSetting = () => {
                     limit={1}
                     maxSize={2048}
                     showUploadList={false}
-                    customRequest={({ file }) => {
-                      submitLogo(file);
+                    customRequest={({ fileInstance }) => {
+                      submitLogo(fileInstance);
                     }}
                   >
                     <Button loading={loadingInput['Logo']}>
