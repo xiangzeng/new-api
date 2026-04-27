@@ -48,7 +48,9 @@ func Distribute() func(c *gin.Context) {
 				return
 			}
 			if channel.Status != common.ChannelStatusEnabled {
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+				detail := fmt.Sprintf("requested_group=%s, selected_group=%s, tried_channel_ids=[%d], channel_status=%d, channel_groups=%s", usingGroup, usingGroup, channel.Id, channel.Status, channel.Group)
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled, map[string]any{"Detail": detail}))
 				return
 			}
 		} else {
@@ -134,7 +136,8 @@ func Distribute() func(c *gin.Context) {
 						if usingGroup == "auto" {
 							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
 						}
-						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
+						detail := service.BuildChannelSelectionDetail(c, usingGroup, selectGroup, modelRequest.Model)
+						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error(), "Detail": detail})
 						// 如果错误，但是渠道不为空，说明是数据库一致性问题
 						//if channel != nil {
 						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
@@ -144,7 +147,12 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if channel == nil {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+						showGroup := usingGroup
+						if usingGroup == "auto" && selectGroup != "" {
+							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
+						}
+						detail := service.BuildChannelSelectionDetail(c, usingGroup, selectGroup, modelRequest.Model)
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Detail": detail}), types.ErrorCodeModelNotFound)
 						return
 					}
 				}

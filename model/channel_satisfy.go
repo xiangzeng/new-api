@@ -1,9 +1,25 @@
 package model
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
+
+type ChannelCandidate struct {
+	Id     int
+	Status int
+}
+
+type ChannelSelectionDiagnostic struct {
+	Group                 string
+	Model                 string
+	AvailableChannelIds   []int
+	UnavailableCandidates []ChannelCandidate
+}
 
 func IsChannelEnabledForGroupModel(group string, modelName string, channelID int) bool {
 	if group == "" || modelName == "" || channelID <= 0 {
@@ -68,4 +84,80 @@ func isChannelIDInList(list []int, channelID int) bool {
 		}
 	}
 	return false
+}
+
+func GetChannelSelectionDiagnostic(group string, modelName string) (ChannelSelectionDiagnostic, error) {
+	diagnostic := ChannelSelectionDiagnostic{
+		Group: group,
+		Model: modelName,
+	}
+	if group == "" || modelName == "" {
+		return diagnostic, nil
+	}
+
+	models := []string{modelName}
+	normalized := ratio_setting.FormatMatchingModelName(modelName)
+	if normalized != "" && normalized != modelName {
+		models = append(models, normalized)
+	}
+
+	type channelCandidateRow struct {
+		ChannelId     int
+		AbilityEnable bool
+		ChannelStatus int
+	}
+	var rows []channelCandidateRow
+	err := DB.Table("abilities").
+		Select("abilities.channel_id, abilities.enabled as ability_enable, channels.status as channel_status").
+		Joins("left join channels on channels.id = abilities.channel_id").
+		Where(commonGroupCol+" = ? and model in ?", group, models).
+		Scan(&rows).Error
+	if err != nil {
+		return diagnostic, err
+	}
+
+	available := make(map[int]struct{})
+	unavailable := make(map[int]int)
+	for _, row := range rows {
+		if row.ChannelId <= 0 {
+			continue
+		}
+		if row.AbilityEnable && row.ChannelStatus == common.ChannelStatusEnabled {
+			available[row.ChannelId] = struct{}{}
+			delete(unavailable, row.ChannelId)
+			continue
+		}
+		if _, ok := available[row.ChannelId]; !ok {
+			unavailable[row.ChannelId] = row.ChannelStatus
+		}
+	}
+
+	for id := range available {
+		diagnostic.AvailableChannelIds = append(diagnostic.AvailableChannelIds, id)
+	}
+	sort.Ints(diagnostic.AvailableChannelIds)
+
+	unavailableIds := make([]int, 0, len(unavailable))
+	for id := range unavailable {
+		unavailableIds = append(unavailableIds, id)
+	}
+	sort.Ints(unavailableIds)
+	for _, id := range unavailableIds {
+		diagnostic.UnavailableCandidates = append(diagnostic.UnavailableCandidates, ChannelCandidate{
+			Id:     id,
+			Status: unavailable[id],
+		})
+	}
+	return diagnostic, nil
+}
+
+func FormatChannelCandidates(candidates []ChannelCandidate) string {
+	if len(candidates) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		parts = append(parts, fmt.Sprintf("%d(status=%d)", candidate.Id, candidate.Status))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
