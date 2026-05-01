@@ -110,7 +110,7 @@ func GetChannelSelectionDiagnostic(group string, modelName string) (ChannelSelec
 	err := DB.Table("abilities").
 		Select("abilities.channel_id, abilities.enabled as ability_enable, channels.status as channel_status").
 		Joins("left join channels on channels.id = abilities.channel_id").
-		Where(commonGroupCol+" = ? and model in ?", group, models).
+		Where("abilities."+commonGroupCol+" = ? and abilities.model in ?", group, models).
 		Scan(&rows).Error
 	if err != nil {
 		return diagnostic, err

@@ -98,14 +98,15 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		}
 		return fmt.Errorf("bad response status code %d, message: %s, body: %s", resp.StatusCode, message, string(responseBody))
 	}
+	upstreamDebug := buildUpstreamErrorDebug(resp, responseBody)
 
 	err = common.Unmarshal(responseBody, &errResponse)
 	if err != nil {
 		if showBodyWhenFail {
 			newApiErr.Err = buildErrWithBody("")
 		} else {
-			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody)))
-			newApiErr.Err = fmt.Errorf("bad response status code %d", resp.StatusCode)
+			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, %s", resp.StatusCode, upstreamDebug))
+			newApiErr.Err = fmt.Errorf("bad response status code %d, %s", resp.StatusCode, upstreamDebug)
 		}
 		return
 	}
@@ -126,6 +127,36 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		newApiErr.Err = buildErrWithBody(newApiErr.Error())
 	}
 	return
+}
+
+func buildUpstreamErrorDebug(resp *http.Response, responseBody []byte) string {
+	method := ""
+	upstreamURL := ""
+	if resp != nil && resp.Request != nil {
+		method = resp.Request.Method
+		if resp.Request.URL != nil {
+			upstreamURL = resp.Request.URL.Redacted()
+		}
+	}
+	contentType := ""
+	if resp != nil {
+		contentType = resp.Header.Get("Content-Type")
+	}
+	return fmt.Sprintf(
+		"method=%s upstream=%s content_type=%q body_preview=%q",
+		method,
+		upstreamURL,
+		contentType,
+		previewResponseBody(responseBody, 512),
+	)
+}
+
+func previewResponseBody(body []byte, maxLen int) string {
+	preview := strings.Join(strings.Fields(strings.TrimSpace(string(body))), " ")
+	if maxLen > 0 && len(preview) > maxLen {
+		preview = preview[:maxLen] + "...(truncated)"
+	}
+	return common.MaskSensitiveInfo(preview)
 }
 
 func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) {
