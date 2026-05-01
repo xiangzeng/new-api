@@ -64,6 +64,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       models: true,
       deployment: true,
       redemption: true,
+      invitation: true,
       user: true,
       subscription: true,
       setting: true,
@@ -125,6 +126,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         models: true,
         deployment: true,
         redemption: true,
+        invitation: true,
         user: true,
         subscription: true,
         setting: true,
@@ -194,6 +196,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             models: true,
             deployment: true,
             redemption: true,
+            invitation: true,
             user: true,
             subscription: true,
             setting: true,
@@ -270,6 +273,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           title: t('兑换码管理'),
           description: t('兑换码生成管理'),
         },
+        {
+          key: 'invitation',
+          title: t('邀请返佣管理'),
+          description: t('邀请关系与消耗统计'),
+        },
         { key: 'user', title: t('用户管理'), description: t('用户账户管理') },
         {
           key: 'setting',
@@ -327,7 +335,7 @@ export default function SettingsSidebarModulesAdmin(props) {
                 </Text>
               </div>
               <Switch
-                checked={sidebarModulesAdmin[section.key]?.enabled}
+                checked={sidebarModulesAdmin[section.key]?.enabled !== false}
                 onChange={handleSectionChange(section.key)}
                 size='default'
               />
@@ -341,9 +349,10 @@ export default function SettingsSidebarModulesAdmin(props) {
                     bodyStyle={{ padding: '16px' }}
                     hoverable
                     style={{
-                      opacity: sidebarModulesAdmin[section.key]?.enabled
-                        ? 1
-                        : 0.5,
+                      opacity:
+                        sidebarModulesAdmin[section.key]?.enabled !== false
+                          ? 1
+                          : 0.5,
                       transition: 'opacity 0.2s',
                     }}
                   >
@@ -382,11 +391,14 @@ export default function SettingsSidebarModulesAdmin(props) {
                       <div style={{ marginLeft: '16px' }}>
                         <Switch
                           checked={
-                            sidebarModulesAdmin[section.key]?.[module.key]
+                            sidebarModulesAdmin[section.key]?.[module.key] !==
+                            false
                           }
                           onChange={handleModuleChange(section.key, module.key)}
                           size='default'
-                          disabled={!sidebarModulesAdmin[section.key]?.enabled}
+                          disabled={
+                            sidebarModulesAdmin[section.key]?.enabled === false
+                          }
                         />
                       </div>
                     </div>
