@@ -531,3 +531,8 @@ func DeleteOldLog(ctx context.Context, targetTimestamp int64, limit int) (int64,
 
 	return total, nil
 }
+
+func DeleteErrorLogs(ctx context.Context) (int64, error) {
+	result := LOG_DB.WithContext(ctx).Where("type = ?", LogTypeError).Delete(&Log{})
+	return result.RowsAffected, result.Error
+}

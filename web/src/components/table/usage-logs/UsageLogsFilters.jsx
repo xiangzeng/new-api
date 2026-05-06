@@ -18,8 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Form } from '@douyinfe/semi-ui';
-import { IconSearch } from '@douyinfe/semi-icons';
+import { Button, Form, Modal } from '@douyinfe/semi-ui';
+import { IconSearch, IconDelete } from '@douyinfe/semi-icons';
+import { API, showError, showSuccess } from '../../../helpers';
 
 import { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
 
@@ -183,6 +184,36 @@ const LogsFilters = ({
             >
               {t('列设置')}
             </Button>
+            {isAdminUser && (
+              <Button
+                type='danger'
+                size='small'
+                icon={<IconDelete />}
+                onClick={() => {
+                  Modal.confirm({
+                    title: t('清理错误日志'),
+                    content: t('确定要删除所有错误类型的日志吗？此操作不可恢复。'),
+                    okType: 'danger',
+                    onOk: async () => {
+                      try {
+                        const res = await API.delete('/api/log/errors');
+                        const { success, data, message } = res.data;
+                        if (success) {
+                          showSuccess(t('已清理') + ` ${data} ` + t('条错误日志'));
+                          refresh();
+                        } else {
+                          showError(message);
+                        }
+                      } catch (err) {
+                        showError(err.message);
+                      }
+                    },
+                  });
+                }}
+              >
+                {t('清理错误日志')}
+              </Button>
+            )}
           </div>
         </div>
       </div>

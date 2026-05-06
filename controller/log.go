@@ -169,3 +169,16 @@ func DeleteHistoryLogs(c *gin.Context) {
 	})
 	return
 }
+
+func DeleteErrorLogs(c *gin.Context) {
+	count, err := model.DeleteErrorLogs(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    count,
+	})
+}
