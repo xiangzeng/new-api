@@ -81,6 +81,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 				request.Temperature = nil
 				request.TopP = nil
 				request.TopK = nil
+			} else if strings.Contains(strings.ToLower(baseModel), "haiku") {
+				// Haiku 不支持 thinking，仅去掉后缀，不设置 thinking 配置
 			} else {
 				// 因为BudgetTokens 必须大于1024
 				if request.MaxTokens == nil || *request.MaxTokens < 1280 {

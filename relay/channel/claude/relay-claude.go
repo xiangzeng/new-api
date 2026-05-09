@@ -182,6 +182,8 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			claudeRequest.Temperature = nil
 			claudeRequest.TopP = nil
 			claudeRequest.TopK = nil
+		} else if strings.Contains(strings.ToLower(trimmedModel), "haiku") {
+			// Haiku 不支持 thinking，仅去掉后缀，不设置 thinking 配置
 		} else {
 			// 因为BudgetTokens 必须大于1024
 			if claudeRequest.MaxTokens == nil || *claudeRequest.MaxTokens < 1280 {
@@ -203,7 +205,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		}
 	}
 
-	if textRequest.ReasoningEffort != "" {
+	if textRequest.ReasoningEffort != "" && !strings.Contains(strings.ToLower(claudeRequest.Model), "haiku") {
 		switch textRequest.ReasoningEffort {
 		case "low":
 			claudeRequest.Thinking = &dto.Thinking{
@@ -224,7 +226,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	}
 
 	// 指定了 reasoning 参数,覆盖 budgetTokens
-	if textRequest.Reasoning != nil {
+	if textRequest.Reasoning != nil && !strings.Contains(strings.ToLower(claudeRequest.Model), "haiku") {
 		var reasoning openrouter.RequestReasoning
 		if err := common.Unmarshal(textRequest.Reasoning, &reasoning); err != nil {
 			return nil, err
