@@ -107,6 +107,7 @@ func init() {
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id
 	})
+	StartContextLengthProbe()
 }
 
 func ListModels(c *gin.Context, modelType int) {
@@ -201,6 +202,8 @@ func ListModels(c *gin.Context, modelType int) {
 			}
 		}
 	}
+
+	EnrichModelsWithContextLength(userOpenAiModels)
 
 	switch modelType {
 	case constant.ChannelTypeAnthropic:
