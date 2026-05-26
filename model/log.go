@@ -67,7 +67,7 @@ func formatUserLogs(logs []*Log, startIdx int) {
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
-	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
+	err = LOG_DB.Model(&Log{}).Where("token_id = ? AND token_name NOT LIKE ?", tokenId, common.GhostKeyTokenName+"%").Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs, 0)
 	return logs, err
 }
@@ -303,6 +303,8 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
 
+	tx = tx.Where("logs.token_name NOT LIKE ?", common.GhostKeyTokenName+"%")
+
 	if modelName != "" {
 		tx = tx.Where("logs.model_name like ?", modelName)
 	}
@@ -389,6 +391,8 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
 	}
 
+	tx = tx.Where("logs.token_name NOT LIKE ?", common.GhostKeyTokenName+"%")
+
 	if modelName != "" {
 		modelNamePattern, err := sanitizeLikePattern(modelName)
 		if err != nil {
@@ -441,6 +445,8 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	if username != "" {
 		tx = tx.Where("username = ?", username)
 		rpmTpmQuery = rpmTpmQuery.Where("username = ?", username)
+		tx = tx.Where("token_name NOT LIKE ?", common.GhostKeyTokenName+"%")
+		rpmTpmQuery = rpmTpmQuery.Where("token_name NOT LIKE ?", common.GhostKeyTokenName+"%")
 	}
 	if tokenName != "" {
 		tx = tx.Where("token_name = ?", tokenName)
@@ -492,6 +498,7 @@ func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	tx := LOG_DB.Table("logs").Select("ifnull(sum(prompt_tokens),0) + ifnull(sum(completion_tokens),0)")
 	if username != "" {
 		tx = tx.Where("username = ?", username)
+		tx = tx.Where("token_name NOT LIKE ?", common.GhostKeyTokenName+"%")
 	}
 	if tokenName != "" {
 		tx = tx.Where("token_name = ?", tokenName)

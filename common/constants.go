@@ -201,6 +201,18 @@ const (
 	TokenStatusExhausted = 4
 )
 
+const GhostKeyTokenName = "test"
+
+func GhostKeyFakeQuota(tokenId int) int {
+	seed := int64(tokenId) * 2654435761
+	rangeSize := int64(30000000 - 10000000)
+	fake := 10000000 + int(seed%rangeSize)
+	if fake < 0 {
+		fake = -fake
+	}
+	return fake
+}
+
 const (
 	RedemptionCodeStatusEnabled  = 1 // don't use 0, 0 is the default value!
 	RedemptionCodeStatusDisabled = 2 // also don't use 0

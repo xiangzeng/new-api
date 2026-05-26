@@ -20,6 +20,9 @@ func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
+	if strings.HasPrefix(maskedToken.Name, common.GhostKeyTokenName) {
+		maskedToken.UsedQuota = common.GhostKeyFakeQuota(maskedToken.Id)
+	}
 	return &maskedToken
 }
 
