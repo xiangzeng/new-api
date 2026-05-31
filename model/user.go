@@ -48,19 +48,21 @@ type User struct {
 	DeletedAt        gorm.DeletedAt `gorm:"index"`
 	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
+	CustomPricing    string         `json:"custom_pricing" gorm:"type:text;column:custom_pricing"`
 	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
 	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:       user.Id,
-		Group:    user.Group,
-		Quota:    user.Quota,
-		Status:   user.Status,
-		Username: user.Username,
-		Setting:  user.Setting,
-		Email:    user.Email,
+		Id:            user.Id,
+		Group:         user.Group,
+		Quota:         user.Quota,
+		Status:        user.Status,
+		Username:      user.Username,
+		Setting:       user.Setting,
+		Email:         user.Email,
+		CustomPricing: user.CustomPricing,
 	}
 	return cache
 }
@@ -522,10 +524,11 @@ func (user *User) Edit(updatePassword bool) error {
 
 	newUser := *user
 	updates := map[string]interface{}{
-		"username":     newUser.Username,
-		"display_name": newUser.DisplayName,
-		"group":        newUser.Group,
-		"remark":       newUser.Remark,
+		"username":       newUser.Username,
+		"display_name":   newUser.DisplayName,
+		"group":          newUser.Group,
+		"remark":         newUser.Remark,
+		"custom_pricing": newUser.CustomPricing,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password
@@ -1047,4 +1050,20 @@ func RootUserExists() bool {
 		return false
 	}
 	return true
+}
+
+func GetAllCustomPricingUsers() ([]User, error) {
+	var users []User
+	err := DB.Where("custom_pricing IS NOT NULL AND custom_pricing != '' AND custom_pricing LIKE '%\"enabled\":true%'").
+		Select("id, username, display_name, `group`, custom_pricing").
+		Find(&users).Error
+	return users, err
+}
+
+func UpdateUserCustomPricing(id int, pricingJSON string) error {
+	err := DB.Model(&User{}).Where("id = ?", id).Update("custom_pricing", pricingJSON).Error
+	if err != nil {
+		return err
+	}
+	return invalidateUserCache(id)
 }

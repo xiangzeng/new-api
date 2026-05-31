@@ -52,6 +52,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     redemption: true,
     invitation: true,
     user: true,
+    custom_pricing: true,
     subscription: true,
     setting: true,
   },

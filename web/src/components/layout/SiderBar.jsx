@@ -38,6 +38,7 @@ const routerMap = {
   invitation: '/console/invitation',
   topup: '/console/topup',
   user: '/console/user',
+  custom_pricing: '/console/custom-pricing',
   subscription: '/console/subscription',
   log: '/console/log',
   midjourney: '/console/midjourney',
@@ -188,6 +189,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('用户管理'),
         itemKey: 'user',
         to: '/user',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('千人千面定价'),
+        itemKey: 'custom_pricing',
+        to: '/custom-pricing',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

@@ -114,6 +114,7 @@ type RelayInfo struct {
 	AudioUsage             bool
 	ReasoningEffort        string
 	UserSetting            dto.UserSetting
+	UserCustomPricing      dto.UserCustomPricing
 	UserEmail              string
 	UserQuota              int
 	RelayFormat            types.RelayFormat
@@ -494,6 +495,11 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	userSetting, ok := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 	if ok {
 		info.UserSetting = userSetting
+	}
+
+	userCustomPricing, ok := common.GetContextKeyType[dto.UserCustomPricing](c, constant.ContextKeyUserCustomPricing)
+	if ok {
+		info.UserCustomPricing = userCustomPricing
 	}
 
 	return info

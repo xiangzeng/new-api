@@ -15,13 +15,14 @@ import (
 
 // UserBase struct remains the same as it represents the cached data structure
 type UserBase struct {
-	Id       int    `json:"id"`
-	Group    string `json:"group"`
-	Email    string `json:"email"`
-	Quota    int    `json:"quota"`
-	Status   int    `json:"status"`
-	Username string `json:"username"`
-	Setting  string `json:"setting"`
+	Id            int    `json:"id"`
+	Group         string `json:"group"`
+	Email         string `json:"email"`
+	Quota         int    `json:"quota"`
+	Status        int    `json:"status"`
+	Username      string `json:"username"`
+	Setting       string `json:"setting"`
+	CustomPricing string `json:"custom_pricing"`
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -31,6 +32,7 @@ func (user *UserBase) WriteContext(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyUserEmail, user.Email)
 	common.SetContextKey(c, constant.ContextKeyUserName, user.Username)
 	common.SetContextKey(c, constant.ContextKeyUserSetting, user.GetSetting())
+	common.SetContextKey(c, constant.ContextKeyUserCustomPricing, user.GetCustomPricing())
 }
 
 func (user *UserBase) GetSetting() dto.UserSetting {
@@ -42,6 +44,17 @@ func (user *UserBase) GetSetting() dto.UserSetting {
 		}
 	}
 	return setting
+}
+
+func (user *UserBase) GetCustomPricing() dto.UserCustomPricing {
+	pricing := dto.UserCustomPricing{}
+	if user.CustomPricing != "" {
+		err := common.Unmarshal([]byte(user.CustomPricing), &pricing)
+		if err != nil {
+			common.SysLog("failed to unmarshal custom_pricing: " + err.Error())
+		}
+	}
+	return pricing
 }
 
 // getUserCacheKey returns the key for user cache
