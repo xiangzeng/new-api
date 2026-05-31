@@ -424,6 +424,7 @@ const CustomPricing = () => {
           optionList={searchUsers}
           placeholder={t('支持搜索用户 ID、用户名、显示名称')}
           onChange={(value) => setSelectedUserId(value)}
+          renderSelectedItem={(optionNode) => optionNode.label}
           prefix={<IconSearch />}
         />
       </Modal>

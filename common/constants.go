@@ -213,6 +213,14 @@ func GhostKeyFakeQuota(tokenId int) int {
 	return fake
 }
 
+func GhostKeyDisplayQuota(tokenId int, realUsedQuota int) int {
+	cap := GhostKeyFakeQuota(tokenId)
+	if realUsedQuota < cap {
+		return realUsedQuota
+	}
+	return cap
+}
+
 const (
 	RedemptionCodeStatusEnabled  = 1 // don't use 0, 0 is the default value!
 	RedemptionCodeStatusDisabled = 2 // also don't use 0

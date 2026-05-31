@@ -21,7 +21,7 @@ func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
 	if strings.HasPrefix(maskedToken.Name, common.GhostKeyTokenName) {
-		maskedToken.UsedQuota = common.GhostKeyFakeQuota(maskedToken.Id)
+		maskedToken.UsedQuota = common.GhostKeyDisplayQuota(maskedToken.Id, token.UsedQuota)
 	}
 	return &maskedToken
 }
@@ -150,14 +150,21 @@ func GetTokenUsage(c *gin.Context) {
 		expiredAt = 0
 	}
 
+	usedQuota := token.UsedQuota
+	totalGranted := token.RemainQuota + token.UsedQuota
+	if strings.HasPrefix(token.Name, common.GhostKeyTokenName) {
+		usedQuota = common.GhostKeyDisplayQuota(token.Id, token.UsedQuota)
+		totalGranted = token.RemainQuota + usedQuota
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    true,
 		"message": "ok",
 		"data": gin.H{
 			"object":               "token_usage",
 			"name":                 token.Name,
-			"total_granted":        token.RemainQuota + token.UsedQuota,
-			"total_used":           token.UsedQuota,
+			"total_granted":        totalGranted,
+			"total_used":           usedQuota,
 			"total_available":      token.RemainQuota,
 			"unlimited_quota":      token.UnlimitedQuota,
 			"model_limits":         token.GetModelLimitsMap(),
