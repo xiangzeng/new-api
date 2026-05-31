@@ -209,6 +209,7 @@ const renderOperations = (
     showResetPasskeyModal,
     showResetTwoFAModal,
     showUserSubscriptionsModal,
+    toggleCustomPricing,
     t,
   },
 ) => {
@@ -221,6 +222,13 @@ const renderOperations = (
       node: 'item',
       name: t('订阅管理'),
       onClick: () => showUserSubscriptionsModal(record),
+    },
+    {
+      node: 'item',
+      name: record.custom_pricing && JSON.parse(record.custom_pricing || '{}').enabled
+        ? t('关闭千人千面')
+        : t('开启千人千面'),
+      onClick: () => toggleCustomPricing(record),
     },
     {
       node: 'divider',
@@ -309,6 +317,7 @@ export const getUsersColumns = ({
   showResetPasskeyModal,
   showResetTwoFAModal,
   showUserSubscriptionsModal,
+  toggleCustomPricing,
 }) => {
   return [
     {
@@ -366,6 +375,7 @@ export const getUsersColumns = ({
           showResetPasskeyModal,
           showResetTwoFAModal,
           showUserSubscriptionsModal,
+          toggleCustomPricing,
           t,
         }),
     },

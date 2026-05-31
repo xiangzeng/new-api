@@ -121,23 +121,26 @@ const CustomPricing = () => {
   };
 
   const handleSearchUser = async (value) => {
-    if (!value || value.length < 1) {
+    if (!value || value.trim() === '') {
       setSearchUsers([]);
       return;
     }
     setSearchLoading(true);
     try {
-      const res = await API.get(`/api/user/search?keyword=${value}`);
+      const res = await API.get(
+        `/api/user/search?keyword=${encodeURIComponent(value.trim())}&page_size=20`,
+      );
       if (res.data.success) {
+        const items = res.data.data?.items || [];
         setSearchUsers(
-          (res.data.data || []).map((u) => ({
-            label: `${u.username} (${u.display_name || u.username})`,
+          items.map((u) => ({
+            label: `#${u.id} ${u.username} (${u.display_name || u.username})`,
             value: u.id,
           })),
         );
       }
     } catch (e) {
-      showError(e.message);
+      // 搜索失败静默处理
     }
     setSearchLoading(false);
   };
@@ -419,7 +422,7 @@ const CustomPricing = () => {
           onSearch={handleSearchUser}
           loading={searchLoading}
           optionList={searchUsers}
-          placeholder={t('搜索用户名')}
+          placeholder={t('支持搜索用户 ID、用户名、显示名称')}
           onChange={(value) => setSelectedUserId(value)}
           prefix={<IconSearch />}
         />

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { Empty } from '@douyinfe/semi-ui';
 import CardTable from '../../common/ui/CardTable';
 import {
@@ -25,6 +25,7 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import { getUsersColumns } from './UsersColumnDefs';
+import { API, showError, showSuccess } from '../../../helpers';
 import PromoteUserModal from './modals/PromoteUserModal';
 import DemoteUserModal from './modals/DemoteUserModal';
 import EnableDisableUserModal from './modals/EnableDisableUserModal';
@@ -128,6 +129,38 @@ const UsersTable = (usersData) => {
     setShowResetTwoFAModal(false);
   };
 
+  const toggleCustomPricing = useCallback(async (record) => {
+    try {
+      let currentPricing = {};
+      if (record.custom_pricing) {
+        try { currentPricing = JSON.parse(record.custom_pricing); } catch (e) {}
+      }
+      const isEnabled = currentPricing.enabled;
+      if (isEnabled) {
+        const res = await API.delete(`/api/user/${record.id}/custom-pricing`);
+        if (res.data.success) {
+          showSuccess(t('已关闭千人千面'));
+          refresh();
+        } else {
+          showError(res.data.message);
+        }
+      } else {
+        const res = await API.put(`/api/user/${record.id}/custom-pricing`, {
+          enabled: true,
+          groups: {},
+        });
+        if (res.data.success) {
+          showSuccess(t('已开启千人千面'));
+          refresh();
+        } else {
+          showError(res.data.message);
+        }
+      }
+    } catch (e) {
+      showError(e.message);
+    }
+  }, [refresh, t]);
+
   // Get all columns
   const columns = useMemo(() => {
     return getUsersColumns({
@@ -141,6 +174,7 @@ const UsersTable = (usersData) => {
       showResetPasskeyModal: showResetPasskeyUserModal,
       showResetTwoFAModal: showResetTwoFAUserModal,
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
+      toggleCustomPricing,
     });
   }, [
     t,
@@ -153,6 +187,7 @@ const UsersTable = (usersData) => {
     showResetPasskeyUserModal,
     showResetTwoFAUserModal,
     showUserSubscriptionsUserModal,
+    toggleCustomPricing,
   ]);
 
   // Handle compact mode by removing fixed positioning
