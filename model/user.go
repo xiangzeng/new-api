@@ -1055,7 +1055,7 @@ func RootUserExists() bool {
 func GetAllCustomPricingUsers() ([]User, error) {
 	var users []User
 	err := DB.Where("custom_pricing IS NOT NULL AND custom_pricing != '' AND custom_pricing LIKE '%\"enabled\":true%'").
-		Select("id, username, display_name, `group`, custom_pricing").
+		Select("id, username, display_name, \"group\", custom_pricing").
 		Find(&users).Error
 	return users, err
 }

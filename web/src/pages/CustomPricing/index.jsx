@@ -318,7 +318,7 @@ const CustomPricing = () => {
     : [];
 
   return (
-    <>
+    <div className='mt-[60px] px-2'>
       <Card
         title={
           <Space>
@@ -424,7 +424,7 @@ const CustomPricing = () => {
           prefix={<IconSearch />}
         />
       </Modal>
-    </>
+    </div>
   );
 };
 
