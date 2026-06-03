@@ -103,7 +103,7 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 	return channelQuery, nil
 }
 
-func GetChannel(group string, model string, retry int) (*Channel, error) {
+func GetChannel(group string, model string, retry int, excludeIDs map[int]struct{}) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
@@ -118,6 +118,15 @@ func GetChannel(group string, model string, retry int) (*Channel, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if len(excludeIDs) > 0 {
+		filtered := abilities[:0]
+		for _, a := range abilities {
+			if _, excluded := excludeIDs[a.ChannelId]; !excluded {
+				filtered = append(filtered, a)
+			}
+		}
+		abilities = filtered
 	}
 	channel := Channel{}
 	if len(abilities) > 0 {

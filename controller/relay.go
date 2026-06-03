@@ -88,6 +88,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", newAPIError.Error()))
+			if c.Writer.Written() {
+				return
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -229,9 +232,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
+		retryParam.AddExcludedChannel(channel.Id)
+
+		if c.Writer.Written() {
+			service.CooldownChannel(channel.Id)
+			break
+		}
+
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
+
+		service.CooldownChannel(channel.Id)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -554,9 +566,18 @@ func RelayTask(c *gin.Context) {
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
 		}
 
+		retryParam.AddExcludedChannel(channel.Id)
+
+		if c.Writer.Written() {
+			service.CooldownChannel(channel.Id)
+			break
+		}
+
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
+
+		service.CooldownChannel(channel.Id)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
