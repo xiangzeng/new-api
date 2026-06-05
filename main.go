@@ -253,6 +253,7 @@ func InitResources() error {
 	common.InitEnv()
 
 	logger.SetupLogger()
+	logger.InitErrorAudit(*common.LogDir)
 
 	// Initialize model settings
 	ratio_setting.InitRatioSettings()

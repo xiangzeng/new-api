@@ -20,9 +20,6 @@ func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
-	if strings.HasPrefix(maskedToken.Name, common.GhostKeyTokenName) {
-		maskedToken.UsedQuota = common.GhostKeyDisplayQuota(maskedToken.Id, token.UsedQuota)
-	}
 	return &maskedToken
 }
 
@@ -152,10 +149,6 @@ func GetTokenUsage(c *gin.Context) {
 
 	usedQuota := token.UsedQuota
 	totalGranted := token.RemainQuota + token.UsedQuota
-	if strings.HasPrefix(token.Name, common.GhostKeyTokenName) {
-		usedQuota = common.GhostKeyDisplayQuota(token.Id, token.UsedQuota)
-		totalGranted = token.RemainQuota + usedQuota
-	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    true,
