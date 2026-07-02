@@ -42,7 +42,6 @@ export const useModelPricingData = () => {
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
   const [currency, setCurrency] = useState('USD');
-  const [showWithRecharge, setShowWithRecharge] = useState(false);
   const [tokenUnit, setTokenUnit] = useState('M');
   const [models, setModels] = useState([]);
   const [vendorsMap, setVendorsMap] = useState({});
@@ -55,14 +54,10 @@ export const useModelPricingData = () => {
   const [statusState] = useContext(StatusContext);
   const [userState] = useContext(UserContext);
 
-  // 充值汇率（price）与美元兑人民币汇率（usd_exchange_rate）
-  const priceRate = useMemo(
-    () => statusState?.status?.price ?? 1,
-    [statusState],
-  );
+  // 美元兑人民币汇率（usd_exchange_rate）
   const usdExchangeRate = useMemo(
-    () => statusState?.status?.usd_exchange_rate ?? priceRate,
-    [statusState, priceRate],
+    () => statusState?.status?.usd_exchange_rate ?? 1,
+    [statusState],
   );
   const customExchangeRate = useMemo(
     () => statusState?.status?.custom_currency_exchange_rate ?? 1,
@@ -85,13 +80,6 @@ export const useModelPricingData = () => {
       siteDisplayType === 'CUSTOM'
     ) {
       setCurrency(siteDisplayType);
-    }
-  }, [siteDisplayType]);
-
-  useEffect(() => {
-    if (siteDisplayType === 'TOKENS') {
-      setShowWithRecharge(false);
-      setCurrency('USD');
     }
   }, [siteDisplayType]);
 
@@ -180,9 +168,6 @@ export const useModelPricingData = () => {
 
   const displayPrice = (usdPrice) => {
     let priceInUSD = usdPrice;
-    if (showWithRecharge) {
-      priceInUSD = (usdPrice * priceRate) / usdExchangeRate;
-    }
 
     if (currency === 'CNY') {
       return `¥${(priceInUSD * usdExchangeRate).toFixed(3)}`;
@@ -364,8 +349,6 @@ export const useModelPricingData = () => {
     currency,
     setCurrency,
     siteDisplayType,
-    showWithRecharge,
-    setShowWithRecharge,
     tokenUnit,
     setTokenUnit,
     models,
@@ -376,7 +359,6 @@ export const useModelPricingData = () => {
     autoGroups,
 
     // 计算属性
-    priceRate,
     usdExchangeRate,
     filteredModels,
     rowSelection,
