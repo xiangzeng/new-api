@@ -1,0 +1,74 @@
+name: Deploy new-api to Hong Kong
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Push Docker Image
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-hk-new-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Pull beta image and restart service
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main'
+        )
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DEPLOY_HOST: ${{ secrets.NEW_API_HK_HOST }}
+      DEPLOY_PORT: ${{ secrets.NEW_API_HK_PORT }}
+      DEPLOY_USER: ${{ secrets.NEW_API_HK_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.NEW_API_HK_SSH_KEY }}
+
+    steps:
+      - name: Check deploy secrets
+        run: |
+          : "${DEPLOY_HOST:?Missing NEW_API_HK_HOST secret}"
+          : "${DEPLOY_PORT:?Missing NEW_API_HK_PORT secret}"
+          : "${DEPLOY_USER:?Missing NEW_API_HK_USER secret}"
+          : "${DEPLOY_SSH_KEY:?Missing NEW_API_HK_SSH_KEY secret}"
+
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/new-api-hk
+          chmod 600 ~/.ssh/new-api-hk
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Pull latest image and restart new-api
+        run: |
+          ssh -i ~/.ssh/new-api-hk -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
+          set -euo pipefail
+
+          cd /root/new-api
+
+          BEFORE_IMAGE_ID="$(docker inspect --format='{{.Image}}' new-api 2>/dev/null || true)"
+          echo "Current new-api image ID: ${BEFORE_IMAGE_ID:-unknown}"
+
+          docker compose pull new-api
+          docker compose up -d new-api
+
+          AFTER_IMAGE_ID="$(docker inspect --format='{{.Image}}' new-api)"
+          echo "Deployed new-api image ID: ${AFTER_IMAGE_ID}"
+
+          docker compose ps new-api
+          REMOTE
