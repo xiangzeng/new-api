@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +22,8 @@ type HasPrompt interface {
 type HasImage interface {
 	HasImage() bool
 }
+
+const MaxTaskDurationSeconds = 3600
 
 func GetFullRequestURL(baseURL string, requestURL string, channelType int) string {
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
@@ -78,6 +81,44 @@ func validatePrompt(prompt string) *dto.TaskError {
 	return nil
 }
 
+func taskDurationBoundsError() *dto.TaskError {
+	return createTaskError(fmt.Errorf("seconds must be between 0 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
+}
+
+func validateDurationSecondsValue(value any) bool {
+	switch v := value.(type) {
+	case int:
+		return v >= 0 && v <= MaxTaskDurationSeconds
+	case int64:
+		return v >= 0 && v <= int64(MaxTaskDurationSeconds)
+	case float64:
+		return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v <= float64(MaxTaskDurationSeconds)
+	case string:
+		seconds, err := strconv.Atoi(strings.TrimSpace(v))
+		return err == nil && seconds >= 0 && seconds <= MaxTaskDurationSeconds
+	default:
+		return true
+	}
+}
+
+func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
+	if req.Duration < 0 || req.Duration > MaxTaskDurationSeconds {
+		return taskDurationBoundsError()
+	}
+	if strings.TrimSpace(req.Seconds) != "" && !validateDurationSecondsValue(req.Seconds) {
+		return taskDurationBoundsError()
+	}
+	if req.Metadata != nil {
+		if value, ok := req.Metadata["durationSeconds"]; ok && !validateDurationSecondsValue(value) {
+			return taskDurationBoundsError()
+		}
+		if value, ok := req.Metadata["duration"]; ok && !validateDurationSecondsValue(value) {
+			return taskDurationBoundsError()
+		}
+	}
+	return nil
+}
+
 func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string) (TaskSubmitReq, error) {
 	var req TaskSubmitReq
 	if _, err := c.MultipartForm(); err != nil {
@@ -95,6 +136,7 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 	}
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
+		req.Seconds = durationStr
 		if duration, err := strconv.Atoi(durationStr); err == nil {
 			req.Duration = duration
 		}
@@ -152,6 +194,9 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	if taskErr := validatePrompt(prompt); taskErr != nil {
 		return taskErr
 	}
+	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
+		return taskErr
+	}
 
 	action := constant.TaskActionTextGenerate
 	if hasInputReference {
@@ -190,6 +235,7 @@ func isKnownTaskField(field string) bool {
 		"images":          true,
 		"size":            true,
 		"duration":        true,
+		"seconds":         true,
 		"input_reference": true, // Sora 特有字段
 	}
 	return knownFields[field]
@@ -211,6 +257,9 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 	}
 
 	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
+		return taskErr
+	}
+	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
 		return taskErr
 	}
 

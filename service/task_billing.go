@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -50,6 +51,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	AttachQuotaSaturation(c, info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,
@@ -184,7 +186,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 // RecalculateTaskQuota 通用的异步差额结算。
 // actualQuota 是任务完成后的实际应扣额度，与预扣额度 (task.Quota) 做差额结算。
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
-func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string) {
+func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) {
 	if actualQuota <= 0 {
 		return
 	}
@@ -228,6 +230,11 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		logQuota = -quotaDelta
 	}
 	other := taskBillingOther(task)
+	if len(clamps) > 0 && clamps[0] != nil {
+		attachQuotaSaturationToOther(other, clamps[0])
+		logger.LogWarn(ctx, fmt.Sprintf("quota saturation on task billing log: op=%s kind=%s original=%g clamped=%d task=%s model=%s",
+			clamps[0].Op, clamps[0].Kind, clamps[0].Original, clamps[0].Clamped, task.TaskID, taskModelName(task)))
+	}
 	other["task_id"] = task.TaskID
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
@@ -287,15 +294,15 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	otherMultiplier := 1.0
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		for _, r := range bc.OtherRatios {
-			if r != 1.0 && r > 0 {
+			if r != 1.0 && r > 0 && !math.IsNaN(r) && !math.IsInf(r, 0) {
 				otherMultiplier *= r
 			}
 		}
 	}
 
 	// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio * otherMultiplier
-	actualQuota := int(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
+	actualQuota, clamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	RecalculateTaskQuota(ctx, task, actualQuota, reason)
+	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
 }

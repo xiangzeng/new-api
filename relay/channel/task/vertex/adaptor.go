@@ -177,6 +177,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if params.DurationSeconds == 0 && req.Duration > 0 {
 		params.DurationSeconds = req.Duration
 	}
+	if params.DurationSeconds < 0 {
+		params.DurationSeconds = 0
+	}
+	if params.DurationSeconds > relaycommon.MaxTaskDurationSeconds {
+		params.DurationSeconds = relaycommon.MaxTaskDurationSeconds
+	}
 	if params.Resolution == "" && req.Size != "" {
 		params.Resolution = geminitask.SizeToVeoResolution(req.Size)
 	}

@@ -153,7 +153,8 @@ type RelayInfo struct {
 	UseRuntimeHeadersOverride             bool
 	ParamOverrideAudit                    []string
 
-	PriceData types.PriceData
+	PriceData  types.PriceData
+	QuotaClamp *common.QuotaClamp
 
 	Request dto.Request
 

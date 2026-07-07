@@ -71,6 +71,13 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 	return groupRatioInfo
 }
 
+func notePriceQuotaClamp(info *relaycommon.RelayInfo, clamp *common.QuotaClamp) {
+	if info == nil || clamp == nil || info.QuotaClamp != nil {
+		return
+	}
+	info.QuotaClamp = clamp
+}
+
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
@@ -87,6 +94,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	var audioRatio float64
 	var audioCompletionRatio float64
 	var freeModel bool
+	var clamp *common.QuotaClamp
 	if !usePrice {
 		preConsumedTokens := common.Max(promptTokens, common.PreConsumedQuota)
 		if meta.MaxTokens != 0 {
@@ -114,13 +122,14 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		audioRatio = ratio_setting.GetAudioRatio(info.OriginModelName)
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
 		ratio := modelRatio * groupRatioInfo.GroupRatio
-		preConsumedQuota = int(float64(preConsumedTokens) * ratio)
+		preConsumedQuota, clamp = common.QuotaFromFloatChecked(float64(preConsumedTokens) * ratio)
 	} else {
 		if meta.ImagePriceRatio != 0 {
 			modelPrice = modelPrice * meta.ImagePriceRatio
 		}
-		preConsumedQuota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		preConsumedQuota, clamp = common.QuotaFromFloatChecked(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 	}
+	notePriceQuotaClamp(info, clamp)
 
 	// check if free model pre-consume is disabled
 	if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
@@ -196,7 +205,9 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	freeModel := false
 
 	if usePrice {
-		quota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		var clamp *common.QuotaClamp
+		quota, clamp = common.QuotaFromFloatChecked(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		notePriceQuotaClamp(info, clamp)
 		if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
 			if groupRatioInfo.GroupRatio == 0 || modelPrice == 0 {
 				quota = 0
@@ -205,7 +216,9 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 		}
 	} else {
 		// 按量计费：以模型倍率的一半作为预扣额度
-		quota = int(modelRatio / 2 * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		var clamp *common.QuotaClamp
+		quota, clamp = common.QuotaFromFloatChecked(modelRatio / 2 * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		notePriceQuotaClamp(info, clamp)
 		modelPrice = -1
 		if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
 			if groupRatioInfo.GroupRatio == 0 || modelRatio == 0 {

@@ -237,6 +237,12 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
+	if r.Duration < 0 {
+		r.Duration = 0
+	}
+	if r.Duration > relaycommon.MaxTaskDurationSeconds {
+		r.Duration = relaycommon.MaxTaskDurationSeconds
+	}
 	return &r, nil
 }
 

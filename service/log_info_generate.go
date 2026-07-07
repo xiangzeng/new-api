@@ -1,16 +1,47 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
+
+func NoteQuotaClamp(relayInfo *relaycommon.RelayInfo, clamp *common.QuotaClamp) {
+	if clamp == nil || relayInfo == nil || relayInfo.QuotaClamp != nil {
+		return
+	}
+	relayInfo.QuotaClamp = clamp
+}
+
+func attachQuotaSaturationToOther(other map[string]interface{}, clamp *common.QuotaClamp) {
+	if clamp == nil || other == nil {
+		return
+	}
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	if !ok || adminInfo == nil {
+		adminInfo = map[string]interface{}{}
+		other["admin_info"] = adminInfo
+	}
+	adminInfo["quota_saturation"] = clamp.AuditMap()
+}
+
+func AttachQuotaSaturation(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil || relayInfo.QuotaClamp == nil {
+		return
+	}
+	clamp := relayInfo.QuotaClamp
+	attachQuotaSaturationToOther(other, clamp)
+	logger.LogWarn(ctx, fmt.Sprintf("quota saturation on consume log: op=%s kind=%s original=%g clamped=%d user=%d model=%s",
+		clamp.Op, clamp.Kind, clamp.Original, clamp.Clamped, relayInfo.UserId, relayInfo.OriginModelName))
+}
 
 func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
 	if other == nil {
@@ -260,5 +291,8 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
 	}
 	appendRequestPath(nil, relayInfo, other)
+	if relayInfo != nil {
+		attachQuotaSaturationToOther(other, relayInfo.QuotaClamp)
+	}
 	return other
 }

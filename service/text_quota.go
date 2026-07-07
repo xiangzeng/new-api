@@ -256,7 +256,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		if !ratio.IsZero() && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
 			quotaCalculateDecimal = decimal.NewFromInt(1)
 		}
-		summary.Quota = int(quotaCalculateDecimal.Round(0).IntPart())
+		var clamp *common.QuotaClamp
+		summary.Quota, clamp = common.QuotaFromDecimalChecked(quotaCalculateDecimal)
+		NoteQuotaClamp(relayInfo, clamp)
 	} else {
 		quotaCalculateDecimal := dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(dWebSearchQuota)
@@ -269,7 +271,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 				quotaCalculateDecimal = quotaCalculateDecimal.Mul(decimal.NewFromFloat(otherRatio))
 			}
 		}
-		summary.Quota = int(quotaCalculateDecimal.Round(0).IntPart())
+		var clamp *common.QuotaClamp
+		summary.Quota, clamp = common.QuotaFromDecimalChecked(quotaCalculateDecimal)
+		NoteQuotaClamp(relayInfo, clamp)
 	}
 
 	if summary.TotalTokens == 0 {
@@ -412,6 +416,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		// prompt/cache fields here, otherwise old upstream payloads may be double-counted.
 		other["input_tokens_total"] = usage.InputTokens
 	}
+	AttachQuotaSaturation(ctx, relayInfo, other)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,

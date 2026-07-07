@@ -286,6 +286,15 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
+	if duration, err := strconv.Atoi(strings.TrimSpace(r.Duration)); err == nil {
+		if duration < 0 {
+			duration = 0
+		}
+		if duration > relaycommon.MaxTaskDurationSeconds {
+			duration = relaycommon.MaxTaskDurationSeconds
+		}
+		r.Duration = fmt.Sprintf("%d", duration)
+	}
 	return &r, nil
 }
 
@@ -358,7 +367,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskInfo.Url = video.Url
 		}
 		if tokens, err := strconv.ParseFloat(resPayload.Data.FinalUnitDeduction, 64); err == nil {
-			rounded := int(math.Ceil(tokens))
+			rounded := common.QuotaFromFloat(math.Ceil(tokens))
 			if rounded > 0 {
 				taskInfo.CompletionTokens = rounded
 				taskInfo.TotalTokens = rounded

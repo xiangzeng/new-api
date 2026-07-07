@@ -293,6 +293,16 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
 	}
+	if r.Duration != nil {
+		duration := int(*r.Duration)
+		if duration < 0 {
+			duration = 0
+		}
+		if duration > relaycommon.MaxTaskDurationSeconds {
+			duration = relaycommon.MaxTaskDurationSeconds
+		}
+		r.Duration = lo.ToPtr(dto.IntValue(duration))
+	}
 
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
 	r.Content = append(r.Content, ContentItem{

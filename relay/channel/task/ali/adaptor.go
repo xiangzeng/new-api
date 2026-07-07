@@ -336,6 +336,13 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		}
 	}
 
+	if aliReq.Parameters.Duration <= 0 {
+		aliReq.Parameters.Duration = 5
+	}
+	if aliReq.Parameters.Duration > relaycommon.MaxTaskDurationSeconds {
+		aliReq.Parameters.Duration = relaycommon.MaxTaskDurationSeconds
+	}
+
 	if aliReq.Model != upstreamModel {
 		return nil, errors.New("can't change model with metadata")
 	}
