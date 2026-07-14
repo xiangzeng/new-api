@@ -526,7 +526,8 @@ func GetUserModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups := service.GetUserUsableGroups(user.Group)
+	customPricing := user.GetCustomPricing()
+	groups := service.GetUserUsableGroupsWithCustomPricing(user.Group, &customPricing)
 	var models []string
 	for group := range groups {
 		for _, g := range model.GetGroupEnabledModels(group) {

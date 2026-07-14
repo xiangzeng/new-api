@@ -110,8 +110,11 @@ func GetUserCustomPricing(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"enabled": pricing.Enabled,
-			"groups":  groups,
+			"enabled":      pricing.Enabled,
+			"groups":       groups,
+			"extra_groups": pricing.ExtraGroups,
+			"hide_groups":  pricing.HideGroups,
+			"all_groups":   allGroups,
 		},
 	})
 }
@@ -142,6 +145,28 @@ func UpdateUserCustomPricing(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
 				"message": "分组 " + groupName + " 的倍率不能为负数",
+			})
+			return
+		}
+	}
+
+	// 校验 ExtraGroups 中的分组必须存在
+	for groupName := range req.ExtraGroups {
+		if _, ok := allGroups[groupName]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "额外可见分组 " + groupName + " 不存在",
+			})
+			return
+		}
+	}
+
+	// 校验 HideGroups 中的分组必须存在
+	for _, groupName := range req.HideGroups {
+		if _, ok := allGroups[groupName]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "隐藏分组 " + groupName + " 不存在",
 			})
 			return
 		}

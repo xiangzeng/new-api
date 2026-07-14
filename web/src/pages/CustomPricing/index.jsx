@@ -16,6 +16,8 @@ import {
   Empty,
   Banner,
   SideSheet,
+  Checkbox,
+  Divider,
 } from '@douyinfe/semi-ui';
 import {
   IconPlus,
@@ -89,6 +91,13 @@ const CustomPricing = () => {
         if (info.ratio !== null && info.ratio !== undefined && info.configured) {
           payload.groups[groupName] = { ratio: info.ratio };
         }
+      }
+      // 分组可见性覆盖
+      if (detailData.extra_groups && Object.keys(detailData.extra_groups).length > 0) {
+        payload.extra_groups = detailData.extra_groups;
+      }
+      if (detailData.hide_groups && detailData.hide_groups.length > 0) {
+        payload.hide_groups = detailData.hide_groups;
       }
       const res = await API.put(
         `/api/user/${currentUser.id}/custom-pricing`,
@@ -391,15 +400,74 @@ const CustomPricing = () => {
       >
         <Spin spinning={detailLoading}>
           {detailData && (
-            <Table
-              columns={detailColumns}
-              dataSource={detailTableData}
-              rowKey='name'
-              pagination={false}
-              rowClassName={(record) =>
-                !record.configured ? 'bg-orange-50' : ''
-              }
-            />
+            <>
+              <Table
+                columns={detailColumns}
+                dataSource={detailTableData}
+                rowKey='name'
+                pagination={false}
+                rowClassName={(record) =>
+                  !record.configured ? 'bg-orange-50' : ''
+                }
+              />
+              <Divider margin='16px' />
+              <Title heading={5}>{t('分组可见性覆盖')}</Title>
+              <Banner
+                type='info'
+                description={t(
+                  '可为该用户单独开放或隐藏特定分组。额外开放的分组即使未在"用户可选分组"中配置，该用户也可见和使用。',
+                )}
+                className='mb-3 mt-2'
+                closeIcon={null}
+              />
+              <div className='mb-3'>
+                <Text strong className='block mb-2'>
+                  {t('额外开放分组')}
+                </Text>
+                <Checkbox.Group
+                  direction='horizontal'
+                  value={Object.keys(detailData.extra_groups || {})}
+                  onChange={(checkedValues) => {
+                    const allGroups = detailData.all_groups || {};
+                    const extraGroups = {};
+                    for (const name of checkedValues) {
+                      extraGroups[name] = allGroups[name] ? `${name}` : name;
+                    }
+                    setDetailData((prev) => ({
+                      ...prev,
+                      extra_groups: extraGroups,
+                    }));
+                  }}
+                >
+                  {Object.keys(detailData.all_groups || {}).map((name) => (
+                    <Checkbox key={name} value={name}>
+                      {name}
+                    </Checkbox>
+                  ))}
+                </Checkbox.Group>
+              </div>
+              <div className='mb-3'>
+                <Text strong className='block mb-2'>
+                  {t('强制隐藏分组')}
+                </Text>
+                <Checkbox.Group
+                  direction='horizontal'
+                  value={detailData.hide_groups || []}
+                  onChange={(checkedValues) => {
+                    setDetailData((prev) => ({
+                      ...prev,
+                      hide_groups: checkedValues,
+                    }));
+                  }}
+                >
+                  {Object.keys(detailData.all_groups || {}).map((name) => (
+                    <Checkbox key={name} value={name}>
+                      {name}
+                    </Checkbox>
+                  ))}
+                </Checkbox.Group>
+              </div>
+            </>
           )}
         </Spin>
       </SideSheet>

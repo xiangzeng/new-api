@@ -29,7 +29,6 @@ func GetUserGroups(c *gin.Context) {
 	userGroup := ""
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
-	userUsableGroups := service.GetUserUsableGroups(userGroup)
 
 	var customPricing dto.UserCustomPricing
 	if userId > 0 {
@@ -38,6 +37,8 @@ func GetUserGroups(c *gin.Context) {
 			customPricing = user.GetCustomPricing()
 		}
 	}
+
+	userUsableGroups := service.GetUserUsableGroupsWithCustomPricing(userGroup, &customPricing)
 
 	for groupName := range ratio_setting.GetGroupRatioCopy() {
 		if desc, ok := userUsableGroups[groupName]; ok {

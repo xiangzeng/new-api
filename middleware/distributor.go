@@ -132,7 +132,8 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
+						customPricing, _ := common.GetContextKeyType[dto.UserCustomPricing](c, constant.ContextKeyUserCustomPricing)
+						if !service.GroupInUserUsableGroupsWithCustomPricing(usingGroup, playgroundRequest.Group, &customPricing) && playgroundRequest.Group != usingGroup {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
