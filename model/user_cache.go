@@ -118,15 +118,9 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 	}
 
 	// Create cache object from user data
-	userCache = &UserBase{
-		Id:       user.Id,
-		Group:    user.Group,
-		Quota:    user.Quota,
-		Status:   user.Status,
-		Username: user.Username,
-		Setting:  user.Setting,
-		Email:    user.Email,
-	}
+	// 复用 ToBaseUser，与写缓存路径共用同一份字段映射，避免新增字段时遗漏
+	// （曾遗漏 CustomPricing，导致缓存未命中时千人千面定价失效、回落分组倍率）
+	userCache = user.ToBaseUser()
 
 	return userCache, nil
 }
