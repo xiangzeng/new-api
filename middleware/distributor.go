@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -11,60 +12,22 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 type ModelRequest struct {
 	Model string `json:"model"`
 	Group string `json:"group,omitempty"`
-}
-
-func selectPreferredAffinityChannel(
-	c *gin.Context,
-	preferred *model.Channel,
-	modelName string,
-	usingGroup string,
-	getAutoGroups func(string) []string,
-	isChannelEnabledForGroupModel func(string, string, int) bool,
-) (*model.Channel, string) {
-	if preferred == nil {
-		service.ClearCurrentChannelAffinity(c, "preferred affinity channel missing")
-		return nil, ""
-	}
-	if preferred.Status != common.ChannelStatusEnabled {
-		service.ClearCurrentChannelAffinity(c, fmt.Sprintf("preferred affinity channel %d is disabled", preferred.Id))
-		return nil, ""
-	}
-
-	if usingGroup == "auto" {
-		userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-		autoGroups := getAutoGroups(userGroup)
-		for _, g := range autoGroups {
-			if isChannelEnabledForGroupModel(g, modelName, preferred.Id) {
-				common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-				service.MarkChannelAffinityUsed(c, g, preferred.Id)
-				return preferred, g
-			}
-		}
-		service.ClearCurrentChannelAffinity(c, fmt.Sprintf("preferred affinity channel %d no longer matches auto groups for model %s", preferred.Id, modelName))
-		return nil, ""
-	}
-
-	if isChannelEnabledForGroupModel(usingGroup, modelName, preferred.Id) {
-		service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
-		return preferred, usingGroup
-	}
-
-	service.ClearCurrentChannelAffinity(c, fmt.Sprintf("preferred affinity channel %d no longer matches group %s for model %s", preferred.Id, usingGroup, modelName))
-	return nil, ""
 }
 
 func Distribute() func(c *gin.Context) {
@@ -88,9 +51,7 @@ func Distribute() func(c *gin.Context) {
 				return
 			}
 			if channel.Status != common.ChannelStatusEnabled {
-				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-				detail := fmt.Sprintf("requested_group=%s, selected_group=%s, tried_channel_ids=[%d], channel_status=%d, channel_groups=%s", usingGroup, usingGroup, channel.Id, channel.Status, channel.Group)
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled, map[string]any{"Detail": detail}))
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
 				return
 			}
 		} else {
@@ -132,8 +93,7 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if playgroundRequest.Group != "" {
-						customPricing, _ := common.GetContextKeyType[dto.UserCustomPricing](c, constant.ContextKeyUserCustomPricing)
-						if !service.GroupInUserUsableGroupsWithCustomPricing(usingGroup, playgroundRequest.Group, &customPricing) && playgroundRequest.Group != usingGroup {
+						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
@@ -143,35 +103,49 @@ func Distribute() func(c *gin.Context) {
 				}
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+					affinityUsable := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err != nil {
-						service.ClearCurrentChannelAffinity(c, fmt.Sprintf("preferred affinity channel %d lookup failed: %v", preferredChannelID, err))
-					} else {
-						channel, selectGroup = selectPreferredAffinityChannel(
-							c,
-							preferred,
-							modelRequest.Model,
-							usingGroup,
-							service.GetUserAutoGroup,
-							model.IsChannelEnabledForGroupModel,
-						)
+					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
+						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
+						if usingGroup == "auto" {
+							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+							autoGroups := service.GetRequestAutoGroups(c, userGroup)
+							for _, g := range autoGroups {
+								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+									selectGroup = g
+									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
+									channel = preferred
+									affinityUsable = true
+									service.MarkChannelAffinityUsed(c, g, preferred.Id)
+									break
+								}
+							}
+						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+							channel = preferred
+							selectGroup = usingGroup
+							affinityUsable = true
+							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+						}
+					}
+					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+						service.ClearCurrentChannelAffinityCache(c)
 					}
 				}
 
 				if channel == nil {
 					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-						Ctx:        c,
-						ModelName:  modelRequest.Model,
-						TokenGroup: usingGroup,
-						Retry:      common.GetPointer(0),
+						Ctx:         c,
+						ModelName:   modelRequest.Model,
+						TokenGroup:  usingGroup,
+						RequestPath: c.Request.URL.Path,
+						Retry:       common.GetPointer(0),
 					})
 					if err != nil {
 						showGroup := usingGroup
 						if usingGroup == "auto" {
 							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
 						}
-						detail := service.BuildChannelSelectionDetail(c, usingGroup, selectGroup, modelRequest.Model)
-						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error(), "Detail": detail})
+						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
 						// 如果错误，但是渠道不为空，说明是数据库一致性问题
 						//if channel != nil {
 						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
@@ -181,12 +155,7 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if channel == nil {
-						showGroup := usingGroup
-						if usingGroup == "auto" && selectGroup != "" {
-							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
-						}
-						detail := service.BuildChannelSelectionDetail(c, usingGroup, selectGroup, modelRequest.Model)
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Detail": detail}), types.ErrorCodeModelNotFound)
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
 						return
 					}
 				}
@@ -201,18 +170,84 @@ func Distribute() func(c *gin.Context) {
 	}
 }
 
+// channelSupportsRequestPath reports whether a channel can serve the request path.
+// Only Advanced Custom (type 58) channels are path-checked; all other channel types
+// always pass. A type-58 channel is usable only when one of its routes matches.
+func channelSupportsRequestPath(channel *model.Channel, requestPath string, requestModel string) bool {
+	if channel == nil {
+		return false
+	}
+	if channel.Type != constant.ChannelTypeAdvancedCustom {
+		return true
+	}
+	config := channel.GetOtherSettings().AdvancedCustom
+	return config != nil && config.SupportsPathForModel(requestPath, requestModel)
+}
+
 // getModelFromRequest 从请求中读取模型信息
 // 根据 Content-Type 自动处理：
 // - application/json
 // - application/x-www-form-urlencoded
 // - multipart/form-data
 func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
+	if strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json") {
+		modelRequest, err := getModelFromJSONBody(c)
+		if err != nil {
+			return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+		}
+		return modelRequest, nil
+	}
+
 	var modelRequest ModelRequest
 	err := common.UnmarshalBodyReusable(c, &modelRequest)
 	if err != nil {
 		return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 	}
 	return &modelRequest, nil
+}
+
+func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, err
+	}
+	requestBody, err := storage.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	if !gjson.ValidBytes(requestBody) {
+		return nil, errors.New("invalid JSON request body")
+	}
+
+	values := gjson.GetManyBytes(requestBody, "model", "group")
+	model, err := getJSONStringValue(values[0], "model")
+	if err != nil {
+		return nil, err
+	}
+	group, err := getJSONStringValue(values[1], "group")
+	if err != nil {
+		return nil, err
+	}
+
+	if _, seekErr := storage.Seek(0, io.SeekStart); seekErr != nil {
+		return nil, seekErr
+	}
+	c.Request.Body = io.NopCloser(storage)
+
+	return &ModelRequest{
+		Model: model,
+		Group: group,
+	}, nil
+}
+
+func getJSONStringValue(result gjson.Result, field string) (string, error) {
+	if !result.Exists() || result.Type == gjson.Null {
+		return "", nil
+	}
+	if result.Type != gjson.String {
+		return "", fmt.Errorf("field %s must be a string", field)
+	}
+	return result.String(), nil
 }
 
 func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
@@ -227,7 +262,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			relayMode == relayconstant.RelayModeMidjourneyTaskImageSeed {
 			shouldSelectChannel = false
 		} else {
-			midjourneyRequest := dto.MidjourneyRequest{}
+			midjourneyRequest := taskdto.MidjourneyRequest{}
 			err = common.UnmarshalBodyReusable(c, &midjourneyRequest)
 			if err != nil {
 				return nil, false, errors.New(i18n.T(c, i18n.MsgDistributorInvalidMidjourney, map[string]any{"Error": err.Error()}))
@@ -281,6 +316,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		} else if c.Request.Method == http.MethodGet {
 			relayMode = relayconstant.RelayModeVideoFetchByID
 			shouldSelectChannel = false
+			modelRequest.Model = getTaskOriginModelName(c)
 		}
 		c.Set("relay_mode", relayMode)
 	} else if strings.Contains(c.Request.URL.Path, "/v1/video/generations") {
@@ -295,6 +331,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		} else if c.Request.Method == http.MethodGet {
 			relayMode = relayconstant.RelayModeVideoFetchByID
 			shouldSelectChannel = false
+			modelRequest.Model = getTaskOriginModelName(c)
 		}
 		if _, ok := c.Get("relay_mode"); !ok {
 			c.Set("relay_mode", relayMode)
@@ -377,6 +414,31 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		modelRequest.Model = ratio_setting.WithCompactModelSuffix(modelRequest.Model)
 	}
 	return &modelRequest, shouldSelectChannel, nil
+}
+
+// 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，
+// 当 token 启用「可用模型限制」时，下游 modelLimitEnable 校验会因
+// modelRequest.Model 为空而误报 "This token has no access to model"。
+// 从已存储的任务记录中回填 OriginModelName 即可让校验走在正确的模型上。
+func getTaskOriginModelName(c *gin.Context) string {
+	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+		return ""
+	}
+
+	taskId := c.Param("task_id")
+	if taskId == "" {
+		// jimeng adapter
+		taskId = c.GetString("task_id")
+	}
+	if taskId == "" {
+		return ""
+	}
+
+	userId := c.GetInt("id")
+	if task, exist, err := model.GetByTaskId(userId, taskId); err == nil && exist && task != nil {
+		return task.Properties.OriginModelName
+	}
+	return ""
 }
 
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {

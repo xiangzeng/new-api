@@ -2,7 +2,6 @@ package controller
 
 import (
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -43,30 +42,20 @@ func GetPricing(c *gin.Context) {
 		groupRatio[s] = f
 	}
 	var group string
-	var customPricing dto.UserCustomPricing
 	if exists {
 		user, err := model.GetUserCache(userId.(int))
 		if err == nil {
 			group = user.Group
-			customPricing = user.GetCustomPricing()
-			if customPricing.Enabled {
-				for g := range groupRatio {
-					if gp, ok := customPricing.Groups[g]; ok {
-						groupRatio[g] = gp.Ratio
-					}
-				}
-			} else {
-				for g := range groupRatio {
-					ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
-					if ok {
-						groupRatio[g] = ratio
-					}
+			for g := range groupRatio {
+				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
+				if ok {
+					groupRatio[g] = ratio
 				}
 			}
 		}
 	}
 
-	usableGroup = service.GetUserUsableGroupsWithCustomPricing(group, &customPricing)
+	usableGroup = service.GetUserUsableGroups(group)
 	pricing = filterPricingByUsableGroups(pricing, usableGroup)
 	// check groupRatio contains usableGroup
 	for group := range ratio_setting.GetGroupRatioCopy() {

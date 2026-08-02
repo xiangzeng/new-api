@@ -6,10 +6,17 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+// 2000 quota per call * n=18446744073686646784 overflows int64; the constant
+// below reproduces that oversized product for the saturation checks.
 const overflowingProduct = 2000 * 1.8446744073686647e19
 
+// TestQuotaFromFloat guards the billing invariant that oversized quota
+// products (e.g. price multiplied by a huge user-supplied count) saturate
+// instead of wrapping into a negative charge (credit). QuotaFromFloat
+// truncates toward zero.
 func TestQuotaFromFloat(t *testing.T) {
 	assert.Equal(t, 42, QuotaFromFloat(42.4))
 	assert.Equal(t, 42, QuotaFromFloat(42.9))
@@ -21,6 +28,8 @@ func TestQuotaFromFloat(t *testing.T) {
 	assert.Equal(t, 0, QuotaFromFloat(math.NaN()))
 }
 
+// TestQuotaRound checks half-away-from-zero rounding with the same
+// saturation policy.
 func TestQuotaRound(t *testing.T) {
 	assert.Equal(t, 42, QuotaRound(41.5))
 	assert.Equal(t, 43, QuotaRound(42.5))
@@ -30,6 +39,8 @@ func TestQuotaRound(t *testing.T) {
 	assert.Equal(t, 0, QuotaRound(math.NaN()))
 }
 
+// TestQuotaFromDecimal checks the decimal entry point rounds and saturates
+// consistently with the float variants.
 func TestQuotaFromDecimal(t *testing.T) {
 	assert.Equal(t, 43, QuotaFromDecimal(decimal.NewFromFloat(42.5)))
 	assert.Equal(t, 42, QuotaFromDecimal(decimal.NewFromFloat(41.7)))
@@ -37,6 +48,9 @@ func TestQuotaFromDecimal(t *testing.T) {
 	assert.Equal(t, MinQuota, QuotaFromDecimal(decimal.NewFromInt(-2000).Mul(decimal.NewFromFloat(1.8446744073686647e19))))
 }
 
+// TestQuotaFromFloatChecked verifies the clamp descriptor is nil in range and
+// carries the correct kind/clamped value on saturation, so billing callers can
+// audit the event.
 func TestQuotaFromFloatChecked(t *testing.T) {
 	quota, clamp := QuotaFromFloatChecked(42.9)
 	assert.Equal(t, 42, quota)
@@ -65,6 +79,25 @@ func TestQuotaFromFloatChecked(t *testing.T) {
 	}
 }
 
+func TestQuotaFromFloatStrictReturnsTypedClampError(t *testing.T) {
+	quota, err := QuotaFromFloatStrict(42.9)
+	require.NoError(t, err)
+	assert.Equal(t, 42, quota)
+
+	quota, err = QuotaFromFloatStrict(overflowingProduct)
+	assert.Zero(t, quota)
+	var clamp *QuotaClamp
+	require.ErrorAs(t, err, &clamp)
+	assert.Equal(t, QuotaClampOverflow, clamp.Kind)
+	assert.Equal(t, MaxQuota, clamp.Clamped)
+	assert.ErrorContains(t, err, "QuotaFromFloat")
+	assert.ErrorContains(t, err, "overflow")
+	assert.ErrorContains(t, err, "original=")
+	assert.ErrorContains(t, err, "clamped=2147483647")
+}
+
+// TestQuotaRoundChecked verifies the rounding entry point reports clamps the
+// same way.
 func TestQuotaRoundChecked(t *testing.T) {
 	quota, clamp := QuotaRoundChecked(42.5)
 	assert.Equal(t, 43, quota)
@@ -78,6 +111,7 @@ func TestQuotaRoundChecked(t *testing.T) {
 	}
 }
 
+// TestQuotaFromDecimalChecked verifies the decimal entry point reports clamps.
 func TestQuotaFromDecimalChecked(t *testing.T) {
 	quota, clamp := QuotaFromDecimalChecked(decimal.NewFromFloat(41.7))
 	assert.Equal(t, 42, quota)

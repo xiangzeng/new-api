@@ -113,9 +113,6 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if seconds <= 0 {
 		seconds = 4
 	}
-	if seconds > relaycommon.MaxTaskDurationSeconds {
-		seconds = relaycommon.MaxTaskDurationSeconds
-	}
 
 	size := req.Size
 	if size == "" {

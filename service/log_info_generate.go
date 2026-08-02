@@ -1,26 +1,27 @@
 package service
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
 
-func NoteQuotaClamp(relayInfo *relaycommon.RelayInfo, clamp *common.QuotaClamp) {
-	if clamp == nil || relayInfo == nil || relayInfo.QuotaClamp != nil {
-		return
-	}
-	relayInfo.QuotaClamp = clamp
-}
-
+// attachQuotaSaturationToOther nests a quota saturation marker under
+// other.admin_info.quota_saturation. Nesting under admin_info makes it
+// admin-only for free, since model.formatUserLogs strips the whole admin_info
+// object for non-admin viewers. Creates admin_info if absent. No-op when the
+// clamp is nil (the common case: no saturation happened).
 func attachQuotaSaturationToOther(other map[string]interface{}, clamp *common.QuotaClamp) {
 	if clamp == nil || other == nil {
 		return
@@ -33,11 +34,17 @@ func attachQuotaSaturationToOther(other map[string]interface{}, clamp *common.Qu
 	adminInfo["quota_saturation"] = clamp.AuditMap()
 }
 
-func AttachQuotaSaturation(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
-	if relayInfo == nil || relayInfo.QuotaClamp == nil {
+// attachQuotaSaturation records the request's quota clamp (if any) onto the
+// consume log's other.admin_info and emits a request-correlated backend audit
+// line. Called right before RecordConsumeLog on the text/audio/wss paths.
+func attachQuotaSaturation(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil {
 		return
 	}
 	clamp := relayInfo.QuotaClamp
+	if clamp == nil {
+		return
+	}
 	attachQuotaSaturationToOther(other, clamp)
 	logger.LogWarn(ctx, fmt.Sprintf("quota saturation on consume log: op=%s kind=%s original=%g clamped=%d user=%d model=%s",
 		clamp.Op, clamp.Kind, clamp.Original, clamp.Clamped, relayInfo.UserId, relayInfo.OriginModelName))
@@ -283,7 +290,7 @@ func GenerateClaudeOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	return info
 }
 
-func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.PriceData) map[string]interface{} {
+func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData hosttypes.PriceData) map[string]interface{} {
 	other := make(map[string]interface{})
 	other["model_price"] = priceData.ModelPrice
 	other["group_ratio"] = priceData.GroupRatioInfo.GroupRatio
@@ -291,8 +298,23 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
 	}
 	appendRequestPath(nil, relayInfo, other)
-	if relayInfo != nil {
-		attachQuotaSaturationToOther(other, relayInfo.QuotaClamp)
-	}
 	return other
+}
+
+// InjectTieredBillingInfo overlays tiered billing fields onto an existing
+// module-specific other map. Call this after GenerateTextOtherInfo /
+// GenerateClaudeOtherInfo / etc. when the request used tiered_expr billing.
+func InjectTieredBillingInfo(other map[string]interface{}, relayInfo *relaycommon.RelayInfo, result *billingexpr.TieredResult) {
+	if relayInfo == nil || other == nil {
+		return
+	}
+	snap := relayInfo.TieredBillingSnapshot
+	if snap == nil {
+		return
+	}
+	other["billing_mode"] = "tiered_expr"
+	other["expr_b64"] = base64.StdEncoding.EncodeToString([]byte(snap.ExprString))
+	if result != nil {
+		other["matched_tier"] = result.MatchedTier
+	}
 }

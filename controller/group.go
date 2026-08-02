@@ -3,7 +3,6 @@ package controller
 import (
 	"net/http"
 
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -29,27 +28,12 @@ func GetUserGroups(c *gin.Context) {
 	userGroup := ""
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
-
-	var customPricing dto.UserCustomPricing
-	if userId > 0 {
-		user, err := model.GetUserCache(userId)
-		if err == nil && user != nil {
-			customPricing = user.GetCustomPricing()
-		}
-	}
-
-	userUsableGroups := service.GetUserUsableGroupsWithCustomPricing(userGroup, &customPricing)
-
-	for groupName := range ratio_setting.GetGroupRatioCopy() {
+	userUsableGroups := service.GetUserUsableGroups(userGroup)
+	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
+		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {
-			ratio := service.GetUserGroupRatio(userGroup, groupName)
-			if customPricing.Enabled {
-				if gp, ok := customPricing.Groups[groupName]; ok {
-					ratio = gp.Ratio
-				}
-			}
 			usableGroups[groupName] = map[string]interface{}{
-				"ratio": ratio,
+				"ratio": service.GetUserGroupRatio(userGroup, groupName),
 				"desc":  desc,
 			}
 		}

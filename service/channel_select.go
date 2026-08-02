@@ -2,32 +2,21 @@ package service
 
 import (
 	"errors"
-	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
 
 type RetryParam struct {
-	Ctx               *gin.Context
-	TokenGroup        string
-	ModelName         string
-	Retry             *int
-	resetNextTry      bool
-	ExcludeChannelIDs map[int]struct{}
-}
-
-func (p *RetryParam) AddExcludedChannel(channelID int) {
-	if p.ExcludeChannelIDs == nil {
-		p.ExcludeChannelIDs = make(map[int]struct{})
-	}
-	p.ExcludeChannelIDs[channelID] = struct{}{}
+	Ctx          *gin.Context
+	TokenGroup   string
+	ModelName    string
+	RequestPath  string
+	Retry        *int
+	resetNextTry bool
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -98,10 +87,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
 
 	if param.TokenGroup == "auto" {
-		if len(setting.GetAutoGroups()) == 0 {
+		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+		if len(autoGroups) == 0 {
 			return nil, selectGroup, errors.New("auto groups is not enabled")
 		}
-		autoGroups := GetUserAutoGroup(userGroup)
 
 		// startGroupIndex: the group index to start searching from
 		// startGroupIndex: 开始搜索的分组索引
@@ -126,7 +115,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.ExcludeChannelIDs)
+			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -164,77 +153,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.ExcludeChannelIDs)
+		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
 	}
 	return channel, selectGroup, nil
-}
-
-func BuildChannelSelectionDetail(c *gin.Context, tokenGroup string, selectGroup string, modelName string) string {
-	groups := []string{selectGroup}
-	if selectGroup == "" {
-		groups = []string{tokenGroup}
-	}
-	if tokenGroup == "auto" {
-		userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-		groups = GetUserAutoGroup(userGroup)
-		if len(groups) == 0 && selectGroup != "" {
-			groups = []string{selectGroup}
-		}
-	}
-
-	groupParts := make([]string, 0, len(groups))
-	seenGroups := make(map[string]struct{})
-	for _, group := range groups {
-		if group == "" {
-			continue
-		}
-		if _, ok := seenGroups[group]; ok {
-			continue
-		}
-		seenGroups[group] = struct{}{}
-
-		diagnostic, err := model.GetChannelSelectionDiagnostic(group, modelName)
-		if err != nil {
-			groupParts = append(groupParts, fmt.Sprintf("group=%s diagnostic_error=%s", group, err.Error()))
-			continue
-		}
-		groupParts = append(groupParts, fmt.Sprintf(
-			"group=%s available_candidate_channel_ids=%s unavailable_candidate_channel_ids=%s",
-			group,
-			formatIntIDs(diagnostic.AvailableChannelIds),
-			model.FormatChannelCandidates(diagnostic.UnavailableCandidates),
-		))
-	}
-
-	tried := c.GetStringSlice("use_channel")
-	detailParts := []string{
-		fmt.Sprintf("requested_group=%s", tokenGroup),
-		fmt.Sprintf("selected_group=%s", selectGroup),
-		fmt.Sprintf("tried_channel_ids=%s", formatStringIDs(tried)),
-	}
-	if len(groupParts) > 0 {
-		detailParts = append(detailParts, "candidate_diagnostics="+strings.Join(groupParts, "; "))
-	}
-	return strings.Join(detailParts, ", ")
-}
-
-func formatIntIDs(ids []int) string {
-	if len(ids) == 0 {
-		return "[]"
-	}
-	parts := make([]string, 0, len(ids))
-	for _, id := range ids {
-		parts = append(parts, strconv.Itoa(id))
-	}
-	return "[" + strings.Join(parts, ",") + "]"
-}
-
-func formatStringIDs(ids []string) string {
-	if len(ids) == 0 {
-		return "[]"
-	}
-	return "[" + strings.Join(ids, ",") + "]"
 }

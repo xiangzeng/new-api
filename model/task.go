@@ -8,8 +8,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 type TaskStatus string
@@ -40,6 +40,10 @@ const (
 	TaskStatusSuccess               = "SUCCESS"
 	TaskStatusUnknown               = "UNKNOWN"
 )
+
+// TaskRefundLegacyCutoff separates tasks created before timeout refunds were
+// introduced. Those legacy tasks are failed without an automatic refund.
+const TaskRefundLegacyCutoff int64 = 1771718400 // 2026-02-22 00:00:00 UTC
 
 type Task struct {
 	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
@@ -104,6 +108,7 @@ type TaskPrivateData struct {
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
 	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
+	NodeName       string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
 	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
 }
 
@@ -314,18 +319,19 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 	return tasks
 }
 
-func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
-	if taskId == "" {
-		return nil, false, nil
-	}
-	var task *Task
-	var err error
-	err = DB.Where("task_id = ?", taskId).First(&task).Error
-	exist, err := RecordExist(err)
-	if err != nil {
-		return nil, false, err
-	}
-	return task, exist, err
+// HasUnfinishedSyncTasks reports whether at least one async (Suno/video) task is
+// still in progress. It is a cheap existence check (LIMIT 1) used to decide
+// whether the async_task_poll system task needs to run; when no task is pending
+// the scheduler skips creating a row entirely.
+func HasUnfinishedSyncTasks() bool {
+	var id int64
+	err := DB.Model(&Task{}).
+		Where("progress != ?", "100%").
+		Where("status != ?", TaskStatusFailure).
+		Where("status != ?", TaskStatusSuccess).
+		Limit(1).
+		Pluck("id", &id).Error
+	return err == nil && id != 0
 }
 
 func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
@@ -401,9 +407,15 @@ func (Task *Task) Update() error {
 	return err
 }
 
+func (t *Task) UpdateQuota() error {
+	return DB.Model(t).Update("quota", t.Quota).Error
+}
+
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
 // Returns (true, nil) if this caller won the update, (false, nil) if
-// another process already moved the task out of fromStatus.
+// another process already moved the task out of fromStatus. MySQL commonly
+// reports changed rows rather than matched rows, so a same-value no-op update
+// can also return false even when the status predicate still matched.
 //
 // Uses Model().Select("*").Updates() instead of Save() because GORM's Save
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
