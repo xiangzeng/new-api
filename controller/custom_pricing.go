@@ -1,8 +1,8 @@
 package controller
 
 import (
-	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -14,6 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// CustomPricingConfiguredGroup is one group-ratio override shown on the list.
+type CustomPricingConfiguredGroup struct {
+	Name  string  `json:"name"`
+	Ratio float64 `json:"ratio"`
+}
+
 type CustomPricingUserItem struct {
 	Id               int      `json:"id"`
 	Username         string   `json:"username"`
@@ -22,6 +28,9 @@ type CustomPricingUserItem struct {
 	ConfiguredGroups int      `json:"configured_groups"`
 	TotalGroups      int      `json:"total_groups"`
 	MissingGroups    []string `json:"missing_groups"`
+	// Groups is the set of overrides the admin has configured (name + ratio),
+	// sorted by name. Unconfigured system groups are intentionally omitted.
+	Groups []CustomPricingConfiguredGroup `json:"groups"`
 }
 
 func GetCustomPricingUsers(c *gin.Context) {
@@ -38,7 +47,7 @@ func GetCustomPricingUsers(c *gin.Context) {
 	for _, user := range users {
 		pricing := dto.UserCustomPricing{}
 		if user.CustomPricing != "" {
-			_ = json.Unmarshal([]byte(user.CustomPricing), &pricing)
+			_ = common.Unmarshal([]byte(user.CustomPricing), &pricing)
 		}
 
 		configuredCount := len(pricing.Groups)
@@ -49,6 +58,18 @@ func GetCustomPricingUsers(c *gin.Context) {
 			}
 		}
 
+		configuredGroups := make([]CustomPricingConfiguredGroup, 0, len(pricing.Groups))
+		for groupName, gp := range pricing.Groups {
+			configuredGroups = append(configuredGroups, CustomPricingConfiguredGroup{
+				Name:  groupName,
+				Ratio: gp.Ratio,
+			})
+		}
+		// Stable order for list display.
+		sort.Slice(configuredGroups, func(i, j int) bool {
+			return configuredGroups[i].Name < configuredGroups[j].Name
+		})
+
 		result = append(result, CustomPricingUserItem{
 			Id:               user.Id,
 			Username:         user.Username,
@@ -57,6 +78,7 @@ func GetCustomPricingUsers(c *gin.Context) {
 			ConfiguredGroups: configuredCount,
 			TotalGroups:      totalGroups,
 			MissingGroups:    missingGroups,
+			Groups:           configuredGroups,
 		})
 	}
 
@@ -81,7 +103,7 @@ func GetUserCustomPricing(c *gin.Context) {
 
 	pricing := dto.UserCustomPricing{}
 	if user.CustomPricing != "" {
-		_ = json.Unmarshal([]byte(user.CustomPricing), &pricing)
+		_ = common.Unmarshal([]byte(user.CustomPricing), &pricing)
 	}
 
 	allGroups := ratio_setting.GetGroupRatioCopy()
@@ -127,7 +149,7 @@ func UpdateUserCustomPricing(c *gin.Context) {
 	}
 
 	var req dto.UserCustomPricing
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
@@ -172,7 +194,7 @@ func UpdateUserCustomPricing(c *gin.Context) {
 		}
 	}
 
-	pricingJSON, err := json.Marshal(req)
+	pricingJSON, err := common.Marshal(req)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -197,7 +219,7 @@ func DeleteUserCustomPricing(c *gin.Context) {
 	}
 
 	emptyPricing := dto.UserCustomPricing{Enabled: false}
-	pricingJSON, _ := json.Marshal(emptyPricing)
+	pricingJSON, _ := common.Marshal(emptyPricing)
 
 	if err := model.UpdateUserCustomPricing(id, string(pricingJSON)); err != nil {
 		common.ApiError(c, err)

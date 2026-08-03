@@ -19,11 +19,11 @@ func ParseVeoDurationSeconds(metadata map[string]any) int {
 	}
 	switch n := v.(type) {
 	case float64:
-		if n > 0 && n <= float64(relaycommon.MaxTaskDurationSeconds) {
+		if int(n) > 0 {
 			return int(n)
 		}
 	case int:
-		if n > 0 && n <= relaycommon.MaxTaskDurationSeconds {
+		if n > 0 {
 			return n
 		}
 	}
@@ -48,19 +48,21 @@ func ParseVeoResolution(metadata map[string]any) string {
 
 // ResolveVeoDuration returns the effective duration in seconds.
 // Priority: metadata["durationSeconds"] > stdDuration > stdSeconds > default (8).
+// The result is capped because it is used as a billing multiplier and the
+// metadata path bypasses standard request validation.
 func ResolveVeoDuration(metadata map[string]any, stdDuration int, stdSeconds string) int {
 	if metadata != nil {
 		if _, exists := metadata["durationSeconds"]; exists {
 			if d := ParseVeoDurationSeconds(metadata); d > 0 {
-				return d
+				return min(d, relaycommon.MaxTaskDurationSeconds)
 			}
 		}
 	}
-	if stdDuration > 0 && stdDuration <= relaycommon.MaxTaskDurationSeconds {
-		return stdDuration
+	if stdDuration > 0 {
+		return min(stdDuration, relaycommon.MaxTaskDurationSeconds)
 	}
-	if s, err := strconv.Atoi(stdSeconds); err == nil && s > 0 && s <= relaycommon.MaxTaskDurationSeconds {
-		return s
+	if s, err := strconv.Atoi(stdSeconds); err == nil && s > 0 {
+		return min(s, relaycommon.MaxTaskDurationSeconds)
 	}
 	return 8
 }

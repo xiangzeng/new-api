@@ -9,8 +9,8 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/shopspring/decimal"
 
@@ -90,11 +90,13 @@ func calcViolationFeeQuota(amount, groupRatio float64) int {
 	}
 	quota := decimal.NewFromFloat(amount).
 		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
-		Mul(decimal.NewFromFloat(groupRatio))
-	if quota.LessThanOrEqual(decimal.Zero) {
+		Mul(decimal.NewFromFloat(groupRatio)).
+		Round(0).
+		IntPart()
+	if quota <= 0 {
 		return 0
 	}
-	return common.QuotaFromDecimal(quota)
+	return int(quota)
 }
 
 // ChargeViolationFeeIfNeeded charges an additional fee after the normal flow finishes (including refund).

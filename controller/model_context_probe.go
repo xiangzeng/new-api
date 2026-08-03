@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,8 +10,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 var (
@@ -115,7 +114,7 @@ func probeChannelModels(baseURL string, key string, cache map[string]int) {
 	}
 
 	var modelsResp probeModelsResponse
-	if err := json.Unmarshal(body, &modelsResp); err != nil {
+	if err := common.Unmarshal(body, &modelsResp); err != nil {
 		return
 	}
 

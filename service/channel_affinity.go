@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/hot"
 	"github.com/tidwall/gjson"
@@ -302,6 +302,11 @@ func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAf
 			return ""
 		}
 		return strings.TrimSpace(c.GetString(src.Key))
+	case "request_header":
+		if c == nil || c.Request == nil || src.Key == "" {
+			return ""
+		}
+		return strings.TrimSpace(c.Request.Header.Get(src.Key))
 	case "gjson":
 		if src.Path == "" {
 			return ""
@@ -524,43 +529,6 @@ func appendChannelAffinityTemplateAdminInfo(c *gin.Context, meta channelAffinity
 	})
 }
 
-func appendChannelAffinityClearedAdminInfo(c *gin.Context, reason string) {
-	if c == nil {
-		return
-	}
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		reason = "stale affinity cleared"
-	}
-
-	if anyInfo, ok := c.Get(ginKeyChannelAffinityLogInfo); ok {
-		if info, ok := anyInfo.(map[string]interface{}); ok {
-			info["stale_affinity_cleared"] = true
-			info["stale_affinity_reason"] = reason
-			c.Set(ginKeyChannelAffinityLogInfo, info)
-			return
-		}
-	}
-
-	info := map[string]interface{}{
-		"stale_affinity_cleared": true,
-		"stale_affinity_reason":  reason,
-	}
-	if meta, ok := getChannelAffinityMeta(c); ok {
-		info["reason"] = meta.RuleName
-		info["rule_name"] = meta.RuleName
-		info["using_group"] = meta.UsingGroup
-		info["model"] = meta.ModelName
-		info["request_path"] = meta.RequestPath
-		info["key_source"] = meta.KeySourceType
-		info["key_key"] = meta.KeySourceKey
-		info["key_path"] = meta.KeySourcePath
-		info["key_hint"] = meta.KeyHint
-		info["key_fp"] = meta.KeyFingerprint
-	}
-	c.Set(ginKeyChannelAffinityLogInfo, info)
-}
-
 // ApplyChannelAffinityOverrideTemplate merges per-rule channel override templates onto the selected channel override config.
 func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[string]interface{}) (map[string]interface{}, bool) {
 	if c == nil {
@@ -673,7 +641,7 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	return meta.SkipRetry
 }
 
-func ClearCurrentChannelAffinity(c *gin.Context, reason string) bool {
+func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 	if c == nil {
 		return false
 	}
@@ -681,18 +649,28 @@ func ClearCurrentChannelAffinity(c *gin.Context, reason string) bool {
 	if !ok || cacheKey == "" {
 		return false
 	}
+
 	cache := getChannelAffinityCache()
-	if _, err := cache.DeleteMany([]string{cacheKey}); err != nil {
-		common.SysError(fmt.Sprintf("channel affinity cache delete failed: key=%s, err=%v", cacheKey, err))
+	deleted, err := cache.DeleteMany([]string{cacheKey})
+	if err != nil {
+		common.SysError(fmt.Sprintf("channel affinity cache delete current failed: err=%v", err))
 		return false
 	}
 	c.Set(ginKeyChannelAffinitySkipRetry, false)
-	if meta, ok := getChannelAffinityMeta(c); ok {
-		meta.SkipRetry = false
-		c.Set(ginKeyChannelAffinityMeta, meta)
+	for _, ok := range deleted {
+		if ok {
+			return true
+		}
 	}
-	appendChannelAffinityClearedAdminInfo(c, reason)
-	return true
+	return false
+}
+
+func ShouldKeepChannelAffinityOnChannelDisabled() bool {
+	setting := operation_setting.GetChannelAffinitySetting()
+	if setting == nil {
+		return false
+	}
+	return setting.KeepOnChannelDisabled
 }
 
 func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int) {

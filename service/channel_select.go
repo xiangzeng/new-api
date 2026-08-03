@@ -10,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -18,11 +17,13 @@ type RetryParam struct {
 	Ctx               *gin.Context
 	TokenGroup        string
 	ModelName         string
+	RequestPath       string
 	Retry             *int
 	resetNextTry      bool
 	ExcludeChannelIDs map[int]struct{}
 }
 
+// AddExcludedChannel 记录本次请求内已尝试失败的渠道，后续重试选择时跳过
 func (p *RetryParam) AddExcludedChannel(channelID int) {
 	if p.ExcludeChannelIDs == nil {
 		p.ExcludeChannelIDs = make(map[int]struct{})
@@ -98,10 +99,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
 
 	if param.TokenGroup == "auto" {
-		if len(setting.GetAutoGroups()) == 0 {
+		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+		if len(autoGroups) == 0 {
 			return nil, selectGroup, errors.New("auto groups is not enabled")
 		}
-		autoGroups := GetUserAutoGroup(userGroup)
 
 		// startGroupIndex: the group index to start searching from
 		// startGroupIndex: 开始搜索的分组索引
@@ -126,7 +127,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.ExcludeChannelIDs)
+			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath, param.ExcludeChannelIDs)
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -164,7 +165,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.ExcludeChannelIDs)
+		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, param.ExcludeChannelIDs)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
@@ -172,6 +173,8 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	return channel, selectGroup, nil
 }
 
+// BuildChannelSelectionDetail 汇总渠道选择失败时的诊断信息（候选渠道及不可用原因），
+// 用于拼接到错误消息帮助排障。
 func BuildChannelSelectionDetail(c *gin.Context, tokenGroup string, selectGroup string, modelName string) string {
 	groups := []string{selectGroup}
 	if selectGroup == "" {
@@ -179,7 +182,7 @@ func BuildChannelSelectionDetail(c *gin.Context, tokenGroup string, selectGroup 
 	}
 	if tokenGroup == "auto" {
 		userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-		groups = GetUserAutoGroup(userGroup)
+		groups = GetRequestAutoGroups(c, userGroup)
 		if len(groups) == 0 && selectGroup != "" {
 			groups = []string{selectGroup}
 		}
