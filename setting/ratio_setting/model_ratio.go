@@ -509,7 +509,8 @@ func getHardcodedCompletionModelRatio(name string) (float64, bool) {
 		// gpt-5 匹配
 		if strings.HasPrefix(name, "gpt-5") {
 			if !strings.Contains(name, ".") {
-				return 8, true
+				// 定价策略：无点号 gpt-5 家族补全倍率让利至 6（官方为 8）
+				return 6, true
 			}
 			if strings.HasPrefix(name, "gpt-5.4") {
 				if strings.HasPrefix(name, "gpt-5.4-nano") {
