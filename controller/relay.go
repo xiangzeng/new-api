@@ -92,6 +92,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			// 流式响应已开始写出时禁止再写 JSON 错误体，避免污染已发送的响应
+			if c.Writer.Written() {
+				return
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -237,6 +241,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+
+		// 请求级排除：本次请求内不再重选已失败的渠道
+		retryParam.AddExcludedChannel(channel.Id)
+
+		// 流已开始写出则不再重试，避免在已发送内容之后追加新响应
+		if c.Writer.Written() {
+			break
+		}
 
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
@@ -564,6 +576,16 @@ func RelayTask(c *gin.Context) {
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+		}
+
+		// 请求级排除：锁定渠道场景不排除（排除后将无渠道可选），其余场景避免重选已失败渠道
+		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); !ok || lockedCh == nil {
+			retryParam.AddExcludedChannel(channel.Id)
+		}
+
+		// 响应已开始写出则不再重试
+		if c.Writer.Written() {
+			break
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
