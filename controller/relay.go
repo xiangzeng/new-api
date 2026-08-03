@@ -384,7 +384,22 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
+	auditEntry := logger.AuditEntry{
+		Timestamp:    time.Now().Format(time.RFC3339),
+		RequestId:    c.GetString(common.RequestIdKey),
+		ChannelId:    channelError.ChannelId,
+		ChannelName:  channelError.ChannelName,
+		StatusCode:   err.StatusCode,
+		ModelName:    c.GetString("original_model"),
+		ErrorCode:    string(err.GetErrorCode()),
+		ErrorSummary: err.Error(),
+	}
+
+	if !constant.ErrorLogEnabled {
+		auditEntry.SkipReason = "error_log_disabled"
+	} else if !types.IsRecordErrorLog(err) {
+		auditEntry.SkipReason = "no_record_flag"
+	} else {
 		// 保存错误日志到mysql中
 		userId := c.GetInt("id")
 		tokenName := c.GetString("token_name")
@@ -416,9 +431,15 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			startTime = time.Now()
 		}
 		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+		dbErr := model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+		if dbErr != nil {
+			auditEntry.SkipReason = "db_write_failed"
+		} else {
+			auditEntry.DbLogged = true
+		}
 	}
 
+	logger.RecordErrorAudit(auditEntry)
 }
 
 func RelayMidjourney(c *gin.Context) {
