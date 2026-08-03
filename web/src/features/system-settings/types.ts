@@ -39,6 +39,13 @@ export type UpdateOptionResponse = {
   message: string
 }
 
+export type UploadLogoResponse = {
+  success: boolean
+  message: string
+  /** Site-relative path of the stored logo, e.g. `/uploads/logo.png` */
+  data?: string
+}
+
 export type ConfirmPaymentComplianceResponse = {
   success: boolean
   message: string

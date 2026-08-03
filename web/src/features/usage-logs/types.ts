@@ -334,6 +334,13 @@ export interface GetLogsResponse {
   }
 }
 
+export interface DeleteErrorLogsResponse {
+  success: boolean
+  message?: string
+  /** Number of deleted error logs */
+  data?: number
+}
+
 export interface GetLogStatsParams {
   type?: number
   username?: string

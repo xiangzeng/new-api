@@ -20,6 +20,7 @@ import { api } from '@/lib/api'
 
 import { buildQueryParams } from './lib/utils'
 import type {
+  DeleteErrorLogsResponse,
   GetLogsParams,
   GetLogsResponse,
   GetLogStatsParams,
@@ -83,6 +84,12 @@ export const getLogStats = (params: GetLogStatsParams = {}) =>
 export const getUserLogStats = (
   params: Omit<GetLogStatsParams, 'username' | 'channel'> = {}
 ) => fetchLogStats('/api/log', params, false)
+
+/** Admin-only: delete every error-type log, leaving consumption logs untouched */
+export async function deleteErrorLogs(): Promise<DeleteErrorLogsResponse> {
+  const res = await api.delete('/api/log/errors')
+  return res.data
+}
 
 export async function getUserInfo(
   userId: number

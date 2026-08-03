@@ -44,11 +44,17 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { LogoUploadControl } from './logo-upload-control'
+
+// Uploaded logos are served from `/uploads/`, so a site-relative path is valid too
+function isLogoLocationValid(value: string): boolean {
+  return value === '' || value.startsWith('/') || /^https?:\/\//.test(value)
+}
 
 const _systemInfoSchema = z.object({
   SystemName: z.string().min(1),
   ServerAddress: z.string().optional(),
-  Logo: z.string().url().optional().or(z.literal('')),
+  Logo: z.string().refine(isLogoLocationValid),
   Footer: z.string().optional(),
   About: z.string().optional(),
   HomePageContent: z.string().optional(),
@@ -91,7 +97,10 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       error: () => t('System name is required'),
     }),
     ServerAddress: z.string().optional(),
-    Logo: z.string().url().optional().or(z.literal('')),
+    Logo: z.string().refine(isLogoLocationValid, {
+      error: () =>
+        t('Logo must be a full URL or a site-relative path starting with /'),
+    }),
     Footer: z.string().optional(),
     About: z.string().optional(),
     HomePageContent: z.string().optional(),
@@ -186,6 +195,12 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                         {...field}
                       />
                     </FormControl>
+                    <LogoUploadControl
+                      value={field.value}
+                      onUploaded={(url) =>
+                        form.setValue('Logo', url, { shouldDirty: false })
+                      }
+                    />
                     <FormDescription>
                       {t('URL to your logo image (optional)')}
                     </FormDescription>

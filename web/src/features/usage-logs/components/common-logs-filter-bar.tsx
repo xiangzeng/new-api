@@ -42,6 +42,7 @@ import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
+import { ClearErrorLogsButton } from './clear-error-logs-button'
 import { CommonLogsStats } from './common-logs-stats'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
 import {
@@ -288,6 +289,12 @@ export function CommonLogsFilterBar<TData>(
       </TooltipContent>
     </Tooltip>
   )
+  const toolbarActions = (
+    <>
+      <ClearErrorLogsButton />
+      {sensitiveToggle}
+    </>
+  )
 
   const dateRangeFilter = (
     <LogsFilterField wide>
@@ -413,7 +420,7 @@ export function CommonLogsFilterBar<TData>(
     <LogsFilterToolbar
       table={props.table}
       stats={statsBar}
-      actionStart={sensitiveToggle}
+      actionStart={toolbarActions}
       primaryFilters={
         <>
           {dateRangeFilter}

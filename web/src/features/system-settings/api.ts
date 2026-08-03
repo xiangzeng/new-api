@@ -27,6 +27,7 @@ import type {
   SystemTaskResponse,
   UpdateOptionRequest,
   UpdateOptionResponse,
+  UploadLogoResponse,
   UpstreamChannelsResponse,
   UpstreamRatiosResponse,
 } from './types'
@@ -38,6 +39,17 @@ export async function getSystemOptions() {
 
 export async function updateSystemOption(request: UpdateOptionRequest) {
   const res = await api.put<UpdateOptionResponse>('/api/option/', request)
+  return res.data
+}
+
+export async function uploadLogo(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  // Let the browser set `multipart/form-data` together with its boundary
+  const res = await api.post<UploadLogoResponse>(
+    '/api/option/upload/logo',
+    formData
+  )
   return res.data
 }
 
