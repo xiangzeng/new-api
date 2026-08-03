@@ -2,6 +2,34 @@
 
 DO NOT send optional commentary
 
+## Agent 协作协议（RelayTeam fork 扩展）
+
+> 本段为 fork 侧协作协议，`CLAUDE.md` 经 `@AGENTS.md` 导入本文件，Codex / Grok 经 `.codex/skills`、`.grok/skills` 软链读同一份 skill。本段之外的章节为上游项目约定原文，合并上游时尽量保持原样。
+
+**Skill 自动触发（强制）**：任何任务开始前，必须检查 `.claude/skills/`；触发条件匹配的 skill 必须先读取再执行，禁止跳过。本文件的概述**不构成「已了解规范」**：
+
+- `protocol-dev` — 主工作流：代码修改、bug 调试、commit 生成、分支合并、文档更新时触发；强制"先给方案、等授权（'执行'/'改吧'）、再执行"
+- `task-dossier` — 大任务分阶段与跨会话续接：新功能规划时评估建档；会话将满时总结进度 + 产出续接启动词（活档案在 `docs/tasks/`）
+- `model-handoff` — 机械、高 token、可独立验证的子任务外包给另一模型代跑；回收后强制拉回源头抽查
+- `bug-patrol` — 系统化排查 bug（功能区地图：`references/area-map.md`）
+- `sync-skills` — 协议跨仓库同步
+
+**工作流唯一性**：普通开发只用 `protocol-dev` 主工作流；用户确认方案后必须直接进入实现与验证，不得插入额外规格文档/TDD/审查门槛；未经明确要求不自动建文档、不自动 `git commit`。
+
+**红线（完整、绝对）**
+
+- 禁止 `rm` / `rm -rf` / `git clean -f`，删除必须用 `trash`；`git reset --hard` / `git restore` 等危险命令前先备份受影响文件
+- **git commit 流程**：先输出 commit 信息供用户审核（规范见 `.claude/skills/protocol-dev/references/commit-guide.md`，不读不得生成），确认后再提交，内容与展示完全一致，禁止附加任何辅助编程标识（如 Co-Authored-By）
+- **worktree**：必须放项目同级目录 `../new-api--{分支名}/`（分支名 `/` 换 `-`），禁止 `.git/worktrees` 或项目内路径
+- **生产纪律**：报错排查先 SSH 看真实日志（排障资料在上层 `RsTroubleDebug/`），禁止凭代码推测直接改；本地验证涉及数据库用 Docker 临时库，禁止直连生产库；部署前确认 GitHub Actions 构建绿；严禁触发原作者命名空间的 CI/部署 workflow
+- **数据库三库兼容**为最硬底线（细则见下方 Backend Rules 与 `platform-compat-guide.md`）
+
+**必读 reference 索引**：commit/merge → `commit-guide.md`+`merge-guide.md`（合并必须 `--no-commit --no-ff`）｜调试 → `debug-guide.md`｜SQL/迁移 → `platform-compat-guide.md`｜方案格式 → `format-guide.md`｜发布/部署 → `release-guide.md`｜前端细则 → `web/AGENTS.md`
+
+**构建验证**：后端 `go build ./...` + 相关包 `go test`；改 `relaykit/` 必须 `cd relaykit && GOWORK=off go build ./...`；前端 `cd web && bun run build`。
+
+**RelayTeam 链路**：本仓 = 分发网关（香港 shan-dmit-hk，DB 独立于 database-newapi AWS 香港 PG17）→ Kiro-RS（美国，AWS Q 通道）/ Sub2API（香港，OpenAI 通道）。生产 compose 需带 `MAX_REQUEST_BODY_MB=200`、`STREAMING_TIMEOUT=600`。
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.

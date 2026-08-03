@@ -21,7 +21,9 @@ tiktoken_cache
 .gomodcache/
 .cache
 plans
-.claude
+# .claude 仅忽略本地配置，skills/ 为协议真源须入仓
+.claude/*
+!.claude/skills/
 .cursor
 
 electron/node_modules
@@ -41,3 +43,11 @@ service/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go
 go.work
 go.work.sum
+
+# === Agent 协作（Claude / Codex / Grok）===
+# Codex app 自动生成的 skill 副本（真源在 .claude/skills）
+.agents/
+# Claude Code 本地权限设置（每台机器不同）
+.claude/settings.local.json
+# bug-patrol 排查追踪（项目内部记录，不入仓）
+00_debug-notes/
