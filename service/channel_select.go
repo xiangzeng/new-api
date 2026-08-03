@@ -2,6 +2,9 @@ package service
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -168,4 +171,73 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+// BuildChannelSelectionDetail 汇总渠道选择失败时的诊断信息（候选渠道及不可用原因），
+// 用于拼接到错误消息帮助排障。
+func BuildChannelSelectionDetail(c *gin.Context, tokenGroup string, selectGroup string, modelName string) string {
+	groups := []string{selectGroup}
+	if selectGroup == "" {
+		groups = []string{tokenGroup}
+	}
+	if tokenGroup == "auto" {
+		userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+		groups = GetRequestAutoGroups(c, userGroup)
+		if len(groups) == 0 && selectGroup != "" {
+			groups = []string{selectGroup}
+		}
+	}
+
+	groupParts := make([]string, 0, len(groups))
+	seenGroups := make(map[string]struct{})
+	for _, group := range groups {
+		if group == "" {
+			continue
+		}
+		if _, ok := seenGroups[group]; ok {
+			continue
+		}
+		seenGroups[group] = struct{}{}
+
+		diagnostic, err := model.GetChannelSelectionDiagnostic(group, modelName)
+		if err != nil {
+			groupParts = append(groupParts, fmt.Sprintf("group=%s diagnostic_error=%s", group, err.Error()))
+			continue
+		}
+		groupParts = append(groupParts, fmt.Sprintf(
+			"group=%s available_candidate_channel_ids=%s unavailable_candidate_channel_ids=%s",
+			group,
+			formatIntIDs(diagnostic.AvailableChannelIds),
+			model.FormatChannelCandidates(diagnostic.UnavailableCandidates),
+		))
+	}
+
+	tried := c.GetStringSlice("use_channel")
+	detailParts := []string{
+		fmt.Sprintf("requested_group=%s", tokenGroup),
+		fmt.Sprintf("selected_group=%s", selectGroup),
+		fmt.Sprintf("tried_channel_ids=%s", formatStringIDs(tried)),
+	}
+	if len(groupParts) > 0 {
+		detailParts = append(detailParts, "candidate_diagnostics="+strings.Join(groupParts, "; "))
+	}
+	return strings.Join(detailParts, ", ")
+}
+
+func formatIntIDs(ids []int) string {
+	if len(ids) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.Itoa(id))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func formatStringIDs(ids []string) string {
+	if len(ids) == 0 {
+		return "[]"
+	}
+	return "[" + strings.Join(ids, ",") + "]"
 }
