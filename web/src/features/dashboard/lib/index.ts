@@ -40,5 +40,11 @@ export {
   flowSankeyDatumValue,
   getFlowStages,
 } from './flow'
+export {
+  aggregateFlowGroupUsage,
+  EMPTY_FLOW_GROUP_USAGE,
+  type FlowGroupUsageRow,
+  type FlowGroupUsageSummary,
+} from './group-usage'
 export { safeDivide, calculateDashboardStats } from './stats'
 export { getPreviewText } from './text'

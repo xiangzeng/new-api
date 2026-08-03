@@ -28,6 +28,9 @@ import type {
   ManageUserAction,
   ManageUserQuotaPayload,
   ApiResponse,
+  CustomPricingUserItem,
+  UserCustomPricingDetail,
+  UserCustomPricingPayload,
 } from './types'
 
 // ============================================================================
@@ -151,6 +154,47 @@ export async function resetUserPasskey(id: number): Promise<ApiResponse> {
  */
 export async function resetUserTwoFA(id: number): Promise<ApiResponse> {
   const res = await api.delete(`/api/user/${id}/2fa`)
+  return res.data
+}
+
+/**
+ * Get users that have custom pricing enabled
+ */
+export async function getCustomPricingUsers(): Promise<
+  ApiResponse<CustomPricingUserItem[]>
+> {
+  const res = await api.get('/api/user/custom-pricing/list')
+  return res.data
+}
+
+/**
+ * Get user-level custom pricing details
+ */
+export async function getUserCustomPricing(
+  id: number
+): Promise<ApiResponse<UserCustomPricingDetail>> {
+  const res = await api.get(`/api/user/${id}/custom-pricing`)
+  return res.data
+}
+
+/**
+ * Save user-level custom pricing details
+ */
+export async function updateUserCustomPricing(
+  id: number,
+  payload: UserCustomPricingPayload
+): Promise<ApiResponse> {
+  const res = await api.put(`/api/user/${id}/custom-pricing`, payload)
+  return res.data
+}
+
+/**
+ * Disable user-level custom pricing
+ */
+export async function deleteUserCustomPricing(
+  id: number
+): Promise<ApiResponse> {
+  const res = await api.delete(`/api/user/${id}/custom-pricing`)
   return res.data
 }
 

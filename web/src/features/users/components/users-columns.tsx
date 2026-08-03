@@ -38,6 +38,7 @@ import {
   USER_ROLES,
   isUserDeleted,
 } from '../constants'
+import { isCustomPricingEnabled } from '../lib'
 import type { User } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 import { UserQuotaCell } from './user-quota-cell'
@@ -107,6 +108,13 @@ export function useUsersColumns(): ColumnDef<User>[] {
                     <p className='text-xs'>{remark}</p>
                   </TooltipContent>
                 </Tooltip>
+              )}
+              {isCustomPricingEnabled(row.original) && (
+                <StatusBadge
+                  label={t('Custom Pricing')}
+                  variant='blue'
+                  copyable={false}
+                />
               )}
             </div>
             {displayName && displayName !== username && (

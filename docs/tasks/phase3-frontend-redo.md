@@ -15,8 +15,9 @@
 
 ## 2. 分阶段计划
 
-- [ ] **P0-1 千人千面管理页**：新建 `web/src/features/custom-pricing/` + 路由 `web/src/routes/_authenticated/custom-pricing/index.tsx`；用户列表（`GET /api/user/custom-pricing/list`→注意实际为 adminRoute 前缀，见下方 API 清单）、分组倍率编辑、ExtraGroups/HideGroups、启停；侧边栏注册（`web/src/components/layout/` 体系）
-- [ ] **P0-2 用户表千人千面入口**：`web/src/features/users/` 列/行操作加入口按钮打开定价弹窗（仿 features/users/components/dialogs/ 模式）
+- [x] **P0-1 千人千面管理页** — 完成（本次提交）：`web/src/features/custom-pricing/`（页面 + 列定义 + 添加用户弹窗）+ 路由 `web/src/routes/_authenticated/custom-pricing/index.tsx`（`role >= ADMIN` 守卫）；列表展示已配置分组徽章（分组名 · 倍率）；侧边栏 Users 之后注册「千人千面定价」+ `admin.custom_pricing` 模块开关；后端 `controller/custom_pricing.go` 列表项补 `groups[{name,ratio}]`
+- [x] **P0-2 用户表千人千面入口** — 完成（本次提交）：`data-table-row-actions.tsx` 行菜单加「启用/编辑千人千面」、`users-columns.tsx` 用户名旁加 Custom Pricing 徽章；配置弹窗 `users/components/dialogs/user-custom-pricing-dialog.tsx` 与管理页复用同一个
+- [x] **P0-4 使用日志用户弹窗近 24h 消耗** — 完成（本次提交，计划外补做）：`usage-logs/components/dialogs/user-info-dialog.tsx` 重构，加近 24h 总额度/请求数 + 分组明细表（配额、请求数、占比）、用户名可复制、分组走 StatusBadge
 - [ ] **P0-3 邀请返利管理页**：新建 `web/src/features/invitations/`（仿 features/users 结构：api + columns + table）+ 路由；汇总表 + 受邀人明细 + 时间段筛选 + 关键词搜索；侧边栏模块开关（后端 sidebar key `invitation` 已就绪）
 - [ ] **P1-1 藏充值价切换器**：`web/src/features/pricing/components/pricing-toolbar.tsx:208` 附近的 'recharge'/'standard' 二态选择器藏掉，`use-filters.ts` 固定 `showRechargePrice=false`（**已拍板：只显示标准价**）；分组倍率数值后端直出无需改
 - [ ] **P1-2 充值卡/折扣回归验证**：`web/src/features/wallet/` 上游整页重写，验证充值折扣配置是否仍有旧崩溃问题（4db82f4b 修的 bug，大概率 obsolete，验证后关闭）
@@ -32,10 +33,22 @@
   - Logo：`POST /api/option/upload/logo`；错误日志清理：`DELETE /api/log/errors`
   - 用户级定价对普通接口的影响：`/api/user/groups`、`/api/pricing` 已返回覆盖后的倍率，前端零改动即正确显示
 - **旧前端参考实现（已删，从 git 历史取）**：`git show pre-upstream-merge-20260803:web/src/pages/CustomPricing/index.jsx`（503 行）、`...:web/src/pages/Invitation/index.jsx`、`...:web/src/components/table/invitations/`（5 组件）、`...:web/src/hooks/invitations/useInvitationsData.jsx`——交互逻辑照抄，UI 按新架构重写
-- **新前端关键约定**：文件路由自动生成 routeTree（`bun run build` 再生成）；i18n 英文 key 扁平 JSON；组件风格看同类 feature（users/pricing/wallet）；详细规范 `web/AGENTS.md`
+- **同源姐妹 fork 参考实现（最高价值参考）**：`/Users/longshun/Desktop/Program/00_use/longjinApi`（main 分支）。它的新前端在 `web/default/src/`，与本仓 `web/src/` 是同一套上游（React 19 + TanStack + Base UI），组件签名完全一致，可直接对照移植而非从旧 Semi 版重写。查改动用 `git -C .../longjinApi diff upstream/main -- <路径>`。
+  - **两仓能力差异（移植时必须区分）**：本仓独有 `extra_groups`/`hide_groups` 分组可见性覆盖（`service/group.go:50-61` 真实生效，longjin 的 dto 里没有这两个字段，照抄会丢功能）；longjin 独有千人千面站内通知（pending notice + 历史）
+  - **P0-3 邀请返利 longjin 侧无对应实现**，仍需按本仓后端接口从零写
+- **新前端关键约定**：文件路由自动生成 routeTree（`bun run build` 再生成）；i18n 英文 key 扁平 JSON，新键先写 `en.json` 再 `bun run i18n:sync` 对齐其余六语言；组件风格看同类 feature（users/pricing/wallet）；详细规范 `web/AGENTS.md`
 - **技术决策**：前端整体采用上游实现，定制只做增量；不复活任何旧 JSX/Semi 组件
 
 ## 4. 进度台账（每次会话末追加，倒序）
+
+### 2026-08-03（会话2 = Phase 3 前端首轮）
+
+- 做了：P0-1 + P0-2 + P0-4 全部完成。发现同源姐妹 fork `longjinApi` 已在同一套上游新前端做完千人千面，改为「移植 + 合并本仓独有能力」而非从旧 Semi 版重写
+- 改动面：后端 1 文件（`controller/custom_pricing.go` 列表补 `groups[]`，`total_groups`/`missing_groups` 保留并存）；前端新增 13 文件、修改 12 文件；七语言各补 45 个 key（41 个取自 longjin 现成译文，4 个可见性覆盖文案自译）
+- 验证：`go build ./...` + `go vet ./controller/` 通过；`bun run typecheck` 通过；涉及文件 oxlint 零 error/warning；`bun run format:check` 本次文件全绿；`bun run build` 成功且 routeTree 已注册 `/custom-pricing`；`i18n:sync` 七语言 missing/untranslated 均为 0
+- commit：本次提交（前端批 A+B 与本档案更新同提交）
+- 下一步：P0-3 邀请返利管理页（longjin 无参考实现，按本仓 `controller/invitation.go` 从零写；先给方案再动手）
+- 遗留/坑：① 会话1 遗留项全部仍然有效（worktree 未推送、main 冻结、Phase 5 部署需授权且 compose 补 `MAX_REQUEST_BODY_MB=200`/`STREAMING_TIMEOUT=600`；上游会话体系上线后用户需重新登录；dd74cceb 可见性覆盖在上游新增绕行路径未补全，不阻塞前端）；② `web/` 仓库既有 3 个文件 format 不合规、2 个文件 copyright 待更新（`channel-mutate-drawer.tsx`、`channel-form.ts`、`api-key-group-cell.tsx`、`oauth-callback-mode.ts`、`channel-field-update.ts`），均与本次改动无关，未触碰
 
 ### 2026-08-03（会话1 = Phase 0-2/4 主会话）
 
@@ -47,5 +60,8 @@
 ## 5. 决策与坑记录
 
 - 已拍板：gpt-5 无点号家族补全倍率保持 6（让利，代码已改 `setting/ratio_setting/model_ratio.go`）；充值价切换器藏掉只显标准价
+- 已拍板（会话2）：千人千面列表接口 `groups[]` 与原有 `total_groups`/`missing_groups` **并存**（前端只消费 `groups[]`，对既有调用零破坏）；配置弹窗**保留**本仓独有的 `extra_groups`/`hide_groups` 可见性覆盖区块
+- 分组消耗聚合统一放 `web/src/features/dashboard/lib/group-usage.ts`（`aggregateFlowGroupUsage`），千人千面弹窗的近 7 日 Top3 与使用日志弹窗的近 24h 明细共用同一份，避免 longjin 那边两处重复实现
+- 侧边栏新增模块要改 4 处前端文件：`hooks/use-sidebar-data.ts`（导航项）、`hooks/use-sidebar-config.ts`（DEFAULT + URL 映射）、`system-settings/maintenance/config.ts`（SIDEBAR_MODULES_DEFAULT）、`maintenance/sidebar-modules-section.tsx`（moduleMeta 文案）。后端 `model/user.go` / `controller/user.go` 的默认边栏配置无需改：前端 `mergeWithDefaultSidebarModules` 会补齐缺失键
 - 上游错误调试信息只入服务端日志不进客户端错误（上游测试契约）
 - 回滚点：tag `pre-upstream-merge-20260803`；生产 DB 每日 04:00 备份在 database-newapi

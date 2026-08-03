@@ -59,6 +59,7 @@ export const userSchema = z.object({
   last_login_at: z.number().optional(),
   DeletedAt: z.any().nullable().optional(),
   remark: z.string().optional(),
+  custom_pricing: z.string().optional(),
   admin_permissions: z
     .record(z.string(), z.record(z.string(), z.boolean()))
     .optional(),
@@ -143,6 +144,56 @@ export interface ManageUserQuotaPayload {
   action: 'add_quota'
   mode: QuotaAdjustMode
   value: number
+}
+
+// ============================================================================
+// Custom Pricing (千人千面) Types
+// ============================================================================
+
+export interface UserCustomPricingGroup {
+  ratio: number
+}
+
+export interface UserCustomPricingPayload {
+  enabled: boolean
+  groups: Record<string, UserCustomPricingGroup>
+  /** Groups made visible to this user on top of their normal group set */
+  extra_groups?: Record<string, string>
+  /** Groups hidden from this user regardless of the normal group set */
+  hide_groups?: string[]
+}
+
+export interface UserCustomPricingGroupDetail {
+  ratio: number | null
+  default_ratio: number
+  configured: boolean
+}
+
+export interface UserCustomPricingDetail {
+  enabled: boolean
+  groups: Record<string, UserCustomPricingGroupDetail>
+  extra_groups?: Record<string, string> | null
+  hide_groups?: string[] | null
+  /** Every system group with its default ratio, used for visibility overrides */
+  all_groups?: Record<string, number> | null
+}
+
+/** One group-ratio override shown on the custom-pricing list. */
+export interface CustomPricingConfiguredGroup {
+  name: string
+  ratio: number
+}
+
+export interface CustomPricingUserItem {
+  id: number
+  username: string
+  display_name: string
+  group: string
+  configured_groups: number
+  total_groups: number
+  missing_groups: string[] | null
+  /** Only groups with an admin-configured override (name + ratio). */
+  groups: CustomPricingConfiguredGroup[]
 }
 
 // ============================================================================
