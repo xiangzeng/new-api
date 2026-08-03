@@ -102,12 +102,15 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		return fmt.Errorf("bad response status code %d, message: %s, body: %s", resp.StatusCode, message, responseBodyText)
 	}
 
+	upstreamDebug := buildUpstreamErrorDebug(resp, responseBody)
+
 	err = common.Unmarshal(responseBody, &errResponse)
 	if err != nil {
 		if showBodyWhenFail {
 			newApiErr.Err = buildErrWithBody("")
 		} else {
-			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, responseBodyPreview))
+			// 调试信息仅写入服务端日志，客户端可见错误保持干净（不泄露上游细节）
+			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, %s", resp.StatusCode, upstreamDebug))
 			newApiErr.Err = fmt.Errorf("bad response status code %d", resp.StatusCode)
 		}
 		return
@@ -135,6 +138,31 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		newApiErr.Err = buildErrWithBody(newApiErr.Error())
 	}
 	return
+}
+
+// buildUpstreamErrorDebug 汇总上游响应的调试信息（请求方法、脱敏 URL、Content-Type、脱敏 body 预览），
+// 便于快速定位上游返回非 JSON 错误体（如网关 HTML 页面）的问题。
+func buildUpstreamErrorDebug(resp *http.Response, responseBody []byte) string {
+	method := ""
+	upstreamURL := ""
+	if resp != nil && resp.Request != nil {
+		method = resp.Request.Method
+		if resp.Request.URL != nil {
+			upstreamURL = resp.Request.URL.Redacted()
+		}
+	}
+	contentType := ""
+	if resp != nil {
+		contentType = resp.Header.Get("Content-Type")
+	}
+	preview := strings.Join(strings.Fields(strings.TrimSpace(common.LocalLogPreview(string(responseBody)))), " ")
+	return fmt.Sprintf(
+		"method=%s upstream=%s content_type=%q body_preview=%q",
+		method,
+		upstreamURL,
+		contentType,
+		common.MaskSensitiveInfo(preview),
+	)
 }
 
 func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) {
