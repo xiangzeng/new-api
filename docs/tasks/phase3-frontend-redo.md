@@ -1,6 +1,6 @@
 # 任务档案：Phase 3 — 定制 UI 在上游新前端重做
 
-> 状态：Phase 3 全部完成（待提交 P2 批）｜分支：`merge/upstream-20260803`（worktree `../new-api--merge-upstream-20260803/`）｜创建：2026-08-03｜更新：2026-08-03
+> 状态：**已完成并上线生产**（Phase 3 交付 + Phase 5 合回 main 与部署）｜分支：`merge/upstream-20260803` 已合入 `main`（merge commit `0348d754`）后清理｜创建：2026-08-03｜更新：2026-08-03
 
 ## 0. 新会话启动指令（AI 必读）
 
@@ -49,8 +49,12 @@
 - **P2-2**：新增 1 文件、改 3 文件 + 七语言各补 3 个 key。按钮只挂通用日志（common）过滤栏，与旧版 `UsageLogsFilters.jsx` 位置一致；用图标按钮而非旧版文字 danger 按钮，因移动端那一行已有折叠/筛选/搜索/列设置四个控件，危险语义由确认弹窗承担
 - **P2-3 走查结论**（全部核对通过）：路由 `/custom-pricing`、`/invitations` 已注册且 `role >= ADMIN` 守卫 + `/403` 路由存在；侧边栏 4 处注册齐全；档案承诺的两处「共用」属实（配置弹窗被 users 行菜单与千人千面页共用、`aggregateFlowGroupUsage` 被两个弹窗共用）；前端调用的 Phase 3 接口在 router 里全部存在且鉴权匹配；P1-1/P1-2 的改动仍在位；Phase 3 文件零中文硬编码、零未走 `t()` 的字面量、零 TODO/FIXME；knip 对 Phase 3 只命中 3 个「无外部 import 的导出类型」（`users/types.ts` 内部组合用，全仓同类 137 个，属上游风格）
 - 验证：`go build ./...` + `go vet ./controller/ ./router/` 绿；`bun run typecheck` 绿；涉及文件 oxlint 零 error；`bun run format:check` 本次文件全绿；`bun run copyright:check` 新文件头通过；`i18n:sync` 七语言全 0；`bun run build` 成功
-- commit：尚未提交（P2-1 / P2-2 / 本档案更新）
-- 下一步：提交 P2 批 → Phase 4/5（合回与部署）需用户授权
+- commit：`2256efe6`(P2-1 + P2-2 功能批) + `464afb29`(本档案 P2 更新)
+- **Phase 5 合回与部署（同会话完成）**：main 是本分支的严格祖先（main 独有 0 commit、分支独有 610），`git merge --no-commit --no-ff` **零冲突**，merge commit `0348d754`（2190 文件 +320760/−147273），推送 `origin`（`github.com/xiangzeng/new-api`，未触碰 QuantumNous）
+  - 部署链是全自动的：push main → `docker-image-main.yml` 构建并打 `beta` 别名 → `deploy-hk.yml` SSH 香港生产机 `docker compose pull && up -d new-api`。两个 workflow 均 success（构建 5m37s、部署 26s）
+  - 推送前先补了生产 compose 的 `MAX_REQUEST_BODY_MB=200`（原本只有 `STREAMING_TIMEOUT=600`，代码默认是 128，见 `common/init.go:182`）；改前备份 `/root/new-api/docker-compose.yml.bak-20260803`，`docker compose config -q` 校验通过，改文件不重启、由部署自然拉起生效
+  - 生产核验：容器 04:58:59Z 重建、`Up (healthy)`，两个 env 已在容器内生效，`https://relayaicheap.com/api/status` 200，近 3 分钟日志零 panic/fatal/migration failed，已有真实请求正常计费
+- 下一步：观察期（用户重新登录那一波反馈、错误日志与 502/429 曲线）；可选增强见下方遗留项
 - 遗留/坑：① 会话1-3 遗留项全部仍然有效；② **八个交付项全程只做静态校验 + 构建，无浏览器实机点测**，要闭环需起本地后端 + Docker 临时库实跑；③ 审计动作未具名——`DELETE /api/log/errors` 在 `middleware/audit.go:97` 有 `log.delete_errors`，但 `PUT/DELETE /api/user/:id/custom-pricing` 与 `POST /api/option/upload/logo` 无条目，会落到 `finishAdminAudit` 的 `generic` 兜底（仍留痕，动作名为 generic + method/route），补具名条目属可选增强；④ P2-1 上传后点「重置」会把 Logo 输入框恢复成上传前的 URL 而后端已是新 logo（上传走独立接口、`useSettingsForm` 的 baseline 未更新），下次进页面自然一致，彻底修需给上游 hook 加更新 baseline 的能力；⑤ oxlint 在 `usage-logs/api.ts` 报的 `import(no-cycle)` 是既有问题（`lib/utils.ts` 反向 import `../api`，两条语句在 HEAD 即存在），非本批引入
 
 ### 2026-08-03（会话3 = P0-3 + P1 全批）
