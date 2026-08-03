@@ -109,6 +109,9 @@ func init() {
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id
 	})
+
+	// 后台定期探测上游 /v1/models 的 context_window/context_length，用于丰富模型列表响应
+	StartContextLengthProbe()
 }
 
 func channelOwnerName(channelType int) string {
@@ -261,6 +264,7 @@ func ListModels(c *gin.Context, modelType int) {
 	for _, modelName := range userModelNames {
 		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
 	}
+	EnrichModelsWithContextLength(userOpenAiModels)
 
 	switch modelType {
 	case constant.ChannelTypeAnthropic:
