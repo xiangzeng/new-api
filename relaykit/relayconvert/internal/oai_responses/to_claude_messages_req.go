@@ -161,6 +161,10 @@ func responsesFunctionParametersToClaudeInputSchema(parameters any) map[string]i
 }
 
 func applyResponsesReasoningToClaude(req *dto.OpenAIResponsesRequest, claudeRequest *dto.ClaudeRequest) {
+	// Haiku 不支持 thinking，忽略 reasoning effort
+	if strings.Contains(strings.ToLower(claudeRequest.Model), "haiku") {
+		return
+	}
 	effort := ReasoningEffort(req)
 	switch effort {
 	case "low":

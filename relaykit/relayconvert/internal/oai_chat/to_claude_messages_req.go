@@ -160,6 +160,8 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 			claudeRequest.Temperature = nil
 			claudeRequest.TopP = nil
 			claudeRequest.TopK = nil
+		} else if strings.Contains(strings.ToLower(trimmedModel), "haiku") {
+			// Haiku 不支持 thinking，仅去掉后缀，不设置 thinking 配置
 		} else {
 			if claudeRequest.MaxTokens == nil || *claudeRequest.MaxTokens < 1280 {
 				claudeRequest.MaxTokens = kitutil.GetPointer[uint](1280)
@@ -177,7 +179,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		}
 	}
 
-	if textRequest.ReasoningEffort != "" {
+	if textRequest.ReasoningEffort != "" && !strings.Contains(strings.ToLower(claudeRequest.Model), "haiku") {
 		switch textRequest.ReasoningEffort {
 		case "low":
 			claudeRequest.Thinking = &dto.Thinking{
@@ -197,7 +199,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		}
 	}
 
-	if textRequest.Reasoning != nil {
+	if textRequest.Reasoning != nil && !strings.Contains(strings.ToLower(claudeRequest.Model), "haiku") {
 		var reasoningConfig openRouterRequestReasoning
 		if err := kitutil.Unmarshal(textRequest.Reasoning, &reasoningConfig); err != nil {
 			return nil, err
