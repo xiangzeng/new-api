@@ -149,3 +149,17 @@ func GetLogsSelfStat(c *gin.Context) {
 	})
 	return
 }
+
+// DeleteErrorLogs 一键删除全部错误日志（仅管理员），消费日志等其他类型不受影响
+func DeleteErrorLogs(c *gin.Context) {
+	count, err := model.DeleteErrorLogs(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    count,
+	})
+}

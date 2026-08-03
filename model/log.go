@@ -736,3 +736,47 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 	}
 	return result.RowsAffected, nil
 }
+
+// DeleteErrorLogs 删除全部错误日志（type=LogTypeError），消费日志等其他类型不受影响。
+// SQL 库按 id 分批删除避免长事务（三库兼容）；ClickHouse 走单次同步 mutation（与 DeleteOldLogBatch 同策略）。
+func DeleteErrorLogs(ctx context.Context) (int64, error) {
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		var total int64
+		if err := LOG_DB.WithContext(ctx).Model(&Log{}).Where("type = ?", LogTypeError).Count(&total).Error; err != nil {
+			return 0, err
+		}
+		if total == 0 {
+			return 0, nil
+		}
+		if err := LOG_DB.WithContext(ctx).Exec(
+			"ALTER TABLE logs DELETE WHERE type = ? SETTINGS mutations_sync = 1",
+			LogTypeError,
+		).Error; err != nil {
+			return 0, err
+		}
+		return total, nil
+	}
+
+	const batchSize = 10000
+	var total int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		var ids []int
+		if err := LOG_DB.WithContext(ctx).Model(&Log{}).Where("type = ?", LogTypeError).Limit(batchSize).Pluck("id", &ids).Error; err != nil {
+			return total, err
+		}
+		if len(ids) == 0 {
+			return total, nil
+		}
+		result := LOG_DB.WithContext(ctx).Where("id IN ?", ids).Delete(&Log{})
+		if result.Error != nil {
+			return total, result.Error
+		}
+		total += result.RowsAffected
+		if len(ids) < batchSize {
+			return total, nil
+		}
+	}
+}
