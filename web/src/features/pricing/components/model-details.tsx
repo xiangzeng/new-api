@@ -1337,7 +1337,9 @@ export function ModelDetails() {
           priceRate={priceRate ?? 1}
           usdExchangeRate={usdExchangeRate ?? 1}
           tokenUnit={tokenUnit}
-          showRechargePrice={search.rechargePrice ?? false}
+          // Standard price only — the recharge-rate display mode is not offered,
+          // so a stale `?rechargePrice=true` link must not re-enable it.
+          showRechargePrice={false}
           endpointMap={
             (endpointMap as Record<
               string,

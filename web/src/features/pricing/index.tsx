@@ -74,7 +74,6 @@ export function Pricing() {
     setTagFilter,
     setTokenUnit,
     setViewMode,
-    setShowRechargePrice,
     filteredModels,
     hasActiveFilters,
     activeFilterCount,
@@ -232,8 +231,6 @@ export function Pricing() {
                 onSortChange={setSortBy}
                 tokenUnit={tokenUnit}
                 onTokenUnitChange={setTokenUnit}
-                showRechargePrice={showRechargePrice}
-                onRechargePriceChange={setShowRechargePrice}
                 viewMode={viewMode}
                 onViewModeChange={setViewMode}
                 quotaTypeFilter={quotaTypeFilter}

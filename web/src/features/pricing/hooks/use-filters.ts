@@ -41,8 +41,13 @@ type FilterState = {
   tag?: string
   tokenUnit?: TokenUnit
   view?: ViewMode
-  rechargePrice?: boolean
 }
+
+/**
+ * Prices are always shown at the standard rate; the recharge-rate display mode
+ * is not offered on this deployment. Flip this to re-enable the toggle path.
+ */
+const SHOW_RECHARGE_PRICE = false
 
 function normalizeViewMode(value: unknown): ViewMode {
   if (value === VIEW_MODES.TABLE) {
@@ -63,7 +68,6 @@ export function useFilters(models: PricingModel[]) {
     tag: search.tag,
     tokenUnit: search.tokenUnit,
     view: search.view,
-    rechargePrice: search.rechargePrice,
   }))
 
   const searchInput = filterState.search || ''
@@ -76,7 +80,6 @@ export function useFilters(models: PricingModel[]) {
   const tokenUnit: TokenUnit =
     filterState.tokenUnit === 'K' ? 'K' : DEFAULT_TOKEN_UNIT
   const viewMode = normalizeViewMode(filterState.view)
-  const showRechargePrice = filterState.rechargePrice === true
 
   const updateFilters = useCallback((updates: Record<string, unknown>) => {
     setFilterState((prev) => {
@@ -131,10 +134,6 @@ export function useFilters(models: PricingModel[]) {
   const setViewMode = useCallback(
     (v: ViewMode) =>
       updateFilters({ view: v === VIEW_MODES.CARD ? undefined : v }),
-    [updateFilters]
-  )
-  const setShowRechargePrice = useCallback(
-    (v: boolean) => updateFilters({ rechargePrice: v || undefined }),
     [updateFilters]
   )
 
@@ -210,7 +209,7 @@ export function useFilters(models: PricingModel[]) {
     tagFilter,
     tokenUnit,
     viewMode,
-    showRechargePrice,
+    showRechargePrice: SHOW_RECHARGE_PRICE,
     setSearchInput,
     setSortBy,
     setVendorFilter,
@@ -220,7 +219,6 @@ export function useFilters(models: PricingModel[]) {
     setTagFilter,
     setTokenUnit,
     setViewMode,
-    setShowRechargePrice,
     filteredModels,
     hasActiveFilters,
     activeFilterCount,
