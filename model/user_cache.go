@@ -6,24 +6,27 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	rootdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/gin-gonic/gin"
 )
 
-const userCacheSchemaVersion = 2
+// v3: 新增 custom_pricing 字段（千人千面），旧缓存自动判 stale 回源重建
+const userCacheSchemaVersion = 3
 
 type UserBase struct {
-	Id          int    `json:"id"`
-	Group       string `json:"group"`
-	Email       string `json:"email"`
-	Quota       int    `json:"quota"`
-	Status      int    `json:"status"`
-	Role        int    `json:"role"`
-	Username    string `json:"username"`
-	Setting     string `json:"setting"`
-	AuthVersion int64  `json:"-"`
-	CacheSchema int    `json:"-"`
+	Id            int    `json:"id"`
+	Group         string `json:"group"`
+	Email         string `json:"email"`
+	Quota         int    `json:"quota"`
+	Status        int    `json:"status"`
+	Role          int    `json:"role"`
+	Username      string `json:"username"`
+	Setting       string `json:"setting"`
+	CustomPricing string `json:"custom_pricing"`
+	AuthVersion   int64  `json:"-"`
+	CacheSchema   int    `json:"-"`
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -33,6 +36,7 @@ func (user *UserBase) WriteContext(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyUserEmail, user.Email)
 	common.SetContextKey(c, constant.ContextKeyUserName, user.Username)
 	common.SetContextKey(c, constant.ContextKeyUserSetting, user.GetSetting())
+	common.SetContextKey(c, constant.ContextKeyUserCustomPricing, user.GetCustomPricing())
 }
 
 func (user *UserBase) GetSetting() dto.UserSetting {
@@ -44,6 +48,17 @@ func (user *UserBase) GetSetting() dto.UserSetting {
 		}
 	}
 	return setting
+}
+
+func (user *UserBase) GetCustomPricing() rootdto.UserCustomPricing {
+	pricing := rootdto.UserCustomPricing{}
+	if user.CustomPricing != "" {
+		err := common.Unmarshal([]byte(user.CustomPricing), &pricing)
+		if err != nil {
+			common.SysLog("failed to unmarshal custom_pricing: " + err.Error())
+		}
+	}
+	return pricing
 }
 
 // getUserCacheKey returns the key for user cache

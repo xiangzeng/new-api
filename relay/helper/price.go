@@ -55,6 +55,16 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hostty
 		relayInfo.UsingGroup = autoGroup.(string)
 	}
 
+	// 用户级自定义倍率（千人千面，优先级最高）
+	if relayInfo.UserCustomPricing.Enabled {
+		if gp, ok := relayInfo.UserCustomPricing.Groups[relayInfo.UsingGroup]; ok {
+			groupRatioInfo.GroupRatio = gp.Ratio
+			groupRatioInfo.GroupSpecialRatio = gp.Ratio
+			groupRatioInfo.HasSpecialRatio = true
+			return groupRatioInfo
+		}
+	}
+
 	// check user group special ratio
 	userGroupRatio, ok := ratio_setting.GetGroupGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup)
 	if ok {

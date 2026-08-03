@@ -645,7 +645,8 @@ func GetUserModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups := service.GetUserUsableGroups(user.Group)
+	customPricing := user.GetCustomPricing()
+	groups := service.GetUserUsableGroupsWithCustomPricing(user.Group, &customPricing)
 	group := c.Query("group")
 	var groupsToQuery []string
 	switch {

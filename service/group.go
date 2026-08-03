@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -42,6 +43,33 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 
 func GroupInUserUsableGroups(userGroup, groupName string) bool {
 	_, ok := GetUserUsableGroups(userGroup)[groupName]
+	return ok
+}
+
+// GetUserUsableGroupsWithCustomPricing 在基础可见集 + 用户分组级覆盖之后，
+// 叠加用户个人级覆盖（千人千面的 ExtraGroups / HideGroups），优先级最高。
+func GetUserUsableGroupsWithCustomPricing(userGroup string, customPricing *dto.UserCustomPricing) map[string]string {
+	groupsCopy := GetUserUsableGroups(userGroup)
+	if customPricing == nil || !customPricing.Enabled {
+		return groupsCopy
+	}
+	// 添加额外可见分组
+	for name, desc := range customPricing.ExtraGroups {
+		groupsCopy[name] = desc
+	}
+	// 强制隐藏分组（用户自身分组不可被隐藏）
+	for _, name := range customPricing.HideGroups {
+		if name == userGroup {
+			continue
+		}
+		delete(groupsCopy, name)
+	}
+	return groupsCopy
+}
+
+// GroupInUserUsableGroupsWithCustomPricing 带用户级覆盖的分组可见性判断
+func GroupInUserUsableGroupsWithCustomPricing(userGroup, groupName string, customPricing *dto.UserCustomPricing) bool {
+	_, ok := GetUserUsableGroupsWithCustomPricing(userGroup, customPricing)[groupName]
 	return ok
 }
 

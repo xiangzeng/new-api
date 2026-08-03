@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	rootdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -111,6 +112,7 @@ type RelayInfo struct {
 	AudioUsage             bool
 	ReasoningEffort        string
 	UserSetting            dto.UserSetting
+	UserCustomPricing      rootdto.UserCustomPricing
 	UserEmail              string
 	UserQuota              int
 	RelayFormat            types.RelayFormat
@@ -520,6 +522,11 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	userSetting, ok := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 	if ok {
 		info.UserSetting = userSetting
+	}
+
+	userCustomPricing, ok := common.GetContextKeyType[rootdto.UserCustomPricing](c, constant.ContextKeyUserCustomPricing)
+	if ok {
+		info.UserCustomPricing = userCustomPricing
 	}
 
 	return info

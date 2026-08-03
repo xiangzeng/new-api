@@ -149,6 +149,12 @@ func SetApiRouter(router *gin.Engine) {
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+
+				// Custom pricing (千人千面)
+				adminRoute.GET("/custom-pricing/list", controller.GetCustomPricingUsers)
+				adminRoute.GET("/:id/custom-pricing", controller.GetUserCustomPricing)
+				adminRoute.PUT("/:id/custom-pricing", controller.UpdateUserCustomPricing)
+				adminRoute.DELETE("/:id/custom-pricing", controller.DeleteUserCustomPricing)
 			}
 		}
 
