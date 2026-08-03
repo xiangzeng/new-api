@@ -138,6 +138,10 @@ export function SidebarModulesSection({
         title: t('Custom Pricing'),
         description: t('Manage per-user group pricing overrides.'),
       },
+      invitation: {
+        title: t('Invitations'),
+        description: t('Review inviter rewards and invitee consumption.'),
+      },
       models: {
         title: t('Models'),
         description: t('Manage catalog visibility and pricing.'),

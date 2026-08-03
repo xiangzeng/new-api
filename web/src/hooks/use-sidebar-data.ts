@@ -29,6 +29,7 @@ import {
   Radio,
   ServerCog,
   Settings,
+  Share2,
   SlidersHorizontal,
   Ticket,
   User,
@@ -139,6 +140,11 @@ export function useSidebarData(): SidebarData {
             title: t('Custom Pricing'),
             url: '/custom-pricing',
             icon: SlidersHorizontal,
+          },
+          {
+            title: t('Invitations'),
+            url: '/invitations',
+            icon: Share2,
           },
           {
             title: t('Redemption Codes'),
