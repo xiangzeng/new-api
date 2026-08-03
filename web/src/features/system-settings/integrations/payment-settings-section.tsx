@@ -425,8 +425,12 @@ export function PaymentSettingsSection({
       MinTopUp: values.MinTopUp,
       CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
       PayMethods: values.PayMethods.trim(),
-      AmountOptions: values.AmountOptions.trim(),
-      AmountDiscount: values.AmountDiscount.trim(),
+      // Send an explicit empty container instead of "": the backend config
+      // loader json.Unmarshal's these keys and silently keeps the previous
+      // value when the payload is not valid JSON, so clearing the editor
+      // would otherwise be a no-op that resurfaces on restart.
+      AmountOptions: values.AmountOptions.trim() || '[]',
+      AmountDiscount: values.AmountDiscount.trim() || '{}',
       StripeApiSecret: values.StripeApiSecret.trim(),
       StripeWebhookSecret: values.StripeWebhookSecret.trim(),
       StripePriceId: values.StripePriceId.trim(),
