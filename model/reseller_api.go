@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 
+	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
 )
 
@@ -12,16 +13,30 @@ var (
 )
 
 type ResellerCustomerListItem struct {
-	BindingId          int64  `json:"binding_id"`
-	CustomerId         int    `json:"customer_id"`
-	Username           string `json:"username"`
-	DisplayName        string `json:"display_name"`
-	Group              string `json:"group"`
-	Quota              int    `json:"quota"`
-	UsedQuota          int    `json:"used_quota"`
-	RegistrationSource string `json:"registration_source"`
-	BoundAt            int64  `json:"bound_at"`
-	PricingVersion     int64  `json:"pricing_version"`
+	BindingId               int64  `json:"binding_id"`
+	CustomerId              int    `json:"customer_id"`
+	Username                string `json:"username"`
+	DisplayName             string `json:"display_name"`
+	Status                  int    `json:"status"`
+	Group                   string `json:"group"`
+	Quota                   int    `json:"quota"`
+	UsedQuota               int    `json:"used_quota"`
+	RegistrationSource      string `json:"registration_source"`
+	BoundAt                 int64  `json:"bound_at"`
+	PricingVersion          int64  `json:"pricing_version"`
+	CurrentMultiplierBps    int    `json:"current_multiplier_bps"`
+	PendingMultiplierBps    int    `json:"pending_multiplier_bps"`
+	PendingEffectiveAt      int64  `json:"pending_effective_at"`
+	CustomerRetailQuota     int64  `json:"customer_retail_quota"`
+	ResellerRequestCount    int64  `json:"reseller_request_count"`
+	ResellerCommissionQuota int64  `json:"reseller_commission_quota"`
+}
+
+type resellerCustomerTotals struct {
+	CustomerId      int   `gorm:"column:customer_id"`
+	RetailQuota     int64 `gorm:"column:retail_quota"`
+	CommissionQuota int64 `gorm:"column:commission_quota"`
+	RequestCount    int64 `gorm:"column:request_count"`
 }
 
 type ResellerTransferListItem struct {
@@ -153,16 +168,87 @@ func ListResellerCustomers(resellerId int, offset int, limit int) ([]ResellerCus
 	if err := query.Order("bound_at DESC, id DESC").Offset(offset).Limit(limit).Find(&bindings).Error; err != nil {
 		return nil, 0, err
 	}
+	if len(bindings) == 0 {
+		return make([]ResellerCustomerListItem, 0), total, nil
+	}
+
+	profile, err := GetResellerProfile(resellerId)
+	if err != nil {
+		return nil, 0, err
+	}
+	defaultRules, err := GetResellerPricingRules(ResellerPricingOwnerDefault, profile.Id)
+	if err != nil {
+		return nil, 0, err
+	}
+	customerIds := make([]int, 0, len(bindings))
+	bindingIds := make([]int64, 0, len(bindings))
+	for _, binding := range bindings {
+		customerIds = append(customerIds, binding.CustomerId)
+		bindingIds = append(bindingIds, binding.Id)
+	}
+
+	var users []User
+	if err := DB.Select("id", "username", "display_name", "status", "group", "quota", "used_quota").
+		Where("id IN ?", customerIds).Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+	usersById := make(map[int]User, len(users))
+	for _, user := range users {
+		usersById[user.Id] = user
+	}
+
+	var customerRuleRows []ResellerPricingRule
+	if err := DB.Where("owner_type = ? AND owner_id IN ? AND group_name = ?", ResellerPricingOwnerCustomer, bindingIds, "").
+		Find(&customerRuleRows).Error; err != nil {
+		return nil, 0, err
+	}
+	customerRulesByBindingId := make(map[int64]ResellerPricingRule, len(customerRuleRows))
+	for _, rule := range customerRuleRows {
+		customerRulesByBindingId[rule.OwnerId] = rule
+	}
+
+	var totalRows []resellerCustomerTotals
+	if err := DB.Model(&ResellerCommissionEntry{}).
+		Select("customer_id, COALESCE(SUM(retail_quota), 0) AS retail_quota, COALESCE(SUM(commission_quota), 0) AS commission_quota, COUNT(*) AS request_count").
+		Where("reseller_id = ? AND customer_id IN ?", resellerId, customerIds).
+		Group("customer_id").Scan(&totalRows).Error; err != nil {
+		return nil, 0, err
+	}
+	totalsByCustomerId := make(map[int]resellerCustomerTotals, len(totalRows))
+	for _, row := range totalRows {
+		totalsByCustomerId[row.CustomerId] = row
+	}
+
+	now := common.GetTimestamp()
 	items := make([]ResellerCustomerListItem, 0, len(bindings))
 	for _, binding := range bindings {
-		var user User
-		if err := DB.Select("id", "username", "display_name", "group", "quota", "used_quota").First(&user, binding.CustomerId).Error; err != nil {
-			return nil, 0, err
+		user, ok := usersById[binding.CustomerId]
+		if !ok {
+			return nil, 0, gorm.ErrRecordNotFound
 		}
+		customerRules := make(map[string]ResellerPricingRule, 1)
+		if rule, exists := customerRulesByBindingId[binding.Id]; exists {
+			customerRules[""] = rule
+		}
+		resolved := ResolveResellerMultiplier(defaultRules, customerRules, "", now)
+		pendingMultiplierBps, pendingEffectiveAt := 0, int64(0)
+		if rule, exists := customerRulesByBindingId[binding.Id]; exists {
+			if rule.PendingMultiplierBps > 0 && rule.PendingEffectiveAt > now {
+				pendingMultiplierBps, pendingEffectiveAt = rule.PendingMultiplierBps, rule.PendingEffectiveAt
+			}
+		} else if rule, exists := defaultRules[""]; exists {
+			if rule.PendingMultiplierBps > 0 && rule.PendingEffectiveAt > now {
+				pendingMultiplierBps, pendingEffectiveAt = rule.PendingMultiplierBps, rule.PendingEffectiveAt
+			}
+		}
+		totals := totalsByCustomerId[binding.CustomerId]
 		items = append(items, ResellerCustomerListItem{
 			BindingId: binding.Id, CustomerId: binding.CustomerId, Username: user.Username,
-			DisplayName: user.DisplayName, Group: user.Group, Quota: user.Quota, UsedQuota: user.UsedQuota,
+			DisplayName: user.DisplayName, Status: user.Status, Group: user.Group, Quota: user.Quota, UsedQuota: user.UsedQuota,
 			RegistrationSource: binding.RegistrationSource, BoundAt: binding.BoundAt, PricingVersion: binding.PricingVersion,
+			CurrentMultiplierBps: resolved.MultiplierBps, PendingMultiplierBps: pendingMultiplierBps,
+			PendingEffectiveAt: pendingEffectiveAt, CustomerRetailQuota: totals.RetailQuota,
+			ResellerRequestCount: totals.RequestCount, ResellerCommissionQuota: totals.CommissionQuota,
 		})
 	}
 	return items, total, nil

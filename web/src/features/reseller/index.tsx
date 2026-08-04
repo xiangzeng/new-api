@@ -649,7 +649,9 @@ function CustomersPanel({
       title={t('Direct customers')}
       count={page.total}
       empty={page.items.length === 0}
-      emptyText={t('No direct customers yet.')}
+      emptyText={t(
+        'Customers who register through your invitation will appear here.'
+      )}
       page={page}
       onPageChange={onPageChange}
     >
@@ -657,10 +659,10 @@ function CustomersPanel({
         <TableHeader>
           <TableRow>
             <TableHead>{t('Customer')}</TableHead>
-            <TableHead>{t('Group')}</TableHead>
+            <TableHead>{t('Current price')}</TableHead>
             <TableHead>{t('Usage')}</TableHead>
-            <TableHead>{t('Bound at')}</TableHead>
-            <TableHead className='text-right'>{t('Pricing')}</TableHead>
+            <TableHead>{t('Your earnings')}</TableHead>
+            <TableHead className='text-right'>{t('Actions')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -669,22 +671,52 @@ function CustomersPanel({
               <TableCell>
                 <div className='font-medium'>
                   {customer.display_name || customer.username}
+                  {customer.status !== 1 ? (
+                    <Badge variant='destructive' className='ml-2'>
+                      {t('Disabled')}
+                    </Badge>
+                  ) : null}
                 </div>
                 <div className='text-muted-foreground text-xs'>
                   #{customer.customer_id} · {customer.username}
                 </div>
               </TableCell>
-              <TableCell>
-                <Badge variant='outline'>{customer.group}</Badge>
+              <TableCell className='tabular-nums'>
+                <div>
+                  {(customer.current_multiplier_bps / 10000).toFixed(4)}x
+                </div>
+                {customer.pending_multiplier_bps > 0 &&
+                customer.pending_effective_at > 0 ? (
+                  <div className='text-muted-foreground mt-1 text-xs'>
+                    {t('{{multiplier}}x from {{time}}', {
+                      multiplier: (
+                        customer.pending_multiplier_bps / 10000
+                      ).toFixed(4),
+                      time: formatTimestampToDate(
+                        customer.pending_effective_at
+                      ),
+                    })}
+                  </div>
+                ) : null}
               </TableCell>
-              <TableCell>{formatQuota(customer.used_quota)}</TableCell>
-              <TableCell>{formatTimestampToDate(customer.bound_at)}</TableCell>
+              <TableCell className='tabular-nums'>
+                <div>{formatQuota(customer.customer_retail_quota)}</div>
+                <div className='text-muted-foreground mt-1 text-xs'>
+                  {t('{{count}} requests', {
+                    count: customer.reseller_request_count,
+                  })}
+                </div>
+              </TableCell>
+              <TableCell className='tabular-nums'>
+                {formatQuota(customer.reseller_commission_quota)}
+              </TableCell>
               <TableCell className='text-right'>
                 <Button
                   variant='ghost'
                   size='icon-sm'
                   onClick={() => onPricing(customer)}
                   aria-label={t('Edit customer pricing')}
+                  disabled={customer.status !== 1}
                 >
                   <Settings2 />
                 </Button>

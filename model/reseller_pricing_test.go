@@ -24,7 +24,7 @@ func setupResellerPricingTestDB(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&ResellerProfile{}, &ResellerCustomer{}, &ResellerPricingRule{}, &ResellerCommissionEntry{},
+		&User{}, &ResellerProfile{}, &ResellerCustomer{}, &ResellerPricingRule{}, &ResellerCommissionEntry{},
 		&ResellerLedgerTransaction{}, &ResellerLedgerLine{},
 	))
 	DB = db
@@ -299,6 +299,64 @@ func TestResolveActiveResellerPricingUsesBindingAndRuleScopes(t *testing.T) {
 	pricing, err = ResolveActiveResellerPricing(42, "vip", 1_700_000_000)
 	require.NoError(t, err)
 	assert.Nil(t, pricing)
+}
+
+func TestListResellerCustomersUsesOwnerScopedCommissionTotalsAndPricing(t *testing.T) {
+	setupResellerPricingTestDB(t)
+	now := common.GetTimestamp()
+	reseller := User{Username: "customer-list-reseller", AffCode: "customer-list-reseller-aff", Status: common.UserStatusEnabled}
+	first := User{Username: "customer-list-first", DisplayName: "First customer", AffCode: "customer-list-first-aff", Status: common.UserStatusEnabled, Group: "vip"}
+	second := User{Username: "customer-list-second", AffCode: "customer-list-second-aff", Status: common.UserStatusDisabled, Group: "default"}
+	unbound := User{Username: "customer-list-unbound", AffCode: "customer-list-unbound-aff", Status: common.UserStatusEnabled}
+	otherReseller := User{Username: "customer-list-other-reseller", AffCode: "customer-list-other-reseller-aff", Status: common.UserStatusEnabled}
+	for _, user := range []*User{&reseller, &first, &second, &unbound, &otherReseller} {
+		require.NoError(t, DB.Create(user).Error)
+	}
+	profile := ResellerProfile{UserId: reseller.Id, Status: ResellerStatusActive, ReceivePublicId: "customer-list-reseller-receive-id", PricingVersion: 1}
+	require.NoError(t, DB.Create(&profile).Error)
+	firstBinding := ResellerCustomer{ResellerId: reseller.Id, CustomerId: first.Id, RegistrationSource: ResellerRegistrationSourceReseller, BoundAt: now + 2, PricingVersion: 1}
+	secondBinding := ResellerCustomer{ResellerId: reseller.Id, CustomerId: second.Id, RegistrationSource: ResellerRegistrationSourceReseller, BoundAt: now + 1, PricingVersion: 1}
+	require.NoError(t, DB.Create(&firstBinding).Error)
+	require.NoError(t, DB.Create(&secondBinding).Error)
+	require.NoError(t, DB.Create(&ResellerPricingRule{
+		OwnerType: ResellerPricingOwnerDefault, OwnerId: profile.Id, GroupName: "", CurrentMultiplierBps: 11000,
+	}).Error)
+	require.NoError(t, DB.Create(&ResellerPricingRule{
+		OwnerType: ResellerPricingOwnerCustomer, OwnerId: firstBinding.Id, GroupName: "", CurrentMultiplierBps: 13000,
+		PendingMultiplierBps: 14000, PendingEffectiveAt: now + 3600,
+	}).Error)
+
+	entries := []ResellerCommissionEntry{
+		{RequestReference: "customer-list-first-1", ResellerId: reseller.Id, CustomerId: first.Id, CustomerBindingId: firstBinding.Id, MultiplierBps: 13000, MultiplierSource: string(ResellerMultiplierSourceCustomerOverall), BaseQuota: 100, RetailQuota: 130, CommissionQuota: 30},
+		{RequestReference: "customer-list-first-2", ResellerId: reseller.Id, CustomerId: first.Id, CustomerBindingId: firstBinding.Id, MultiplierBps: 13000, MultiplierSource: string(ResellerMultiplierSourceCustomerOverall), BaseQuota: 50, RetailQuota: 65, CommissionQuota: 15},
+		{RequestReference: "customer-list-second-1", ResellerId: reseller.Id, CustomerId: second.Id, CustomerBindingId: secondBinding.Id, MultiplierBps: 11000, MultiplierSource: string(ResellerMultiplierSourceDefaultOverall), BaseQuota: 80, RetailQuota: 88, CommissionQuota: 8},
+		{RequestReference: "customer-list-unbound", ResellerId: reseller.Id, CustomerId: unbound.Id, CustomerBindingId: 0, MultiplierBps: 12000, MultiplierSource: string(ResellerMultiplierSourceDefaultOverall), BaseQuota: 100, RetailQuota: 120, CommissionQuota: 20},
+		{RequestReference: "customer-list-foreign", ResellerId: otherReseller.Id, CustomerId: first.Id, CustomerBindingId: firstBinding.Id, MultiplierBps: 20000, MultiplierSource: string(ResellerMultiplierSourceCustomerOverall), BaseQuota: 100, RetailQuota: 200, CommissionQuota: 100},
+	}
+	for index := range entries {
+		require.NoError(t, DB.Create(&entries[index]).Error)
+	}
+
+	items, total, err := ListResellerCustomers(reseller.Id, 0, 20)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	require.Len(t, items, 2)
+	assert.Equal(t, first.Id, items[0].CustomerId)
+	assert.Equal(t, "First customer", items[0].DisplayName)
+	assert.Equal(t, common.UserStatusEnabled, items[0].Status)
+	assert.Equal(t, 13000, items[0].CurrentMultiplierBps)
+	assert.Equal(t, 14000, items[0].PendingMultiplierBps)
+	assert.Equal(t, now+3600, items[0].PendingEffectiveAt)
+	assert.EqualValues(t, 195, items[0].CustomerRetailQuota)
+	assert.EqualValues(t, 2, items[0].ResellerRequestCount)
+	assert.EqualValues(t, 45, items[0].ResellerCommissionQuota)
+	assert.Equal(t, second.Id, items[1].CustomerId)
+	assert.Equal(t, common.UserStatusDisabled, items[1].Status)
+	assert.Equal(t, 11000, items[1].CurrentMultiplierBps)
+	assert.Zero(t, items[1].PendingMultiplierBps)
+	assert.EqualValues(t, 88, items[1].CustomerRetailQuota)
+	assert.EqualValues(t, 1, items[1].ResellerRequestCount)
+	assert.EqualValues(t, 8, items[1].ResellerCommissionQuota)
 }
 
 func TestCreateResellerCommissionIsConcurrentAndReplaySafe(t *testing.T) {

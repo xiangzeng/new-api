@@ -159,7 +159,15 @@ const zhCN = {
   'Create one-time codes backed by escrowed quota.':
     '使用托管额度创建一次性用户码。',
   'No direct customers yet.': '暂无直属客户。',
+  'Customers who register through your invitation will appear here.':
+    '通过你的邀请链接注册的客户会显示在这里。',
   Customer: '客户',
+  'Current price': '当前价格',
+  'Your earnings': '你的收益',
+  Actions: '操作',
+  '{{multiplier}}x from {{time}}': '{{multiplier}}x 将于 {{time}} 生效',
+  '{{count}} requests': '{{count}} 次请求',
+  Disabled: '已禁用',
   'Bound at': '绑定时间',
   'Edit customer pricing': '编辑客户定价',
   'Ledger entries': '账本记录',

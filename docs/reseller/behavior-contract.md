@@ -48,7 +48,14 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - 收益先进入 pending，在下一个北京时间 04:10 批次释放为 available。
 - available 只能转换到代理自己的 API 钱包，不支持现金提现。
 
-### 2.4 额度安全
+### 2.4 直属客户可见性
+
+- 已确认的目标站客户列表为 `GET /api/reseller/customers?p={page}&page_size={pageSize}`，桌面表格列为客户、当前价格、使用量、你的收益和操作，目标前端分页大小为 20。
+- 每个客户行使用已服务字段 `current_multiplier_bps`、`pending_multiplier_bps`、`pending_multiplier_at`、`customer_retail_quota_text`、`reseller_request_count` 与 `reseller_commission_quota_text`；禁用用户可见但不能编辑价格。
+- 本地实现设计：仅返回当前代理的直属绑定；使用量、请求数和收益只按 `(reseller_id, customer_id)` 聚合 `ResellerCommissionEntry`。它们是站长账本口径，不能替代客户在全站的 `used_quota`、API key、请求正文或模型输入。
+- 当前账本仅在有正差价佣金时写入，故 1.0000x 零价差成功请求不会计入这组本地累计指标；独立的全量站长归因使用表属于后续扩展，不把缺失数据伪装为零消费。
+
+### 2.5 额度安全
 
 - 使用独立六位数字额度密码。
 - 首次设置或重置额度密码可使用登录密码，或使用已建立的 2FA / Passkey 安全复核；日常额度授权不复用该 proof。

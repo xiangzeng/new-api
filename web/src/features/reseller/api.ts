@@ -150,7 +150,7 @@ async function getPage<T>(path: string, page = 1, pageSize = 50) {
 }
 
 export const getResellerCustomers = (page = 1) =>
-  getPage<ResellerCustomer>('/api/reseller/customers', page)
+  getPage<ResellerCustomer>('/api/reseller/customers', page, 20)
 export const getResellerTransfers = (page = 1) =>
   getPage<ResellerTransfer>('/api/reseller/transfers', page)
 export const getResellerLedger = (page = 1) =>

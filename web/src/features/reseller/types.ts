@@ -83,12 +83,19 @@ export interface ResellerCustomer {
   customer_id: number
   username: string
   display_name: string
+  status: number
   group: string
   quota: number
   used_quota: number
   registration_source: string
   bound_at: number
   pricing_version: number
+  current_multiplier_bps: number
+  pending_multiplier_bps: number
+  pending_effective_at: number
+  customer_retail_quota: number
+  reseller_request_count: number
+  reseller_commission_quota: number
 }
 
 export interface ResellerTransfer {
