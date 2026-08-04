@@ -648,7 +648,17 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	}
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
+		if RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整") {
+			if bc := task.PrivateData.BillingContext; bc != nil && bc.ResellerId > 0 {
+				if actualQuota == bc.RetailPreConsumedQuota {
+					if err := FinalizeTaskResellerCommission(task, bc.BasePreConsumedQuota, actualQuota); err != nil {
+						logger.LogError(ctx, fmt.Sprintf("任务 %s 代理佣金入账失败: %s", task.TaskID, err.Error()))
+					}
+				} else {
+					logger.LogError(ctx, fmt.Sprintf("任务 %s 缺少 adaptor base quote，跳过代理佣金入账", task.TaskID))
+				}
+			}
+		}
 		return
 	}
 	// 2. 回退到 token 重算
@@ -656,5 +666,10 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
 		return
 	}
-	// 3. 无调整，保持预扣额度
+	// 3. 无调整，预扣报价就是权威最终报价。
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.ResellerId > 0 {
+		if err := FinalizeTaskResellerCommission(task, bc.BasePreConsumedQuota, task.Quota); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("任务 %s 代理佣金入账失败: %s", task.TaskID, err.Error()))
+		}
+	}
 }

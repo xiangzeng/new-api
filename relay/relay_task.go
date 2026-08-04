@@ -200,6 +200,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
+		if info.ResellerPricing != nil {
+			baseWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.ResellerPricing.BasePreConsumedQuota))
+			baseQuota, baseClamp := common.QuotaFromFloatChecked(baseWithRatios)
+			info.ResellerPricing.BasePreConsumedQuota = baseQuota
+			info.ResellerPricing.RetailPreConsumedQuota = quota
+			noteTaskQuotaClamp(info, baseClamp)
+		}
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
@@ -264,6 +271,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float64) (int, bool) {
 	// 从 PriceData 获取不含 OtherRatios 的基础价格
 	baseQuota := info.PriceData.RemoveOtherRatiosFromFloat(float64(info.PriceData.Quota))
+	resellerBaseQuota := 0.0
+	if info.ResellerPricing != nil {
+		resellerBaseQuota = info.PriceData.RemoveOtherRatiosFromFloat(float64(info.ResellerPricing.BasePreConsumedQuota))
+	}
 	priceData := info.PriceData
 	if !priceData.ReplaceOtherRatios(ratios) {
 		return 0, false
@@ -272,6 +283,13 @@ func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float6
 	result := priceData.ApplyOtherRatiosToFloat(baseQuota)
 	quota, clamp := common.QuotaFromFloatChecked(result)
 	noteTaskQuotaClamp(info, clamp)
+	if info.ResellerPricing != nil {
+		resellerResult := priceData.ApplyOtherRatiosToFloat(resellerBaseQuota)
+		baseResult, baseClamp := common.QuotaFromFloatChecked(resellerResult)
+		info.ResellerPricing.BasePreConsumedQuota = baseResult
+		info.ResellerPricing.RetailPreConsumedQuota = quota
+		noteTaskQuotaClamp(info, baseClamp)
+	}
 	return quota, true
 }
 

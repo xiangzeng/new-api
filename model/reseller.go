@@ -11,6 +11,9 @@ const (
 
 	ResellerPricingOwnerDefault  = "default"
 	ResellerPricingOwnerCustomer = "customer"
+
+	ResellerCommissionStatusPending   = "pending"
+	ResellerCommissionStatusAvailable = "available"
 )
 
 // ResellerProfile is the reseller-level aggregate. Commission balances are
@@ -54,4 +57,23 @@ type ResellerPricingRule struct {
 	Version              int64  `json:"version" gorm:"type:bigint;not null;default:1"`
 	CreatedAt            int64  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt            int64  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+// ResellerCommissionEntry is the request-level accounting source for reseller
+// earnings. A stable request reference makes settlement callbacks replay-safe.
+type ResellerCommissionEntry struct {
+	Id                int64  `json:"id" gorm:"primaryKey"`
+	RequestReference  string `json:"request_reference" gorm:"type:varchar(191);not null;uniqueIndex:ux_reseller_commission_reference"`
+	ResellerId        int    `json:"reseller_id" gorm:"not null;index:idx_reseller_commission_owner_status_release,priority:1"`
+	CustomerId        int    `json:"customer_id" gorm:"not null;index"`
+	CustomerBindingId int64  `json:"customer_binding_id" gorm:"not null;index"`
+	MultiplierBps     int    `json:"multiplier_bps" gorm:"not null"`
+	MultiplierSource  string `json:"multiplier_source" gorm:"type:varchar(32);not null"`
+	BaseQuota         int    `json:"base_quota" gorm:"not null"`
+	RetailQuota       int    `json:"retail_quota" gorm:"not null"`
+	CommissionQuota   int    `json:"commission_quota" gorm:"not null"`
+	Status            string `json:"status" gorm:"type:varchar(16);not null;default:'pending';index:idx_reseller_commission_owner_status_release,priority:2"`
+	ReleaseAt         int64  `json:"release_at" gorm:"type:bigint;not null;index:idx_reseller_commission_owner_status_release,priority:3"`
+	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt         int64  `json:"updated_at" gorm:"autoUpdateTime"`
 }

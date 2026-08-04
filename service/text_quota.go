@@ -421,6 +421,20 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
 		}
 	}
+	if baseRelayInfo := cloneRelayInfoForResellerBaseQuote(relayInfo); baseRelayInfo != nil {
+		baseSummary := calculateTextQuotaSummary(ctx, baseRelayInfo, billingUsage)
+		if originUsage != nil {
+			var baseTieredUsedVars map[string]bool
+			if snap := baseRelayInfo.TieredBillingSnapshot; snap != nil {
+				baseTieredUsedVars = billingexpr.UsedVars(snap.ExprString)
+			}
+			baseTieredOk, baseTieredQuota, baseTieredResult := TryTieredSettle(baseRelayInfo, BuildTieredTokenParams(billingUsage, baseSummary.IsClaudeUsageSemantic, baseTieredUsedVars))
+			if baseTieredOk {
+				baseSummary.Quota = composeTieredTextQuota(baseRelayInfo, baseSummary, baseTieredQuota, baseTieredResult)
+			}
+		}
+		SetResellerActualQuota(relayInfo, baseSummary.Quota, summary.Quota)
+	}
 
 	for _, item := range summary.ToolSurchargeItems {
 		q := decimal.NewFromFloat(item.Price).

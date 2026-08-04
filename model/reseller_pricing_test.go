@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
@@ -22,7 +23,7 @@ func setupResellerPricingTestDB(t *testing.T) {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&ResellerProfile{}, &ResellerCustomer{}, &ResellerPricingRule{}))
+	require.NoError(t, db.AutoMigrate(&ResellerProfile{}, &ResellerCustomer{}, &ResellerPricingRule{}, &ResellerCommissionEntry{}))
 	DB = db
 	t.Cleanup(func() {
 		DB = previousDB
@@ -211,4 +212,85 @@ func TestValidateResellerMultiplierBps(t *testing.T) {
 			assert.True(t, errors.Is(err, ErrResellerMultiplierOutOfRange))
 		}
 	}
+}
+
+func TestResolveActiveResellerPricingUsesBindingAndRuleScopes(t *testing.T) {
+	setupResellerPricingTestDB(t)
+	profile := ResellerProfile{UserId: 41, ReceivePublicId: "resolve-active-reseller-pricing01"}
+	require.NoError(t, DB.Create(&profile).Error)
+	binding := ResellerCustomer{ResellerId: 41, CustomerId: 42, RegistrationSource: ResellerRegistrationSourceReseller, BoundAt: 1}
+	require.NoError(t, DB.Create(&binding).Error)
+	require.NoError(t, DB.Create(&ResellerPricingRule{
+		OwnerType: ResellerPricingOwnerDefault, OwnerId: profile.Id, GroupName: "vip", CurrentMultiplierBps: 12000,
+	}).Error)
+	require.NoError(t, DB.Create(&ResellerPricingRule{
+		OwnerType: ResellerPricingOwnerCustomer, OwnerId: binding.Id, GroupName: "vip", CurrentMultiplierBps: 14500,
+	}).Error)
+
+	pricing, err := ResolveActiveResellerPricing(42, "vip", 1_700_000_000)
+	require.NoError(t, err)
+	require.NotNil(t, pricing)
+	assert.Equal(t, 41, pricing.ResellerId)
+	assert.EqualValues(t, binding.Id, pricing.CustomerBindingId)
+	assert.Equal(t, 14500, pricing.MultiplierBps)
+	assert.Equal(t, ResellerMultiplierSourceCustomerGroup, pricing.MultiplierSource)
+
+	require.NoError(t, DB.Model(&ResellerProfile{}).Where("id = ?", profile.Id).Update("status", ResellerStatusFrozen).Error)
+	pricing, err = ResolveActiveResellerPricing(42, "vip", 1_700_000_000)
+	require.NoError(t, err)
+	assert.Nil(t, pricing)
+}
+
+func TestCreateResellerCommissionIsConcurrentAndReplaySafe(t *testing.T) {
+	setupResellerPricingTestDB(t)
+	sqlDB, err := DB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	params := CreateResellerCommissionParams{
+		RequestReference:  "request:req-phase3:final",
+		ResellerId:        51,
+		CustomerId:        52,
+		CustomerBindingId: 53,
+		MultiplierBps:     12500,
+		MultiplierSource:  string(ResellerMultiplierSourceCustomerOverall),
+		BaseQuota:         101,
+		RetailQuota:       127,
+		Now:               time.Date(2026, 8, 4, 3, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60)),
+	}
+
+	const workers = 8
+	entries := make([]*ResellerCommissionEntry, workers)
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			entries[index], errs[index] = CreateResellerCommission(params)
+		}(i)
+	}
+	wg.Wait()
+	for i := range workers {
+		require.NoError(t, errs[i])
+		require.NotNil(t, entries[i])
+		assert.Equal(t, 26, entries[i].CommissionQuota)
+	}
+	var count int64
+	require.NoError(t, DB.Model(&ResellerCommissionEntry{}).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+
+	conflict := params
+	conflict.RetailQuota++
+	_, err = CreateResellerCommission(conflict)
+	assert.ErrorIs(t, err, ErrResellerCommissionReferenceConflict)
+}
+
+func TestNextResellerCommissionReleaseAtUsesBeijing0410Boundary(t *testing.T) {
+	beijing := time.FixedZone("Asia/Shanghai", 8*60*60)
+	before := time.Date(2026, 8, 4, 4, 9, 59, 0, beijing)
+	atBoundary := time.Date(2026, 8, 4, 4, 10, 0, 0, beijing)
+
+	assert.Equal(t, time.Date(2026, 8, 4, 4, 10, 0, 0, beijing).Unix(), NextResellerCommissionReleaseAt(before))
+	assert.Equal(t, time.Date(2026, 8, 5, 4, 10, 0, 0, beijing).Unix(), NextResellerCommissionReleaseAt(atBoundary))
 }

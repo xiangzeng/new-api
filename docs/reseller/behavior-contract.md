@@ -125,9 +125,9 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - [x] API 方法和路径清单完成。
 - [x] 定价优先级、延迟涨价和版本冲突契约完成。
 - [x] pending/available/convert 资金边界完成。
-- [ ] 本地核心模型和解析器测试。
-- [ ] 本地注册归属测试。
-- [ ] 本地全计费路径双报价测试。
+- [x] 本地核心模型和解析器测试。
+- [x] 本地注册归属测试。
+- [x] 本地全计费路径双报价测试：比例价、固定价、缓存/工具附加费、阶梯表达式、Audio/WSS、Midjourney、图片/视频任务及异步 token 重算均保留同输入 base/retail quote；commission reference 有数据库唯一约束和并发重放测试。
 - [ ] 本地资金操作与并发测试。
 - [ ] 本地前端逐视图测试。
 - [ ] 目标站只读接口和本地响应字段差异检查。

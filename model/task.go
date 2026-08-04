@@ -114,12 +114,21 @@ type TaskPrivateData struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice      float64            `json:"model_price,omitempty"`       // 模型单价
-	GroupRatio      float64            `json:"group_ratio,omitempty"`       // 分组倍率
-	ModelRatio      float64            `json:"model_ratio,omitempty"`       // 模型倍率
-	OtherRatios     map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
-	OriginModelName string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
-	PerCallBilling  bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	ModelPrice                float64            `json:"model_price,omitempty"`       // 模型单价
+	GroupRatio                float64            `json:"group_ratio,omitempty"`       // 分组倍率
+	ModelRatio                float64            `json:"model_ratio,omitempty"`       // 模型倍率
+	OtherRatios               map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
+	OriginModelName           string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
+	PerCallBilling            bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	ResellerId                int                `json:"reseller_id,omitempty"`
+	ResellerCustomerId        int                `json:"reseller_customer_id,omitempty"`
+	ResellerCustomerBindingId int64              `json:"reseller_customer_binding_id,omitempty"`
+	ResellerMultiplierBps     int                `json:"reseller_multiplier_bps,omitempty"`
+	ResellerMultiplierSource  string             `json:"reseller_multiplier_source,omitempty"`
+	BaseGroupRatio            float64            `json:"base_group_ratio,omitempty"`
+	RetailGroupRatio          float64            `json:"retail_group_ratio,omitempty"`
+	BasePreConsumedQuota      int                `json:"base_pre_consumed_quota,omitempty"`
+	RetailPreConsumedQuota    int                `json:"retail_pre_consumed_quota,omitempty"`
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）

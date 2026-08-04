@@ -294,6 +294,7 @@ func migrateDB() error {
 		&ResellerCustomer{},
 		&ResellerPricingRule{},
 		&ResellerInvitation{},
+		&ResellerCommissionEntry{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -361,6 +362,7 @@ func migrateDBFast() error {
 		{&ResellerCustomer{}, "ResellerCustomer"},
 		{&ResellerPricingRule{}, "ResellerPricingRule"},
 		{&ResellerInvitation{}, "ResellerInvitation"},
+		{&ResellerCommissionEntry{}, "ResellerCommissionEntry"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

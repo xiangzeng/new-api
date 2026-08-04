@@ -9,8 +9,26 @@ import (
 
 type GroupRatioInfo struct {
 	GroupRatio        float64
+	BaseGroupRatio    float64
 	GroupSpecialRatio float64
 	HasSpecialRatio   bool
+}
+
+type ResellerPricingSnapshot struct {
+	Enabled                  bool
+	ResellerId               int
+	CustomerId               int
+	CustomerBindingId        int64
+	MultiplierBps            int
+	MultiplierSource         string
+	BaseGroupRatio           float64
+	RetailGroupRatio         float64
+	BasePreConsumedQuota     int
+	RetailPreConsumedQuota   int
+	BaseActualQuota          int
+	RetailActualQuota        int
+	SettlementReference      string
+	DeferCommissionUntilTask bool
 }
 
 type PriceData struct {
@@ -30,6 +48,7 @@ type PriceData struct {
 	Quota                int // 按次计费的最终额度（MJ / Task）
 	QuotaToPreConsume    int // 按量计费的预消耗额度
 	GroupRatioInfo       GroupRatioInfo
+	ResellerPricing      *ResellerPricingSnapshot
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {
