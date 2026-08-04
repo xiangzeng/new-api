@@ -26,8 +26,8 @@
 - [x] Phase 1 核心模型与定价解析器：三库兼容模型、四级优先级、延迟涨价、乐观锁。完成（commit `ef7e31e68`）
 - [x] Phase 2 邀请与归属：不透明邀请、密码/OAuth 注册原子直属绑定、来源分类。完成（commit `a6c2402dc`）
 - [x] Phase 3 双报价与佣金：覆盖全部计费路径并按唯一请求引用幂等入账。完成（commit `50f0f513`）
-- [x] Phase 4 收益释放：pending/available 账本及北京时间 04:10 可恢复批次。完成（本阶段提交）
-- [ ] Phase 5 额度操作：额度密码、冻结、preview/commit 转账、收益转换和用户码 escrow。
+- [x] Phase 4 收益释放：pending/available 账本及北京时间 04:10 可恢复批次。完成（commit `e147a8bb`）
+- [x] Phase 5 额度操作：额度密码、冻结、preview/commit 转账、收益转换和用户码 escrow。完成（本阶段提交）
 - [ ] Phase 6 API：完成 `/api/reseller/*` 契约、鉴权、限流、审计与错误语义。
 - [ ] Phase 7 前端：完成站长中心路由、视图、交互、响应式和 i18n。
 - [ ] Phase 8 预览与验证：本地服务、三库测试、构建、Playwright 和跨视口检查。
@@ -48,6 +48,15 @@
 - 技术决策：旧 `aff_quota`/`aff_history` 不自动并入新账本，避免双重记账。
 
 ## 4. 进度台账（每次会话末追加，倒序）
+
+### 2026-08-04（会话 4）
+
+- 做了：独立六位 bcrypt 额度密码；修改与安全重置；重置后发送/签发冻结 24 小时；preview nonce 只存 HMAC digest，绑定双方、金额、过期时间并一次消费。
+- 资金：收益转换、额度转账、用户码批量签发/再次 reveal/一次兑换全部走平衡 ledger；用户码明文只在响应内出现，数据库保存 HMAC digest 和 AEAD ciphertext；签发立即从钱包进入 escrow。
+- 防重与限额：转账、转换、签发使用 `(user, operation, Idempotency-Key)` 唯一记录；相同 payload 返回原结果，不同 payload 冲突；转账与用户码在锁定安全行后共享滚动 24 小时 4000 限额。
+- 边界：单次 1..2000，批量最多 50，备注最多 255 字符；不可取消或退款；密码重置冻结不妨碍接收与收益转换。
+- 验证：密码生命周期、转账重放、转换重放、共享限额、escrow/reveal/redeem、完整 `go test ./...` 与 race detector 通过。
+- 下一步：定义 reseller security-proof scopes，把全部模型能力接入 `/api/reseller/*`，增加鉴权、限流、审计、envelope 与错误码。
 
 ### 2026-08-04（会话 3）
 

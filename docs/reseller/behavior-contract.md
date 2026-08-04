@@ -129,7 +129,7 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - [x] 本地注册归属测试。
 - [x] 本地全计费路径双报价测试：比例价、固定价、缓存/工具附加费、阶梯表达式、Audio/WSS、Midjourney、图片/视频任务及异步 token 重算均保留同输入 base/retail quote；commission reference 有数据库唯一约束和并发重放测试。
 - [x] 本地 pending/available 复式账本与释放测试：accrual/release journal 借贷和为零，余额投影与 commission 状态同事务更新，投影不一致整体回滚，system-task lease 下可恢复重放。
-- [ ] 本地资金操作与并发测试。
+- [x] 本地资金操作与并发测试：六位额度密码、重置冻结、preview/commit nonce、幂等收益转换/转账/用户码、共享滚动限额、escrow/reveal/redeem 与账本平衡均有事务测试和 race detector 覆盖。
 - [ ] 本地前端逐视图测试。
 - [ ] 目标站只读接口和本地响应字段差异检查。
 - [ ] 使用可重置测试账户验证目标 mutation 的服务端错误和状态迁移。

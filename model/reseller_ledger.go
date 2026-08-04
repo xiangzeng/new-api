@@ -58,7 +58,7 @@ func createResellerLedgerTransactionWithTx(
 	commissionId int64,
 	lines []ResellerLedgerLineInput,
 ) (*ResellerLedgerTransaction, bool, error) {
-	if tx == nil || reference == "" || len(reference) > 191 || kind == "" || resellerId <= 0 || commissionId <= 0 {
+	if tx == nil || reference == "" || len(reference) > 191 || kind == "" || resellerId <= 0 || commissionId < 0 {
 		return nil, false, ErrResellerLedgerReferenceConflict
 	}
 	if err := validateResellerLedgerLines(lines); err != nil {
