@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { normalizeResellerPage } from './api'
+import { normalizeResellerPage, parseTransferRecipient } from './api'
 
 describe('reseller page normalization', () => {
   test('preserves collection responses', () => {
@@ -35,6 +35,27 @@ describe('reseller page normalization', () => {
     assert.deepEqual(
       normalizeResellerPage({ page: 1, page_size: 50, total: 0, items: null }),
       { page: 1, page_size: 50, total: 0, items: [] }
+    )
+  })
+})
+
+describe('reseller transfer recipient parsing', () => {
+  test('recognizes usernames and 32-character receive codes', () => {
+    assert.deepEqual(parseTransferRecipient('recipient-user'), {
+      recipient_username: 'recipient-user',
+    })
+    assert.deepEqual(
+      parseTransferRecipient('AbCdEfGhIjKlMnOpQrStUvWxYz123456'),
+      { recipient_public_id: 'AbCdEfGhIjKlMnOpQrStUvWxYz123456' }
+    )
+  })
+
+  test('extracts a receive code from a receive link', () => {
+    assert.deepEqual(
+      parseTransferRecipient(
+        'https://example.test/reseller?receive=0123456789abcdefghijklmnopqrstuv'
+      ),
+      { recipient_public_id: '0123456789abcdefghijklmnopqrstuv' }
     )
   })
 })

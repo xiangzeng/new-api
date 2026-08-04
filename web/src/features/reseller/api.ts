@@ -28,6 +28,7 @@ import type {
   ResellerSecurityStatus,
   ResellerStatus,
   ResellerTransfer,
+  ResellerTransferPreview,
   ResellerVoucher,
   ResellerVoucherBatch,
 } from './types'
@@ -93,9 +94,10 @@ export async function getCustomerPricing(bindingId: number) {
 export async function updatePricing(
   owner: 'default' | number,
   payload: {
-    group_name: string
     multiplier_bps: number
+    group_multipliers_bps: Record<string, number>
     expected_version: number
+    quota_password: string
   }
 ) {
   const path =
@@ -155,80 +157,120 @@ export const getResellerLedger = (page = 1) =>
   getPage<ResellerLedgerItem>('/api/reseller/ledger', page)
 export const getResellerVouchers = (page = 1) =>
   getPage<ResellerVoucher>('/api/reseller/vouchers', page)
+export const getResellerVouchersByStatus = (
+  page = 1,
+  status: 'all' | 'pending' | 'used' = 'all'
+) =>
+  getPage<ResellerVoucher>(
+    `/api/reseller/vouchers${status === 'all' ? '' : `?status=${status}`}`,
+    page
+  )
 export const getResellerVoucherBatches = (page = 1) =>
   getPage<ResellerVoucherBatch>('/api/reseller/vouchers/batches', page)
 
-export async function setQuotaPassword(password: string, proof?: string) {
+export async function setQuotaPassword(
+  quotaPassword: string,
+  loginPassword: string,
+  proof?: string
+) {
   return api.post(
     '/api/reseller/security/password',
-    { password },
+    { quota_password: quotaPassword, login_password: loginPassword },
     sensitiveConfig(proof)
   )
 }
 
 export async function changeQuotaPassword(
   currentPassword: string,
-  newPassword: string,
-  proof?: string
+  newPassword: string
 ) {
   return api.put(
     '/api/reseller/security/password',
-    { current_password: currentPassword, new_password: newPassword },
-    sensitiveConfig(proof)
+    {
+      current_quota_password: currentPassword,
+      new_quota_password: newPassword,
+    },
+    sensitiveConfig()
   )
 }
 
-export async function resetQuotaPassword(newPassword: string, proof?: string) {
-  return api.post(
-    '/api/reseller/security/password/reset',
-    { new_password: newPassword },
-    sensitiveConfig(proof)
-  )
-}
-
-export async function rotateReceiveAddress(proof?: string) {
-  return api.post(
-    '/api/reseller/receive-address/rotate',
-    {},
-    sensitiveConfig(proof)
-  )
-}
-
-export async function previewTransfer(
-  receivePublicId: string,
-  amount: number,
+export async function resetQuotaPassword(
+  newPassword: string,
+  loginPassword: string,
   proof?: string
 ) {
   return api.post(
-    '/api/reseller/transfers/preview',
-    { receive_public_id: receivePublicId, amount },
+    '/api/reseller/security/password/reset',
+    { quota_password: newPassword, login_password: loginPassword },
     sensitiveConfig(proof)
+  )
+}
+
+export async function rotateReceiveAddress(quotaPassword: string) {
+  return api.post(
+    '/api/reseller/receive-address/rotate',
+    { quota_password: quotaPassword },
+    sensitiveConfig()
+  )
+}
+
+const receiveCodePattern = /^[A-Za-z0-9]{32}$/
+
+export function parseTransferRecipient(value: string): {
+  recipient_username?: string
+  recipient_public_id?: string
+} {
+  const trimmed = value.trim()
+  if (receiveCodePattern.test(trimmed)) {
+    return { recipient_public_id: trimmed }
+  }
+  try {
+    const url = new URL(trimmed)
+    const receiveCode = url.searchParams.get('receive')?.trim() || ''
+    if (receiveCodePattern.test(receiveCode)) {
+      return { recipient_public_id: receiveCode }
+    }
+  } catch {
+    // A non-URL value is treated as a username.
+  }
+  return { recipient_username: trimmed }
+}
+
+export async function previewTransfer(recipient: string, amount: number) {
+  return api.post(
+    '/api/reseller/transfers/preview',
+    { ...parseTransferRecipient(recipient), amount },
+    sensitiveConfig()
   )
 }
 
 export async function commitTransfer(
-  nonce: string,
+  preview: ResellerTransferPreview,
   password: string,
-  idempotencyKey: string,
-  proof?: string
+  idempotencyKey: string
 ) {
   return api.post(
     '/api/reseller/transfers/commit',
-    { nonce, password },
-    sensitiveConfig(proof, idempotencyKey)
+    {
+      recipient_user_id: preview.recipient_user_id,
+      recipient_username: preview.recipient_username,
+      amount: preview.amount,
+      nonce: preview.nonce,
+      quota_password: password,
+    },
+    sensitiveConfig(undefined, idempotencyKey)
   )
 }
 
 export async function convertCommission(
-  amount: number,
+  quota: number,
   password: string,
-  idempotencyKey: string,
-  proof?: string
+  idempotencyKey: string
 ) {
   return api.post(
     '/api/reseller/commission/convert',
-    { amount, password },
-    sensitiveConfig(proof, idempotencyKey)
+    { quota: String(Math.trunc(quota)), quota_password: password },
+    sensitiveConfig(undefined, idempotencyKey)
   )
 }
 
@@ -237,36 +279,27 @@ export async function issueVouchers(
   amount: number,
   note: string,
   password: string,
-  idempotencyKey: string,
-  proof?: string
+  idempotencyKey: string
 ) {
   return api.post(
     count === 1 ? '/api/reseller/vouchers' : '/api/reseller/vouchers/batch',
-    { count, amount, note, password },
-    sensitiveConfig(proof, idempotencyKey)
+    { count, amount, note, quota_password: password },
+    sensitiveConfig(undefined, idempotencyKey)
   )
 }
 
-export async function revealVoucher(
-  publicId: string,
-  password: string,
-  proof?: string
-) {
+export async function revealVoucher(publicId: string, password: string) {
   return api.post(
     `/api/reseller/vouchers/${publicId}/reveal`,
-    { password },
-    sensitiveConfig(proof)
+    { quota_password: password },
+    sensitiveConfig()
   )
 }
 
-export async function revealVoucherBatch(
-  publicId: string,
-  password: string,
-  proof?: string
-) {
+export async function revealVoucherBatch(publicId: string, password: string) {
   return api.post(
     `/api/reseller/vouchers/batch/${publicId}/reveal`,
-    { password },
-    sensitiveConfig(proof)
+    { quota_password: password },
+    sensitiveConfig()
   )
 }

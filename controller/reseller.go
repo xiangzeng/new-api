@@ -16,11 +16,6 @@ import (
 const (
 	securityProofScopeResellerPassword      = "reseller.security.password"
 	securityProofScopeResellerPasswordReset = "reseller.security.password_reset"
-	securityProofScopeResellerTransfer      = "reseller.transfer"
-	securityProofScopeResellerConvert       = "reseller.commission.convert"
-	securityProofScopeResellerVoucherIssue  = "reseller.voucher.issue"
-	securityProofScopeResellerVoucherReveal = "reseller.voucher.reveal"
-	securityProofScopeResellerAddressRotate = "reseller.receive_address.rotate"
 )
 
 type resellerErrorSpec struct {
@@ -42,6 +37,8 @@ func resellerError(c *gin.Context, err error) {
 		spec = resellerErrorSpec{http.StatusUnprocessableEntity, "RESELLER_AMOUNT_INVALID", "金额或倍率超出允许范围"}
 	case errors.Is(err, model.ErrResellerQuotaPasswordInvalid):
 		spec = resellerErrorSpec{http.StatusForbidden, "RESELLER_QUOTA_PASSWORD_INVALID", "额度密码错误"}
+	case errors.Is(err, model.ErrResellerLoginPasswordInvalid):
+		spec = resellerErrorSpec{http.StatusForbidden, "RESELLER_LOGIN_PASSWORD_INVALID", "登录密码错误"}
 	case errors.Is(err, model.ErrResellerQuotaPasswordConfigured):
 		spec = resellerErrorSpec{http.StatusConflict, "RESELLER_QUOTA_PASSWORD_CONFIGURED", "额度密码已经设置"}
 	case errors.Is(err, model.ErrResellerQuotaPasswordMissing):
@@ -91,6 +88,22 @@ func requireActiveReseller(c *gin.Context) (*model.ResellerProfile, bool) {
 
 func requireResellerProof(c *gin.Context, scope string) bool {
 	return middleware.RequireSecurityProof(c, scope, []string{secureVerificationMethod2FA, secureVerificationMethodPasskey})
+}
+
+func authorizeResellerPasswordBootstrap(c *gin.Context, loginPassword string, scope string) bool {
+	if strings.TrimSpace(loginPassword) == "" {
+		return requireResellerProof(c, scope)
+	}
+	user, err := model.GetUserById(c.GetInt("id"), true)
+	if err != nil {
+		resellerError(c, err)
+		return false
+	}
+	if !common.ValidatePasswordAndHash(loginPassword, user.Password) {
+		resellerError(c, model.ErrResellerLoginPasswordInvalid)
+		return false
+	}
+	return true
 }
 
 func requireResellerIdempotency(c *gin.Context) (string, bool) {
@@ -247,12 +260,35 @@ func GetCustomerResellerPricing(c *gin.Context) {
 }
 
 type resellerPricingUpdateRequest struct {
-	GroupName       string `json:"group_name"`
-	MultiplierBps   int    `json:"multiplier_bps"`
-	ExpectedVersion int64  `json:"expected_version"`
+	GroupName        string          `json:"group_name"`
+	MultiplierBps    int             `json:"multiplier_bps"`
+	GroupMultipliers *map[string]int `json:"group_multipliers_bps"`
+	ExpectedVersion  int64           `json:"expected_version"`
+	QuotaPassword    string          `json:"quota_password"`
+	LegacyPassword   string          `json:"password"`
 }
 
 func updateResellerPricing(c *gin.Context, ownerType string, ownerId int64, request resellerPricingUpdateRequest) {
+	password := request.QuotaPassword
+	if password == "" {
+		password = request.LegacyPassword
+	}
+	if err := model.VerifyResellerQuotaPassword(c.GetInt("id"), password, common.GetTimestamp(), false); err != nil {
+		resellerError(c, err)
+		return
+	}
+	if request.GroupMultipliers != nil {
+		rules, version, err := model.UpdateResellerPricingRules(ownerType, ownerId, request.MultiplierBps, *request.GroupMultipliers, request.ExpectedVersion, common.GetTimestamp())
+		if err != nil {
+			resellerError(c, err)
+			return
+		}
+		recordUserSecurityAudit(c, c.GetInt("id"), "reseller.pricing.update", map[string]interface{}{
+			"owner_type": ownerType, "owner_id": ownerId, "multiplier_bps": request.MultiplierBps, "group_count": len(*request.GroupMultipliers),
+		})
+		resellerSuccess(c, gin.H{"pricing_version": version, "rules": rules})
+		return
+	}
 	rule, version, err := model.UpdateResellerPricingRule(ownerType, ownerId, request.GroupName, request.MultiplierBps, request.ExpectedVersion, common.GetTimestamp())
 	if err != nil {
 		resellerError(c, err)
@@ -301,9 +337,19 @@ func UpdateCustomerResellerPricing(c *gin.Context) {
 type resellerPricingDeleteRequest struct {
 	GroupName       string `json:"group_name"`
 	ExpectedVersion int64  `json:"expected_version"`
+	QuotaPassword   string `json:"quota_password"`
+	LegacyPassword  string `json:"password"`
 }
 
 func deleteResellerPricing(c *gin.Context, ownerType string, ownerId int64, request resellerPricingDeleteRequest) {
+	password := request.QuotaPassword
+	if password == "" {
+		password = request.LegacyPassword
+	}
+	if err := model.VerifyResellerQuotaPassword(c.GetInt("id"), password, common.GetTimestamp(), false); err != nil {
+		resellerError(c, err)
+		return
+	}
 	version, err := model.DeleteResellerPricingRule(ownerType, ownerId, request.GroupName, request.ExpectedVersion)
 	if err != nil {
 		resellerError(c, err)
@@ -350,13 +396,17 @@ func DeleteCustomerResellerPricing(c *gin.Context) {
 }
 
 type resellerPasswordRequest struct {
-	Password        string `json:"password"`
-	CurrentPassword string `json:"current_password"`
-	NewPassword     string `json:"new_password"`
+	Password             string `json:"password"`
+	QuotaPassword        string `json:"quota_password"`
+	LoginPassword        string `json:"login_password"`
+	CurrentPassword      string `json:"current_password"`
+	CurrentQuotaPassword string `json:"current_quota_password"`
+	NewPassword          string `json:"new_password"`
+	NewQuotaPassword     string `json:"new_quota_password"`
 }
 
 func SetResellerPassword(c *gin.Context) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerPassword) {
+	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
 	var request resellerPasswordRequest
@@ -364,7 +414,14 @@ func SetResellerPassword(c *gin.Context) {
 		resellerBadRequest(c, "额度密码格式无效")
 		return
 	}
-	if _, err := model.SetResellerQuotaPassword(c.GetInt("id"), request.Password, common.GetTimestamp()); err != nil {
+	if !authorizeResellerPasswordBootstrap(c, request.LoginPassword, securityProofScopeResellerPassword) {
+		return
+	}
+	password := request.QuotaPassword
+	if password == "" {
+		password = request.Password
+	}
+	if _, err := model.SetResellerQuotaPassword(c.GetInt("id"), password, common.GetTimestamp()); err != nil {
 		resellerError(c, err)
 		return
 	}
@@ -373,7 +430,7 @@ func SetResellerPassword(c *gin.Context) {
 }
 
 func ChangeResellerPassword(c *gin.Context) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerPassword) {
+	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
 	var request resellerPasswordRequest
@@ -381,7 +438,15 @@ func ChangeResellerPassword(c *gin.Context) {
 		resellerBadRequest(c, "额度密码格式无效")
 		return
 	}
-	if err := model.ChangeResellerQuotaPassword(c.GetInt("id"), request.CurrentPassword, request.NewPassword, common.GetTimestamp()); err != nil {
+	currentPassword := request.CurrentQuotaPassword
+	if currentPassword == "" {
+		currentPassword = request.CurrentPassword
+	}
+	newPassword := request.NewQuotaPassword
+	if newPassword == "" {
+		newPassword = request.NewPassword
+	}
+	if err := model.ChangeResellerQuotaPassword(c.GetInt("id"), currentPassword, newPassword, common.GetTimestamp()); err != nil {
 		resellerError(c, err)
 		return
 	}
@@ -390,7 +455,7 @@ func ChangeResellerPassword(c *gin.Context) {
 }
 
 func ResetResellerPassword(c *gin.Context) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerPasswordReset) {
+	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
 	var request resellerPasswordRequest
@@ -398,7 +463,14 @@ func ResetResellerPassword(c *gin.Context) {
 		resellerBadRequest(c, "额度密码格式无效")
 		return
 	}
-	if err := model.ResetResellerQuotaPassword(c.GetInt("id"), request.NewPassword, common.GetTimestamp()); err != nil {
+	if !authorizeResellerPasswordBootstrap(c, request.LoginPassword, securityProofScopeResellerPasswordReset) {
+		return
+	}
+	newPassword := request.QuotaPassword
+	if newPassword == "" {
+		newPassword = request.NewPassword
+	}
+	if err := model.ResetResellerQuotaPassword(c.GetInt("id"), newPassword, common.GetTimestamp()); err != nil {
 		resellerError(c, err)
 		return
 	}
@@ -407,7 +479,16 @@ func ResetResellerPassword(c *gin.Context) {
 }
 
 func RotateResellerReceiveAddress(c *gin.Context) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerAddressRotate) {
+	if _, ok := requireActiveReseller(c); !ok {
+		return
+	}
+	var request resellerRevealRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resellerBadRequest(c, "额度密码格式无效")
+		return
+	}
+	if err := model.VerifyResellerQuotaPassword(c.GetInt("id"), request.quotaPassword(), common.GetTimestamp(), false); err != nil {
+		resellerError(c, err)
 		return
 	}
 	receiveId, err := model.RotateResellerReceiveAddress(c.GetInt("id"))
@@ -420,12 +501,14 @@ func RotateResellerReceiveAddress(c *gin.Context) {
 }
 
 type resellerTransferPreviewRequest struct {
-	ReceivePublicId string `json:"receive_public_id"`
-	Amount          int    `json:"amount"`
+	RecipientUsername string `json:"recipient_username"`
+	RecipientPublicId string `json:"recipient_public_id"`
+	ReceivePublicId   string `json:"receive_public_id"`
+	Amount            int    `json:"amount"`
 }
 
 func PreviewResellerTransfer(c *gin.Context) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerTransfer) {
+	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
 	var request resellerTransferPreviewRequest
@@ -433,22 +516,34 @@ func PreviewResellerTransfer(c *gin.Context) {
 		resellerBadRequest(c, "转账参数无效")
 		return
 	}
-	nonce, preview, err := model.CreateResellerTransferPreview(c.GetInt("id"), request.ReceivePublicId, request.Amount, common.GetTimestamp())
+	publicId := request.RecipientPublicId
+	if publicId == "" {
+		publicId = request.ReceivePublicId
+	}
+	nonce, preview, err := model.CreateResellerTransferPreviewForRecipient(c.GetInt("id"), request.RecipientUsername, publicId, request.Amount, common.GetTimestamp())
 	if err != nil {
 		resellerError(c, err)
 		return
 	}
 	name, _ := model.GetUsernameById(preview.ReceiverId, true)
-	resellerSuccess(c, gin.H{"nonce": nonce, "amount": preview.Amount, "quota": preview.Quota, "receiver": gin.H{"user_id": preview.ReceiverId, "username": name}, "expires_at": preview.ExpiresAt})
+	resellerSuccess(c, gin.H{
+		"nonce": nonce, "amount": preview.Amount, "quota": preview.Quota,
+		"recipient_user_id": preview.ReceiverId, "recipient_username": name,
+		"receiver": gin.H{"user_id": preview.ReceiverId, "username": name}, "expires_at": preview.ExpiresAt,
+	})
 }
 
 type resellerTransferCommitRequest struct {
-	Nonce    string `json:"nonce"`
-	Password string `json:"password"`
+	Nonce             string `json:"nonce"`
+	Password          string `json:"password"`
+	QuotaPassword     string `json:"quota_password"`
+	RecipientUserId   int    `json:"recipient_user_id"`
+	RecipientUsername string `json:"recipient_username"`
+	Amount            int    `json:"amount"`
 }
 
 func CommitResellerTransfer(c *gin.Context) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerTransfer) {
+	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
 	key, ok := requireResellerIdempotency(c)
@@ -460,7 +555,13 @@ func CommitResellerTransfer(c *gin.Context) {
 		resellerBadRequest(c, "转账参数无效")
 		return
 	}
-	transfer, err := model.CommitResellerQuotaTransfer(c.GetInt("id"), request.Nonce, request.Password, key, common.GetTimestamp())
+	password := request.QuotaPassword
+	if password == "" {
+		password = request.Password
+	}
+	transfer, err := model.CommitResellerQuotaTransferForRecipient(c.GetInt("id"), request.Nonce, password, key, model.ResellerTransferCommitExpectation{
+		RecipientUserId: request.RecipientUserId, RecipientName: request.RecipientUsername, Amount: request.Amount,
+	}, common.GetTimestamp())
 	if err != nil {
 		resellerError(c, err)
 		return
@@ -470,12 +571,31 @@ func CommitResellerTransfer(c *gin.Context) {
 }
 
 type resellerConvertRequest struct {
-	Amount   int    `json:"amount"`
-	Password string `json:"password"`
+	Amount        int                `json:"amount"`
+	Quota         resellerQuotaValue `json:"quota"`
+	Password      string             `json:"password"`
+	QuotaPassword string             `json:"quota_password"`
+}
+
+type resellerQuotaValue int64
+
+func (value *resellerQuotaValue) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		*value = 0
+		return nil
+	}
+	raw = strings.Trim(raw, `"`)
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return err
+	}
+	*value = resellerQuotaValue(parsed)
+	return nil
 }
 
 func ConvertResellerCommission(c *gin.Context) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerConvert) {
+	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
 	key, ok := requireResellerIdempotency(c)
@@ -487,13 +607,25 @@ func ConvertResellerCommission(c *gin.Context) {
 		resellerBadRequest(c, "转换参数无效")
 		return
 	}
-	ref, err := model.ConvertResellerCommission(c.GetInt("id"), request.Amount, request.Password, key, common.GetTimestamp())
+	password := request.QuotaPassword
+	if password == "" {
+		password = request.Password
+	}
+	var ref string
+	var convertedQuota int64
+	var err error
+	if request.Quota > 0 {
+		ref, convertedQuota, err = model.ConvertAllResellerCommission(c.GetInt("id"), int64(request.Quota), password, key, common.GetTimestamp())
+	} else {
+		ref, err = model.ConvertResellerCommission(c.GetInt("id"), request.Amount, password, key, common.GetTimestamp())
+		convertedQuota = int64(request.Amount) * int64(common.QuotaPerUnit)
+	}
 	if err != nil {
 		resellerError(c, err)
 		return
 	}
-	recordUserSecurityAudit(c, c.GetInt("id"), "reseller.commission.convert", map[string]interface{}{"result_ref": ref, "amount": request.Amount})
-	resellerSuccess(c, gin.H{"public_id": ref, "amount": request.Amount})
+	recordUserSecurityAudit(c, c.GetInt("id"), "reseller.commission.convert", map[string]interface{}{"result_ref": ref, "quota": convertedQuota})
+	resellerSuccess(c, gin.H{"public_id": ref, "quota": convertedQuota, "amount": request.Amount})
 }
 
 func ListResellerVouchers(c *gin.Context) {
@@ -501,7 +633,7 @@ func ListResellerVouchers(c *gin.Context) {
 		return
 	}
 	page := common.GetPageQuery(c)
-	items, total, err := model.ListResellerVouchers(c.GetInt("id"), page.GetStartIdx(), page.GetPageSize())
+	items, total, err := model.ListResellerVouchersByStatus(c.GetInt("id"), strings.TrimSpace(c.Query("status")), page.GetStartIdx(), page.GetPageSize())
 	if err != nil {
 		resellerError(c, err)
 		return
@@ -527,14 +659,15 @@ func ListResellerVoucherBatches(c *gin.Context) {
 }
 
 type resellerVoucherIssueRequest struct {
-	Count    int    `json:"count"`
-	Amount   int    `json:"amount"`
-	Note     string `json:"note"`
-	Password string `json:"password"`
+	Count         int    `json:"count"`
+	Amount        int    `json:"amount"`
+	Note          string `json:"note"`
+	Password      string `json:"password"`
+	QuotaPassword string `json:"quota_password"`
 }
 
 func issueResellerVouchers(c *gin.Context, forceSingle bool) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerVoucherIssue) {
+	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
 	key, ok := requireResellerIdempotency(c)
@@ -549,7 +682,11 @@ func issueResellerVouchers(c *gin.Context, forceSingle bool) {
 	if forceSingle {
 		request.Count = 1
 	}
-	batch, codes, err := model.IssueResellerVoucherBatch(c.GetInt("id"), request.Count, request.Amount, request.Note, request.Password, key, common.GetTimestamp())
+	password := request.QuotaPassword
+	if password == "" {
+		password = request.Password
+	}
+	batch, codes, err := model.IssueResellerVoucherBatch(c.GetInt("id"), request.Count, request.Amount, request.Note, password, key, common.GetTimestamp())
 	if err != nil {
 		resellerError(c, err)
 		return
@@ -562,11 +699,19 @@ func IssueResellerVoucher(c *gin.Context)      { issueResellerVouchers(c, true) 
 func IssueResellerVoucherBatch(c *gin.Context) { issueResellerVouchers(c, false) }
 
 type resellerRevealRequest struct {
-	Password string `json:"password"`
+	Password      string `json:"password"`
+	QuotaPassword string `json:"quota_password"`
+}
+
+func (request resellerRevealRequest) quotaPassword() string {
+	if request.QuotaPassword != "" {
+		return request.QuotaPassword
+	}
+	return request.Password
 }
 
 func RevealResellerVoucher(c *gin.Context) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerVoucherReveal) {
+	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
 	var request resellerRevealRequest
@@ -574,7 +719,7 @@ func RevealResellerVoucher(c *gin.Context) {
 		resellerBadRequest(c, "额度密码格式无效")
 		return
 	}
-	code, err := model.RevealResellerVoucher(c.GetInt("id"), c.Param("id"), request.Password, common.GetTimestamp())
+	code, err := model.RevealResellerVoucher(c.GetInt("id"), c.Param("id"), request.quotaPassword(), common.GetTimestamp())
 	if err != nil {
 		resellerError(c, err)
 		return
@@ -584,7 +729,7 @@ func RevealResellerVoucher(c *gin.Context) {
 }
 
 func RevealResellerVoucherBatch(c *gin.Context) {
-	if _, ok := requireActiveReseller(c); !ok || !requireResellerProof(c, securityProofScopeResellerVoucherReveal) {
+	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
 	var request resellerRevealRequest
@@ -592,7 +737,7 @@ func RevealResellerVoucherBatch(c *gin.Context) {
 		resellerBadRequest(c, "额度密码格式无效")
 		return
 	}
-	codes, err := model.RevealResellerVoucherBatch(c.GetInt("id"), c.Param("id"), request.Password, common.GetTimestamp())
+	codes, err := model.RevealResellerVoucherBatch(c.GetInt("id"), c.Param("id"), request.quotaPassword(), common.GetTimestamp())
 	if err != nil {
 		resellerError(c, err)
 		return

@@ -163,6 +163,36 @@ func TestDeleteResellerPricingRuleRestoresInheritanceWithOptimisticLock(t *testi
 	assert.NotContains(t, rules, "pro")
 }
 
+func TestUpdateResellerPricingRulesAppliesCompleteDocumentAtomically(t *testing.T) {
+	setupResellerPricingTestDB(t)
+	profile := ResellerProfile{UserId: 902, ReceivePublicId: "atomic-pricing-owner-0000000001", PricingVersion: 1}
+	require.NoError(t, DB.Create(&profile).Error)
+	_, version, err := UpdateResellerPricingRules(ResellerPricingOwnerDefault, profile.Id, 12500, map[string]int{
+		"pro": 14000, "vip": 15000,
+	}, 1, 100)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, version)
+
+	rules, version, err := UpdateResellerPricingRules(ResellerPricingOwnerDefault, profile.Id, 12000, map[string]int{
+		"vip": 16000,
+	}, version, 200)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, version)
+	assert.NotContains(t, rules, "pro")
+	assert.Equal(t, 12000, rules[""].CurrentMultiplierBps)
+	assert.Equal(t, 15000, rules["vip"].CurrentMultiplierBps)
+	assert.Equal(t, 16000, rules["vip"].PendingMultiplierBps)
+
+	_, _, err = UpdateResellerPricingRules(ResellerPricingOwnerDefault, profile.Id, 13000, map[string]int{"bad": 9999}, version, 300)
+	assert.ErrorIs(t, err, ErrResellerMultiplierOutOfRange)
+	persisted, err := GetResellerPricingRules(ResellerPricingOwnerDefault, profile.Id)
+	require.NoError(t, err)
+	assert.NotContains(t, persisted, "bad")
+	var persistedProfile ResellerProfile
+	require.NoError(t, DB.First(&persistedProfile, profile.Id).Error)
+	assert.EqualValues(t, 3, persistedProfile.PricingVersion)
+}
+
 func TestUpdateResellerPricingRuleAllowsOneConcurrentWriter(t *testing.T) {
 	setupResellerPricingTestDB(t)
 	sqlDB, err := DB.DB()

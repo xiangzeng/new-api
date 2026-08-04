@@ -28,7 +28,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
-import { deletePricing, updatePricing } from '../api'
+import { updatePricing } from '../api'
 import type {
   ResellerCustomer,
   ResellerPricingResponse,
@@ -66,6 +66,8 @@ export function ResellerPricingDialog({
   const [overrides, setOverrides] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [quotaPassword, setQuotaPassword] = useState('')
 
   const groupEntries = useMemo(
     () =>
@@ -99,43 +101,31 @@ export function ResellerPricingDialog({
     if (open) void refresh()
   }, [open, refresh])
 
+  useEffect(() => {
+    if (open) return
+    setConfirming(false)
+    setQuotaPassword('')
+  }, [open])
+
   const save = async () => {
     if (!pricing) return
     setSaving(true)
-    let version = pricing.pricing_version
     const owner = customer ? customer.binding_id : 'default'
     try {
-      const scopes = ['', ...groupEntries.map(([name]) => name)]
-      for (const groupName of scopes) {
-        const current = pricing.rules[groupName]
-        const enabled = groupName === '' || overrides[groupName]
-        if (!enabled && current) {
-          const response = await deletePricing(owner, {
-            group_name: groupName,
-            expected_version: version,
-          })
-          version = response.data.pricing_version
-          continue
-        }
-        if (!enabled) continue
-        const multiplierBps = Math.round(values[groupName] || 0)
-        if (
-          multiplierBps < 10000 ||
-          multiplierBps > 100000 ||
-          (current && requestedMultiplier(current) === multiplierBps)
-        ) {
-          continue
-        }
-        const response = await updatePricing(owner, {
-          group_name: groupName,
-          multiplier_bps: multiplierBps,
-          expected_version: version,
-        })
-        version = (response.data as unknown as { pricing_version: number })
-          .pricing_version
-      }
+      const groupMultipliers = Object.fromEntries(
+        groupEntries
+          .filter(([name]) => overrides[name])
+          .map(([name]) => [name, Math.round(values[name] || 0)])
+      )
+      await updatePricing(owner, {
+        multiplier_bps: Math.round(values[''] || 0),
+        group_multipliers_bps: groupMultipliers,
+        expected_version: pricing.pricing_version,
+        quota_password: quotaPassword,
+      })
       toast.success(t('Pricing updated'))
       await onCompleted()
+      setConfirming(false)
       onOpenChange(false)
     } catch (error: unknown) {
       const code = (
@@ -153,128 +143,180 @@ export function ResellerPricingDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title={customer ? t('Customer pricing') : t('Default pricing')}
-      description={
-        customer
-          ? t(
-              'Customer rules override reseller defaults for this direct customer.'
-            )
-          : t(
-              'Set the overall multiplier and optional overrides for each platform group.'
-            )
-      }
-      contentClassName='sm:max-w-4xl'
-      contentHeight='min(68vh, 720px)'
-      footer={
-        <>
-          <Button
-            variant='outline'
-            onClick={() => onOpenChange(false)}
-            disabled={saving}
-          >
-            {t('Cancel')}
-          </Button>
-          <Button onClick={save} disabled={loading || saving || !pricing}>
-            {saving ? <Loader2 className='animate-spin' /> : <Save />}
-            {t('Save pricing')}
-          </Button>
-        </>
-      }
-    >
-      {loading || !pricing ? (
-        <div className='grid min-h-48 place-items-center'>
-          <Loader2 className='text-muted-foreground size-5 animate-spin' />
-        </div>
-      ) : (
-        <div className='space-y-4'>
-          <Alert>
-            <Clock3 />
-            <AlertTitle>{t('Pricing activation')}</AlertTitle>
-            <AlertDescription>
-              {t(
-                'First-time settings and decreases apply immediately. Increases take effect after 24 hours.'
-              )}
-            </AlertDescription>
-          </Alert>
-
-          <div className='grid gap-2 border-b pb-4 sm:grid-cols-[minmax(0,1fr)_180px] sm:items-end'>
-            <div>
-              <Label htmlFor='reseller-overall-multiplier'>
-                {t('Overall multiplier')}
-              </Label>
-              <p className='text-muted-foreground mt-1 text-xs'>
-                {t('Used by every group that remains inherited.')}
-              </p>
-            </div>
-            <MultiplierInput
-              id='reseller-overall-multiplier'
-              value={values['']}
-              onChange={(value) =>
-                setValues((current) => ({ ...current, '': value }))
-              }
-            />
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={onOpenChange}
+        title={customer ? t('Customer pricing') : t('Default pricing')}
+        description={
+          customer
+            ? t(
+                'Customer rules override reseller defaults for this direct customer.'
+              )
+            : t(
+                'Set the overall multiplier and optional overrides for each platform group.'
+              )
+        }
+        contentClassName='sm:max-w-4xl'
+        contentHeight='min(68vh, 720px)'
+        footer={
+          <>
+            <Button
+              variant='outline'
+              onClick={() => onOpenChange(false)}
+              disabled={saving}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              onClick={() => setConfirming(true)}
+              disabled={loading || saving || !pricing}
+            >
+              <Save />
+              {t('Save pricing')}
+            </Button>
+          </>
+        }
+      >
+        {loading || !pricing ? (
+          <div className='grid min-h-48 place-items-center'>
+            <Loader2 className='text-muted-foreground size-5 animate-spin' />
           </div>
+        ) : (
+          <div className='space-y-4'>
+            <Alert>
+              <Clock3 />
+              <AlertTitle>{t('Pricing activation')}</AlertTitle>
+              <AlertDescription>
+                {t(
+                  'First-time settings and decreases apply immediately. Increases take effect after 24 hours.'
+                )}
+              </AlertDescription>
+            </Alert>
 
-          <div className='divide-y rounded-md border'>
-            {groupEntries.length === 0 ? (
-              <div className='text-muted-foreground p-4 text-sm'>
-                {t('No platform groups available.')}
+            <div className='grid gap-2 border-b pb-4 sm:grid-cols-[minmax(0,1fr)_180px] sm:items-end'>
+              <div>
+                <Label htmlFor='reseller-overall-multiplier'>
+                  {t('Overall multiplier')}
+                </Label>
+                <p className='text-muted-foreground mt-1 text-xs'>
+                  {t('Used by every group that remains inherited.')}
+                </p>
               </div>
-            ) : (
-              groupEntries.map(([name, info]) => {
-                const inherited = !overrides[name]
-                const pendingAt = pricing.rules[name]?.pending_effective_at
-                return (
-                  <div
-                    key={name}
-                    className='grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto_150px] sm:items-center'
-                  >
-                    <div className='min-w-0'>
-                      <div className='truncate font-medium'>
-                        {info.desc || name}
-                      </div>
-                      <div className='text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 text-xs'>
-                        <span>{name}</span>
-                        <span>
-                          {t('Platform ratio')}: {String(info.ratio)}
-                        </span>
-                        {pendingAt ? (
-                          <span className='text-warning'>
-                            {t('Increase pending')}
+              <MultiplierInput
+                id='reseller-overall-multiplier'
+                value={values['']}
+                onChange={(value) =>
+                  setValues((current) => ({ ...current, '': value }))
+                }
+              />
+            </div>
+
+            <div className='divide-y rounded-md border'>
+              {groupEntries.length === 0 ? (
+                <div className='text-muted-foreground p-4 text-sm'>
+                  {t('No platform groups available.')}
+                </div>
+              ) : (
+                groupEntries.map(([name, info]) => {
+                  const inherited = !overrides[name]
+                  const pendingAt = pricing.rules[name]?.pending_effective_at
+                  return (
+                    <div
+                      key={name}
+                      className='grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto_150px] sm:items-center'
+                    >
+                      <div className='min-w-0'>
+                        <div className='truncate font-medium'>
+                          {info.desc || name}
+                        </div>
+                        <div className='text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 text-xs'>
+                          <span>{name}</span>
+                          <span>
+                            {t('Platform ratio')}: {String(info.ratio)}
                           </span>
-                        ) : null}
+                          {pendingAt ? (
+                            <span className='text-warning'>
+                              {t('Increase pending')}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                    <label className='flex items-center gap-2 text-sm'>
-                      <Switch
-                        checked={inherited}
-                        onCheckedChange={(checked) =>
-                          setOverrides((current) => ({
+                      <label className='flex items-center gap-2 text-sm'>
+                        <Switch
+                          checked={inherited}
+                          onCheckedChange={(checked) =>
+                            setOverrides((current) => ({
+                              ...current,
+                              [name]: !checked,
+                            }))
+                          }
+                        />
+                        <span>{t('Inherit overall')}</span>
+                      </label>
+                      <MultiplierInput
+                        value={inherited ? values[''] : values[name]}
+                        disabled={inherited}
+                        onChange={(value) =>
+                          setValues((current) => ({
                             ...current,
-                            [name]: !checked,
+                            [name]: value,
                           }))
                         }
                       />
-                      <span>{t('Inherit overall')}</span>
-                    </label>
-                    <MultiplierInput
-                      value={inherited ? values[''] : values[name]}
-                      disabled={inherited}
-                      onChange={(value) =>
-                        setValues((current) => ({ ...current, [name]: value }))
-                      }
-                    />
-                  </div>
-                )
-              })
-            )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
           </div>
+        )}
+      </Dialog>
+      <Dialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={t('Verify pricing change')}
+        description={t(
+          'Enter the six-digit quota password to apply the complete pricing document.'
+        )}
+        contentClassName='sm:max-w-md'
+        footer={
+          <>
+            <Button
+              variant='outline'
+              onClick={() => setConfirming(false)}
+              disabled={saving}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              onClick={save}
+              disabled={saving || !/^\d{6}$/.test(quotaPassword)}
+            >
+              {saving && <Loader2 className='animate-spin' />}
+              {t('Confirm pricing')}
+            </Button>
+          </>
+        }
+      >
+        <div className='space-y-1.5'>
+          <Label htmlFor='reseller-pricing-password'>
+            {t('Quota password')}
+          </Label>
+          <Input
+            id='reseller-pricing-password'
+            type='password'
+            inputMode='numeric'
+            autoComplete='off'
+            maxLength={6}
+            value={quotaPassword}
+            onChange={(event) =>
+              setQuotaPassword(event.target.value.replaceAll(/\D/g, ''))
+            }
+          />
         </div>
-      )}
-    </Dialog>
+      </Dialog>
+    </>
   )
 }
 

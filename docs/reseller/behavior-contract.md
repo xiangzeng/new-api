@@ -51,9 +51,11 @@ Commission = max(RetailQuota - BaseQuota, 0)
 ### 2.4 额度安全
 
 - 使用独立六位数字额度密码。
-- 设置、修改、重置和敏感操作接入密码、2FA、Passkey 或 OAuth 安全复核。
+- 首次设置或重置额度密码可使用登录密码，或使用已建立的 2FA / Passkey 安全复核；日常额度授权不复用该 proof。
+- 修改额度密码只校验当前额度密码；定价、收款码轮换、转账 commit、收益转换和用户码签发/reveal 均只校验额度密码。
 - 重置后发送额度和签发用户码冻结 24 小时，但仍允许接收额度。
-- 转账采用 preview/commit；nonce 必须绑定发送人、接收人、额度、过期时间并一次性消费。
+- 收款码是 32 位字母数字公开标识；转账 preview 接受用户名、收款码或带 `receive` 参数的收款链接。
+- 转账采用 preview/commit；preview 仅需要登录会话，commit 的 nonce 必须绑定发送人、标准化接收人、额度、过期时间并一次性消费，且提交额度密码。
 - 转账、收益转换和用户码签发接受 `Idempotency-Key`。
 - 同一 key 与相同 payload 返回原结果；同一 key 与不同 payload 必须拒绝。
 
@@ -120,8 +122,77 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - release batch、转账 commit、收益转换、用户码签发和兑换均可安全重试。
 - rolling window 限额在并发事务下不可超卖。
 - 日志、响应、缓存和前端存储中不得出现额度密码、完整邀请 token、完整用户码或加密密钥。
+- 每一条账本行保存该账户在该笔变动后的余额快照，列表按账户行展示 `account`、`delta_quota`、`balance_after`、`kind` 和 `created_at`。
 
-## 5. 实现设计，不属于目标站已确认事实
+## 5. Phase 9 对标流程
+
+下列流程分别区分目标站已观察到的交互和本地 New API 的可验证实现；目标站不可见的数据库和服务端实现不从 UI 反推为事实。
+
+### 5.1 总体架构
+
+```mermaid
+flowchart LR
+  Reseller["站长"] --> Center["/reseller 工作台"]
+  Center --> Invite["不透明邀请 /j/{token}"]
+  Invite --> Register["注册与直属绑定"]
+  Register --> Quote["平台价与代理倍率双报价"]
+  Quote --> Commission["成功请求差价佣金"]
+  Commission --> Pending["待结算收益"]
+  Pending --> Release["北京时间 04:10 释放"]
+  Release --> Available["可用收益"]
+  Available --> Wallet["转入 API 钱包"]
+  Wallet --> Transfer["转账 / 用户码 escrow"]
+```
+
+### 5.2 邀请绑定与双报价
+
+```mermaid
+sequenceDiagram
+  participant R as Reseller
+  participant C as Customer
+  participant API as New API
+  participant DB as Reseller tables
+  R->>API: 请求邀请链接
+  API->>DB: 创建或读取不透明 invitation
+  API-->>R: /j/{opaque token}
+  C->>API: 使用链接注册
+  API->>DB: 原子创建 user + direct binding
+  C->>API: 发起成功计费请求
+  API->>DB: 解析客户/默认分组倍率
+  API->>API: 分别计算 base quote 与 retail quote
+  API->>DB: 唯一 reference 写入 pending commission
+```
+
+### 5.3 转账 preview/commit
+
+```mermaid
+sequenceDiagram
+  participant S as Sender
+  participant API as Reseller API
+  participant DB as Ledger and preview state
+  S->>API: preview(username/code/link, amount)
+  API->>DB: 标准化接收人并保存 nonce digest
+  API-->>S: recipient, amount, nonce
+  S->>API: commit(recipient, amount, nonce, quota password, idempotency key)
+  API->>DB: 校验 nonce、额度密码、限额和幂等键
+  API->>DB: 原子钱包借贷与账本行
+  API-->>S: committed transfer
+```
+
+### 5.4 首次授权与日常额度授权
+
+```mermaid
+flowchart TD
+  Start["额度操作"] --> Bootstrap{"首次设置或重置？"}
+  Bootstrap -->|是| Identity{"登录密码或已有 security proof"}
+  Identity -->|通过| Set["设置/重置 6 位额度密码"]
+  Identity -->|失败| Reject["拒绝请求"]
+  Bootstrap -->|否| Quota{"提交当前额度密码"}
+  Quota -->|通过| Execute["定价、轮换、commit、转换、用户码"]
+  Quota -->|失败| Reject
+```
+
+## 6. 实现设计，不属于目标站已确认事实
 
 - 使用独立 `reseller_*` 表，而不是目标站真实表名。
 - 使用 New API 现有 system-task lease 做多实例批次排他。
@@ -129,7 +200,7 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - commission 的权威唯一引用优先使用 New API request ID；不依赖可能位于独立日志库的 log ID。
 - 旧 `users.inviter_id` 幂等回填成 `legacy_unknown`，旧返利额度不自动迁移。
 
-## 6. 对标状态
+## 7. 对标状态
 
 - [x] 页面与静态资源契约提取完成。
 - [x] API 方法和路径清单完成。
@@ -144,5 +215,7 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - [x] 本地前端逻辑测试：`/j/{token}` 使用 sessionStorage 并清理遗留 `aff`，注册/OAuth 成功后清理邀请；钱包 `RV-` 路由选择、服务端安全复核错误展示和列表分页已实现。
 - [x] 本地前端逐视图与跨视口测试：SQLite 预览在 `1440x900` 和 `390x844` 完成六个标签及默认/客户定价、收益转换、preview 转账、签发、reveal、额度密码和地址轮换入口检查；页面无全局横向溢出，移动 Tabs/表格独立横滚，弹窗位于视口内。无账本时 `items: null` 引发的 500 已通过后端空数组契约和前端兼容归一化修复并回归。
 - [x] 三数据库迁移检查：SQLite、MySQL `5.7.44` 和 PostgreSQL `9.6.24` 均创建 14 张 `reseller_*` 表及四个关键唯一索引；MySQL 数据库必须使用 `utf8mb4`，默认 `latin1` 会被启动门禁拒绝。
-- [ ] 目标站只读接口和本地响应字段差异检查。
+- [x] Phase 9 授权与工作台收敛：密码 setup/reset 使用登录密码或既有 proof，日常额度操作只用额度密码；转账 preview 采用用户名/32 位收款码/收款链接输入并在 commit 复核；定价完整文档原子保存、收益全额转换、用户码状态筛选和逐账户账本余额快照均已实现并有定向测试。
+- [x] 目标站只读 UI 对照：已登录桌面运行态确认顶部“额度安全与收款”、五个标签、未设密码禁用状态、全额收益转换和“新额度密码 + 登录密码确认”弹窗；未提交写操作。
+- [x] Phase 9 三数据库复验：SQLite 本地预览、MySQL `5.7.44` 和 PostgreSQL `9.6.24` 实际启动 AutoMigrate 均验证 `reseller_ledger_lines.balance_after` 和 14 张 `reseller_*` 表。
 - [ ] 使用可重置测试账户验证目标 mutation 的服务端错误和状态迁移。

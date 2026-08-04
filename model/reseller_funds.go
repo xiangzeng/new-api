@@ -46,6 +46,10 @@ func resellerPublicId(prefix string) (string, error) {
 	return prefix + random, nil
 }
 
+func resellerReceiveCode() (string, error) {
+	return common.GenerateRandomCharsKey(32)
+}
+
 func resellerRequestHash(operation string, values ...any) string {
 	return resellerSecretDigest("reseller-idempotency-v1", fmt.Sprintf("%s:%v", operation, values))
 }
@@ -104,16 +108,30 @@ func ensureRollingOutboundLimitWithTx(tx *gorm.DB, userId int, amount int, now i
 	return nil
 }
 
-func CreateResellerTransferPreview(senderId int, receivePublicId string, amount int, now int64) (string, *ResellerTransferPreview, error) {
+func CreateResellerTransferPreviewForRecipient(senderId int, recipientUsername string, recipientPublicId string, amount int, now int64) (string, *ResellerTransferPreview, error) {
 	quota, err := resellerAmountToQuota(amount)
 	if err != nil {
 		return "", nil, err
 	}
-	var receiver ResellerProfile
-	if err := DB.Where("receive_public_id = ? AND status = ?", strings.TrimSpace(receivePublicId), ResellerStatusActive).First(&receiver).Error; err != nil {
+	recipientUsername = strings.TrimSpace(recipientUsername)
+	recipientPublicId = strings.TrimSpace(recipientPublicId)
+	if (recipientUsername == "") == (recipientPublicId == "") {
 		return "", nil, ErrResellerPreviewInvalid
 	}
-	if receiver.UserId == senderId {
+
+	var receiver User
+	if recipientPublicId != "" {
+		var profile ResellerProfile
+		if err := DB.Where("receive_public_id = ? AND status = ?", recipientPublicId, ResellerStatusActive).First(&profile).Error; err != nil {
+			return "", nil, ErrResellerPreviewInvalid
+		}
+		if err := DB.Where("id = ? AND status = ?", profile.UserId, common.UserStatusEnabled).First(&receiver).Error; err != nil {
+			return "", nil, ErrResellerPreviewInvalid
+		}
+	} else if err := DB.Where("username = ? AND status = ?", recipientUsername, common.UserStatusEnabled).First(&receiver).Error; err != nil {
+		return "", nil, ErrResellerPreviewInvalid
+	}
+	if receiver.Id == senderId {
 		return "", nil, ErrResellerPreviewInvalid
 	}
 	nonce, err := resellerPublicId("rpv_")
@@ -123,7 +141,7 @@ func CreateResellerTransferPreview(senderId int, receivePublicId string, amount 
 	now = resellerNow(now)
 	preview := ResellerTransferPreview{
 		NonceHash: resellerSecretDigest("reseller-preview-v1", nonce), SenderId: senderId,
-		ReceiverId: receiver.UserId, Amount: amount, Quota: quota, ExpiresAt: now + ResellerTransferPreviewTTL,
+		ReceiverId: receiver.Id, Amount: amount, Quota: quota, ExpiresAt: now + ResellerTransferPreviewTTL,
 	}
 	if err := DB.Create(&preview).Error; err != nil {
 		return "", nil, err
@@ -131,7 +149,17 @@ func CreateResellerTransferPreview(senderId int, receivePublicId string, amount 
 	return nonce, &preview, nil
 }
 
-func CommitResellerQuotaTransfer(senderId int, nonce string, password string, idempotencyKey string, now int64) (*ResellerQuotaTransfer, error) {
+func CreateResellerTransferPreview(senderId int, receivePublicId string, amount int, now int64) (string, *ResellerTransferPreview, error) {
+	return CreateResellerTransferPreviewForRecipient(senderId, "", receivePublicId, amount, now)
+}
+
+type ResellerTransferCommitExpectation struct {
+	RecipientUserId int
+	RecipientName   string
+	Amount          int
+}
+
+func CommitResellerQuotaTransferForRecipient(senderId int, nonce string, password string, idempotencyKey string, expectation ResellerTransferCommitExpectation, now int64) (*ResellerQuotaTransfer, error) {
 	now = resellerNow(now)
 	if err := VerifyResellerQuotaPassword(senderId, password, now, true); err != nil {
 		return nil, err
@@ -151,6 +179,18 @@ func CommitResellerQuotaTransfer(senderId int, nonce string, password string, id
 		if err := lockForUpdate(tx).Where("nonce_hash = ? AND sender_id = ? AND consumed_at = 0 AND expires_at >= ?", nonceHash, senderId, now).First(&preview).Error; err != nil {
 			return ErrResellerPreviewInvalid
 		}
+		if expectation.RecipientUserId > 0 && expectation.RecipientUserId != preview.ReceiverId {
+			return ErrResellerPreviewInvalid
+		}
+		if expectation.Amount > 0 && expectation.Amount != preview.Amount {
+			return ErrResellerPreviewInvalid
+		}
+		if strings.TrimSpace(expectation.RecipientName) != "" {
+			var receiver User
+			if err := tx.Select("id", "username").Where("id = ? AND username = ?", preview.ReceiverId, strings.TrimSpace(expectation.RecipientName)).First(&receiver).Error; err != nil {
+				return ErrResellerPreviewInvalid
+			}
+		}
 		if err := ensureRollingOutboundLimitWithTx(tx, senderId, preview.Amount, now); err != nil {
 			return err
 		}
@@ -162,17 +202,17 @@ func CommitResellerQuotaTransfer(senderId int, nonce string, password string, id
 		if err := tx.Create(&transfer).Error; err != nil {
 			return err
 		}
+		if _, _, err := createResellerLedgerTransactionWithTx(tx, publicId, ResellerLedgerKindQuotaTransfer, senderId, 0, []ResellerLedgerLineInput{
+			{Account: ResellerLedgerAccountAPIWallet, OwnerUserId: senderId, DeltaQuota: -int64(preview.Quota)},
+			{Account: ResellerLedgerAccountAPIWallet, OwnerUserId: preview.ReceiverId, DeltaQuota: int64(preview.Quota)},
+		}); err != nil {
+			return err
+		}
 		debit := tx.Model(&User{}).Where("id = ? AND quota >= ?", senderId, preview.Quota).Update("quota", gorm.Expr("quota - ?", preview.Quota))
 		if debit.Error != nil || debit.RowsAffected != 1 {
 			return ErrResellerQuotaInsufficient
 		}
 		if err := tx.Model(&User{}).Where("id = ?", preview.ReceiverId).Update("quota", gorm.Expr("quota + ?", preview.Quota)).Error; err != nil {
-			return err
-		}
-		if _, _, err := createResellerLedgerTransactionWithTx(tx, publicId, ResellerLedgerKindQuotaTransfer, senderId, 0, []ResellerLedgerLineInput{
-			{Account: ResellerLedgerAccountAPIWallet, OwnerUserId: senderId, DeltaQuota: -int64(preview.Quota)},
-			{Account: ResellerLedgerAccountAPIWallet, OwnerUserId: preview.ReceiverId, DeltaQuota: int64(preview.Quota)},
-		}); err != nil {
 			return err
 		}
 		if err := tx.Create(&ResellerOutboundEvent{UserId: senderId, Kind: "transfer", Amount: preview.Amount, Reference: publicId, CreatedAt: now}).Error; err != nil {
@@ -197,42 +237,55 @@ func CommitResellerQuotaTransfer(senderId int, nonce string, password string, id
 	return &transfer, err
 }
 
-func ConvertResellerCommission(userId int, amount int, password string, idempotencyKey string, now int64) (string, error) {
-	quota, err := resellerAmountToQuota(amount)
-	if err != nil {
-		return "", err
+func CommitResellerQuotaTransfer(senderId int, nonce string, password string, idempotencyKey string, now int64) (*ResellerQuotaTransfer, error) {
+	return CommitResellerQuotaTransferForRecipient(senderId, nonce, password, idempotencyKey, ResellerTransferCommitExpectation{}, now)
+}
+
+func convertResellerCommissionQuota(userId int, expectedQuota int64, requireAll bool, password string, idempotencyKey string, now int64) (string, int64, error) {
+	if expectedQuota <= 0 || expectedQuota > int64(^uint32(0)>>1) {
+		return "", 0, ErrResellerAmountInvalid
 	}
 	now = resellerNow(now)
 	if err := VerifyResellerQuotaPassword(userId, password, now, false); err != nil {
-		return "", err
+		return "", 0, err
 	}
-	requestHash := resellerRequestHash("commission_convert", amount)
+	requestHash := resellerRequestHash("commission_convert", expectedQuota)
 	resultRef := ""
-	err = DB.Transaction(func(tx *gorm.DB) error {
+	convertedQuota := int64(0)
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		existing, err := getResellerIdempotencyWithTx(tx, userId, "commission_convert", idempotencyKey, requestHash)
 		if err != nil {
 			return err
 		}
 		if existing != nil {
 			resultRef = existing.ResultRef
+			convertedQuota = expectedQuota
 			return nil
+		}
+		var profile ResellerProfile
+		if err := lockForUpdate(tx).Where("user_id = ? AND status = ?", userId, ResellerStatusActive).First(&profile).Error; err != nil {
+			return ErrResellerNotEnabled
+		}
+		if profile.AvailableCommissionQuota < expectedQuota || (requireAll && profile.AvailableCommissionQuota != expectedQuota) {
+			return ErrResellerQuotaInsufficient
 		}
 		resultRef, err = resellerPublicId("rcv_")
 		if err != nil {
 			return err
 		}
-		projection := tx.Model(&ResellerProfile{}).Where("user_id = ? AND available_commission_quota >= ?", userId, quota).
-			Update("available_commission_quota", gorm.Expr("available_commission_quota - ?", quota))
+		convertedQuota = expectedQuota
+		if _, _, err := createResellerLedgerTransactionWithTx(tx, resultRef, ResellerLedgerKindCommissionConvert, userId, 0, []ResellerLedgerLineInput{
+			{Account: ResellerLedgerAccountCommissionAvailable, OwnerUserId: userId, DeltaQuota: -convertedQuota},
+			{Account: ResellerLedgerAccountAPIWallet, OwnerUserId: userId, DeltaQuota: convertedQuota},
+		}); err != nil {
+			return err
+		}
+		projection := tx.Model(&ResellerProfile{}).Where("id = ? AND available_commission_quota >= ?", profile.Id, convertedQuota).
+			Update("available_commission_quota", gorm.Expr("available_commission_quota - ?", convertedQuota))
 		if projection.Error != nil || projection.RowsAffected != 1 {
 			return ErrResellerQuotaInsufficient
 		}
-		if err := tx.Model(&User{}).Where("id = ?", userId).Update("quota", gorm.Expr("quota + ?", quota)).Error; err != nil {
-			return err
-		}
-		if _, _, err := createResellerLedgerTransactionWithTx(tx, resultRef, ResellerLedgerKindCommissionConvert, userId, 0, []ResellerLedgerLineInput{
-			{Account: ResellerLedgerAccountCommissionAvailable, OwnerUserId: userId, DeltaQuota: -int64(quota)},
-			{Account: ResellerLedgerAccountAPIWallet, OwnerUserId: userId, DeltaQuota: int64(quota)},
-		}); err != nil {
+		if err := tx.Model(&User{}).Where("id = ?", userId).Update("quota", gorm.Expr("quota + ?", convertedQuota)).Error; err != nil {
 			return err
 		}
 		return tx.Create(&ResellerIdempotencyRecord{UserId: userId, Operation: "commission_convert", Key: idempotencyKey, RequestHash: requestHash, ResultRef: resultRef}).Error
@@ -240,12 +293,25 @@ func ConvertResellerCommission(userId int, amount int, password string, idempote
 	if err != nil {
 		if completed := getCompletedResellerIdempotency(userId, "commission_convert", idempotencyKey, requestHash); completed != nil {
 			refreshResellerQuotaCaches(userId)
-			return completed.ResultRef, nil
+			return completed.ResultRef, expectedQuota, nil
 		}
 	}
 	if err == nil {
 		refreshResellerQuotaCaches(userId)
 	}
+	return resultRef, convertedQuota, err
+}
+
+func ConvertAllResellerCommission(userId int, expectedQuota int64, password string, idempotencyKey string, now int64) (string, int64, error) {
+	return convertResellerCommissionQuota(userId, expectedQuota, true, password, idempotencyKey, now)
+}
+
+func ConvertResellerCommission(userId int, amount int, password string, idempotencyKey string, now int64) (string, error) {
+	quota, err := resellerAmountToQuota(amount)
+	if err != nil {
+		return "", err
+	}
+	resultRef, _, err := convertResellerCommissionQuota(userId, int64(quota), false, password, idempotencyKey, now)
 	return resultRef, err
 }
 
@@ -313,15 +379,15 @@ func IssueResellerVoucherBatch(issuerId int, count int, amount int, note string,
 		if err := tx.Create(&vouchers).Error; err != nil {
 			return err
 		}
-		debit := tx.Model(&User{}).Where("id = ? AND quota >= ?", issuerId, totalQuota).Update("quota", gorm.Expr("quota - ?", totalQuota))
-		if debit.Error != nil || debit.RowsAffected != 1 {
-			return ErrResellerQuotaInsufficient
-		}
 		if _, _, err := createResellerLedgerTransactionWithTx(tx, publicId, ResellerLedgerKindVoucherEscrow, issuerId, 0, []ResellerLedgerLineInput{
 			{Account: ResellerLedgerAccountAPIWallet, OwnerUserId: issuerId, DeltaQuota: -int64(totalQuota)},
 			{Account: ResellerLedgerAccountVoucherEscrow, OwnerUserId: issuerId, DeltaQuota: int64(totalQuota)},
 		}); err != nil {
 			return err
+		}
+		debit := tx.Model(&User{}).Where("id = ? AND quota >= ?", issuerId, totalQuota).Update("quota", gorm.Expr("quota - ?", totalQuota))
+		if debit.Error != nil || debit.RowsAffected != 1 {
+			return ErrResellerQuotaInsufficient
 		}
 		if err := tx.Create(&ResellerOutboundEvent{UserId: issuerId, Kind: "voucher", Amount: totalAmount, Reference: publicId, CreatedAt: now}).Error; err != nil {
 			return err
@@ -395,14 +461,14 @@ func RedeemResellerVoucher(code string, userId int, now int64) (int, error) {
 		if result.Error != nil || result.RowsAffected != 1 {
 			return ErrResellerVoucherInvalid
 		}
-		if err := tx.Model(&User{}).Where("id = ?", userId).Update("quota", gorm.Expr("quota + ?", voucher.Quota)).Error; err != nil {
-			return err
-		}
 		ref := fmt.Sprintf("voucher:%d:redeem", voucher.Id)
 		if _, _, err := createResellerLedgerTransactionWithTx(tx, ref, ResellerLedgerKindVoucherRedeem, voucher.IssuerId, 0, []ResellerLedgerLineInput{
 			{Account: ResellerLedgerAccountVoucherEscrow, OwnerUserId: voucher.IssuerId, DeltaQuota: -int64(voucher.Quota)},
 			{Account: ResellerLedgerAccountAPIWallet, OwnerUserId: userId, DeltaQuota: int64(voucher.Quota)},
 		}); err != nil {
+			return err
+		}
+		if err := tx.Model(&User{}).Where("id = ?", userId).Update("quota", gorm.Expr("quota + ?", voucher.Quota)).Error; err != nil {
 			return err
 		}
 		quota = voucher.Quota

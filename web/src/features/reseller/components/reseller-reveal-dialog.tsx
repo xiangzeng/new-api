@@ -25,10 +25,6 @@ import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  SecureVerificationDialog,
-  useSecureVerification,
-} from '@/features/auth/secure-verification'
 
 import { revealVoucher, revealVoucherBatch } from '../api'
 
@@ -49,9 +45,6 @@ export function ResellerRevealDialog({
   const [password, setPassword] = useState('')
   const [codes, setCodes] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
-  const verification = useSecureVerification({
-    onError: () => setLoading(false),
-  })
 
   useEffect(() => {
     if (open) return
@@ -62,101 +55,74 @@ export function ResellerRevealDialog({
 
   const submit = async () => {
     setLoading(true)
-    await verification.startVerification(
-      async (proof) => {
-        try {
-          const response = batch
-            ? await revealVoucherBatch(publicId, password, proof)
-            : await revealVoucher(publicId, password, proof)
-          const data = response.data.data as { code?: string; codes?: string[] }
-          setCodes(data.codes || (data.code ? [data.code] : []))
-          return response
-        } finally {
-          setLoading(false)
-        }
-      },
-      {
-        scope: 'reseller.voucher.reveal',
-        title: t('Reveal user codes'),
-        description: t('Confirm your identity before decrypting stored codes.'),
-      }
-    )
-    setLoading(false)
+    try {
+      const response = batch
+        ? await revealVoucherBatch(publicId, password)
+        : await revealVoucher(publicId, password)
+      const data = response.data.data as { code?: string; codes?: string[] }
+      setCodes(data.codes || (data.code ? [data.code] : []))
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
-    <>
-      <Dialog
-        open={open}
-        onOpenChange={onOpenChange}
-        title={t('Reveal user codes')}
-        description={t(
-          'The quota password and an additional verification method are both required.'
-        )}
-        contentClassName='sm:max-w-lg'
-        footer={
-          <>
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t('Reveal user codes')}
+      description={t(
+        'The six-digit quota password is required to decrypt stored codes.'
+      )}
+      contentClassName='sm:max-w-lg'
+      footer={
+        <>
+          <Button
+            variant='outline'
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+          >
+            {codes.length ? t('Close') : t('Cancel')}
+          </Button>
+          {!codes.length && (
             <Button
-              variant='outline'
-              onClick={() => onOpenChange(false)}
-              disabled={loading}
+              onClick={submit}
+              disabled={loading || !/^\d{6}$/.test(password)}
             >
-              {codes.length ? t('Close') : t('Cancel')}
+              {loading && <Loader2 className='animate-spin' />}
+              {t('Reveal')}
             </Button>
-            {!codes.length && (
-              <Button
-                onClick={submit}
-                disabled={loading || !/^\d{6}$/.test(password)}
-              >
-                {loading && <Loader2 className='animate-spin' />}
-                {t('Continue to verification')}
-              </Button>
-            )}
-          </>
-        }
-      >
-        {codes.length ? (
-          <div className='divide-y rounded-md border font-mono text-xs'>
-            {codes.map((code) => (
-              <div key={code} className='flex items-center gap-2 px-3 py-2'>
-                <span className='min-w-0 flex-1 break-all'>{code}</span>
-                <CopyButton value={code} tooltip={t('Copy user code')} />
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className='space-y-1.5'>
-            <Label htmlFor='reseller-reveal-password'>
-              {t('Quota password')}
-            </Label>
-            <Input
-              id='reseller-reveal-password'
-              type='password'
-              inputMode='numeric'
-              autoComplete='off'
-              maxLength={6}
-              value={password}
-              onChange={(event) =>
-                setPassword(event.target.value.replaceAll(/\D/g, ''))
-              }
-            />
-          </div>
-        )}
-      </Dialog>
-      <SecureVerificationDialog
-        open={verification.open}
-        onOpenChange={(next) => {
-          if (!next) verification.cancel()
-        }}
-        methods={verification.methods}
-        state={verification.state}
-        onVerify={async (method, code) => {
-          await verification.executeVerification(method, code)
-        }}
-        onCancel={verification.cancel}
-        onCodeChange={verification.setCode}
-        onMethodChange={verification.switchMethod}
-      />
-    </>
+          )}
+        </>
+      }
+    >
+      {codes.length ? (
+        <div className='divide-y rounded-md border font-mono text-xs'>
+          {codes.map((code) => (
+            <div key={code} className='flex items-center gap-2 px-3 py-2'>
+              <span className='min-w-0 flex-1 break-all'>{code}</span>
+              <CopyButton value={code} tooltip={t('Copy user code')} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className='space-y-1.5'>
+          <Label htmlFor='reseller-reveal-password'>
+            {t('Quota password')}
+          </Label>
+          <Input
+            id='reseller-reveal-password'
+            type='password'
+            inputMode='numeric'
+            autoComplete='off'
+            maxLength={6}
+            value={password}
+            onChange={(event) =>
+              setPassword(event.target.value.replaceAll(/\D/g, ''))
+            }
+          />
+        </div>
+      )}
+    </Dialog>
   )
 }

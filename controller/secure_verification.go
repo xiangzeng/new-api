@@ -84,12 +84,7 @@ func isAllowedSecurityProofScope(scope string) bool {
 		securityProofScopePasskeyRegister,
 		securityProofScopePasskeyDelete,
 		securityProofScopeResellerPassword,
-		securityProofScopeResellerPasswordReset,
-		securityProofScopeResellerTransfer,
-		securityProofScopeResellerConvert,
-		securityProofScopeResellerVoucherIssue,
-		securityProofScopeResellerVoucherReveal,
-		securityProofScopeResellerAddressRotate:
+		securityProofScopeResellerPasswordReset:
 		return true
 	default:
 		return false

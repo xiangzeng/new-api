@@ -48,6 +48,34 @@ func validateResellerLedgerLines(lines []ResellerLedgerLineInput) error {
 	return nil
 }
 
+func resellerLedgerBalanceAfter(tx *gorm.DB, line ResellerLedgerLineInput) (int64, error) {
+	switch line.Account {
+	case ResellerLedgerAccountAPIWallet:
+		var user User
+		if err := tx.Select("quota").Where("id = ?", line.OwnerUserId).First(&user).Error; err != nil {
+			return 0, err
+		}
+		return int64(user.Quota) + line.DeltaQuota, nil
+	case ResellerLedgerAccountCommissionPending, ResellerLedgerAccountCommissionAvailable:
+		var profile ResellerProfile
+		if err := tx.Select("pending_commission_quota", "available_commission_quota").Where("user_id = ?", line.OwnerUserId).First(&profile).Error; err != nil {
+			return 0, err
+		}
+		if line.Account == ResellerLedgerAccountCommissionPending {
+			return profile.PendingCommissionQuota + line.DeltaQuota, nil
+		}
+		return profile.AvailableCommissionQuota + line.DeltaQuota, nil
+	default:
+		var balance int64
+		if err := tx.Model(&ResellerLedgerLine{}).
+			Where("account = ? AND owner_user_id = ?", line.Account, line.OwnerUserId).
+			Select("COALESCE(SUM(delta_quota), 0)").Scan(&balance).Error; err != nil {
+			return 0, err
+		}
+		return balance + line.DeltaQuota, nil
+	}
+}
+
 // createResellerLedgerTransactionWithTx posts an immutable, balanced journal.
 // The returned bool is true only for the transaction that created the header.
 func createResellerLedgerTransactionWithTx(
@@ -85,12 +113,17 @@ func createResellerLedgerTransactionWithTx(
 
 	persistedLines := make([]ResellerLedgerLine, 0, len(lines))
 	for index, line := range lines {
+		balanceAfter, err := resellerLedgerBalanceAfter(tx, line)
+		if err != nil {
+			return nil, false, err
+		}
 		persistedLines = append(persistedLines, ResellerLedgerLine{
 			TransactionId: journal.Id,
 			LineNumber:    index + 1,
 			Account:       line.Account,
 			OwnerUserId:   line.OwnerUserId,
 			DeltaQuota:    line.DeltaQuota,
+			BalanceAfter:  balanceAfter,
 		})
 	}
 	if err := tx.Create(&persistedLines).Error; err != nil {
@@ -155,7 +188,6 @@ func releaseResellerCommissionWithTx(tx *gorm.DB, commissionId int64, cutoff int
 	if !created {
 		return false, ErrResellerLedgerReferenceConflict
 	}
-
 	statusUpdate := tx.Model(&ResellerCommissionEntry{}).
 		Where("id = ? AND status = ?", entry.Id, ResellerCommissionStatusPending).
 		Update("status", ResellerCommissionStatusAvailable)

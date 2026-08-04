@@ -107,6 +107,7 @@ type ResellerLedgerLine struct {
 	Account       string `json:"account" gorm:"type:varchar(40);not null;index"`
 	OwnerUserId   int    `json:"owner_user_id" gorm:"not null;default:0;index"`
 	DeltaQuota    int64  `json:"delta_quota" gorm:"type:bigint;not null"`
+	BalanceAfter  int64  `json:"balance_after" gorm:"type:bigint;not null;default:0"`
 	CreatedAt     int64  `json:"created_at" gorm:"autoCreateTime"`
 }
 

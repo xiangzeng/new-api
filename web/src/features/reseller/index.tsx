@@ -58,10 +58,6 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  SecureVerificationDialog,
-  useSecureVerification,
-} from '@/features/auth/secure-verification'
 import { getUserGroups } from '@/lib/api'
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
 
@@ -76,8 +72,7 @@ import {
   getResellerStatus,
   getResellerTransfers,
   getResellerVoucherBatches,
-  getResellerVouchers,
-  rotateReceiveAddress,
+  getResellerVouchersByStatus,
 } from './api'
 import {
   ResellerActionDialog,
@@ -124,12 +119,16 @@ export function ResellerCenter() {
     useState<ResellerPage<ResellerVoucher>>(emptyPage)
   const [batches, setBatches] =
     useState<ResellerPage<ResellerVoucherBatch>>(emptyPage)
+  const [voucherStatus, setVoucherStatus] = useState<
+    'all' | 'pending' | 'used'
+  >('all')
   const [groups, setGroups] = useState<Record<string, GroupInfo>>({})
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [enabling, setEnabling] = useState(false)
   const [error, setError] = useState('')
   const [action, setAction] = useState<ResellerActionKind | null>(null)
+  const [initialTransferRecipient, setInitialTransferRecipient] = useState('')
   const [pricingOpen, setPricingOpen] = useState(false)
   const [pricingCustomer, setPricingCustomer] =
     useState<ResellerCustomer | null>(null)
@@ -137,7 +136,6 @@ export function ResellerCenter() {
     publicId: string
     batch: boolean
   } | null>(null)
-  const rotateVerification = useSecureVerification()
   const initialized = useRef(false)
 
   const load = useCallback(
@@ -166,7 +164,7 @@ export function ResellerCenter() {
           getResellerCustomers(customers.page),
           getResellerTransfers(transfers.page),
           getResellerLedger(ledger.page),
-          getResellerVouchers(vouchers.page),
+          getResellerVouchersByStatus(vouchers.page, voucherStatus),
           getResellerVoucherBatches(batches.page),
           getUserGroups(),
         ])
@@ -195,6 +193,7 @@ export function ResellerCenter() {
       ledger.page,
       t,
       transfers.page,
+      voucherStatus,
       vouchers.page,
     ]
   )
@@ -203,6 +202,15 @@ export function ResellerCenter() {
     void load(initialized.current)
     initialized.current = true
   }, [load])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const receive = new URLSearchParams(window.location.search).get('receive')
+    if (receive && /^[A-Za-z0-9]{32}$/.test(receive)) {
+      setInitialTransferRecipient(receive)
+      setAction('transfer')
+    }
+  }, [])
 
   const enable = async () => {
     setEnabling(true)
@@ -223,24 +231,6 @@ export function ResellerCenter() {
   const openCustomerPricing = (customer: ResellerCustomer) => {
     setPricingCustomer(customer)
     setPricingOpen(true)
-  }
-
-  const rotateAddress = async () => {
-    await rotateVerification.startVerification(
-      async (proof) => {
-        const response = await rotateReceiveAddress(proof)
-        toast.success(t('Receive address rotated'))
-        await load(true)
-        return response
-      },
-      {
-        scope: 'reseller.receive_address.rotate',
-        title: t('Rotate receive address'),
-        description: t(
-          'The old receive address will stop accepting new transfer previews.'
-        ),
-      }
-    )
   }
 
   if (loading) return <ResellerLoading />
@@ -303,6 +293,11 @@ export function ResellerCenter() {
                 </Alert>
               )}
 
+              <SecurityPanel
+                security={security}
+                receivePublicId={status.receive_public_id || ''}
+                onAction={setAction}
+              />
               <SummaryBand status={status} />
 
               <Tabs defaultValue='overview' className='gap-3'>
@@ -312,13 +307,9 @@ export function ResellerCenter() {
                       <BadgeDollarSign />
                       {t('Overview')}
                     </TabsTrigger>
-                    <TabsTrigger value='customers'>
+                    <TabsTrigger value='pricing'>
                       <Users />
-                      {t('Customers')}
-                    </TabsTrigger>
-                    <TabsTrigger value='ledger'>
-                      <CircleDollarSign />
-                      {t('Ledger')}
+                      {t('Customer Pricing')}
                     </TabsTrigger>
                     <TabsTrigger value='transfers'>
                       <ArrowRightLeft />
@@ -328,9 +319,9 @@ export function ResellerCenter() {
                       <Ticket />
                       {t('User Codes')}
                     </TabsTrigger>
-                    <TabsTrigger value='security'>
-                      <LockKeyhole />
-                      {t('Security')}
+                    <TabsTrigger value='earnings'>
+                      <CircleDollarSign />
+                      {t('Earnings & Ledger')}
                     </TabsTrigger>
                   </TabsList>
                 </div>
@@ -346,20 +337,17 @@ export function ResellerCenter() {
                     onAction={setAction}
                   />
                 </TabsContent>
-                <TabsContent value='customers'>
-                  <CustomersPanel
+                <TabsContent value='pricing'>
+                  <PricingCustomersPanel
+                    defaultPricing={defaultPricing}
+                    onDefaultPricing={() => {
+                      setPricingCustomer(null)
+                      setPricingOpen(true)
+                    }}
                     page={customers}
                     onPricing={openCustomerPricing}
                     onPageChange={(page) =>
                       setCustomers((current) => ({ ...current, page }))
-                    }
-                  />
-                </TabsContent>
-                <TabsContent value='ledger'>
-                  <LedgerPanel
-                    page={ledger}
-                    onPageChange={(page) =>
-                      setLedger((current) => ({ ...current, page }))
                     }
                   />
                 </TabsContent>
@@ -376,7 +364,12 @@ export function ResellerCenter() {
                   <VouchersPanel
                     vouchers={vouchers}
                     batches={batches}
-                    onIssue={() => setAction('voucher')}
+                    status={voucherStatus}
+                    onStatusChange={(status) => {
+                      setVoucherStatus(status)
+                      setVouchers((current) => ({ ...current, page: 1 }))
+                    }}
+                    onIssue={setAction}
                     onReveal={(publicId, batch) =>
                       setReveal({ publicId, batch })
                     }
@@ -388,12 +381,14 @@ export function ResellerCenter() {
                     }
                   />
                 </TabsContent>
-                <TabsContent value='security'>
-                  <SecurityPanel
-                    security={security}
-                    receivePublicId={status.receive_public_id || ''}
-                    onAction={setAction}
-                    onRotate={rotateAddress}
+                <TabsContent value='earnings'>
+                  <EarningsLedgerPanel
+                    status={status}
+                    page={ledger}
+                    onConvert={() => setAction('convert')}
+                    onPageChange={(page) =>
+                      setLedger((current) => ({ ...current, page }))
+                    }
                   />
                 </TabsContent>
               </Tabs>
@@ -409,6 +404,10 @@ export function ResellerCenter() {
               if (!open) setAction(null)
             }}
             onCompleted={() => load(true)}
+            availableCommissionQuota={status?.available_commission_quota || 0}
+            initialRecipient={
+              action === 'transfer' ? initialTransferRecipient : undefined
+            }
           />
         )}
         <ResellerPricingDialog
@@ -436,20 +435,6 @@ export function ResellerCenter() {
             batch={reveal.batch}
           />
         )}
-        <SecureVerificationDialog
-          open={rotateVerification.open}
-          onOpenChange={(open) => {
-            if (!open) rotateVerification.cancel()
-          }}
-          methods={rotateVerification.methods}
-          state={rotateVerification.state}
-          onVerify={async (method, code) => {
-            await rotateVerification.executeVerification(method, code)
-          }}
-          onCancel={rotateVerification.cancel}
-          onCodeChange={rotateVerification.setCode}
-          onMethodChange={rotateVerification.switchMethod}
-        />
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )
@@ -614,7 +599,7 @@ function OverviewPanel({
           icon={Ticket}
           title={t('Issue user codes')}
           description={t('Create one-time codes backed by escrowed quota.')}
-          onClick={() => onAction('voucher')}
+          onClick={() => onAction('voucher-single')}
         />
       </div>
     </div>
@@ -712,6 +697,51 @@ function CustomersPanel({
   )
 }
 
+function PricingCustomersPanel({
+  defaultPricing,
+  onDefaultPricing,
+  page,
+  onPricing,
+  onPageChange,
+}: {
+  defaultPricing: ResellerPricingResponse | null
+  onDefaultPricing: () => void
+  page: ResellerPage<ResellerCustomer>
+  onPricing: (customer: ResellerCustomer) => void
+  onPageChange: (page: number) => void
+}) {
+  const { t } = useTranslation()
+  const overall = defaultPricing?.rules['']
+  const requested =
+    overall?.pending_multiplier_bps || overall?.current_multiplier_bps || 10000
+  return (
+    <div className='space-y-4'>
+      <section className='grid gap-3 rounded-md border p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'>
+        <div>
+          <h3 className='font-medium'>{t('Default customer pricing')}</h3>
+          <p className='text-muted-foreground mt-1 text-sm'>
+            {t(
+              'Overall multiplier: {{value}}x · allowed range 1.0000x–10.0000x',
+              {
+                value: (requested / 10000).toFixed(4),
+              }
+            )}
+          </p>
+        </div>
+        <Button variant='outline' onClick={onDefaultPricing}>
+          <SlidersHorizontal />
+          {t('Default group pricing')}
+        </Button>
+      </section>
+      <CustomersPanel
+        page={page}
+        onPricing={onPricing}
+        onPageChange={onPageChange}
+      />
+    </div>
+  )
+}
+
 function LedgerPanel({
   page,
   onPageChange,
@@ -732,9 +762,10 @@ function LedgerPanel({
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead>{t('Account')}</TableHead>
+            <TableHead>{t('Change')}</TableHead>
+            <TableHead>{t('Balance after')}</TableHead>
             <TableHead>{t('Type')}</TableHead>
-            <TableHead>{t('Reference')}</TableHead>
-            <TableHead>{t('Amount')}</TableHead>
             <TableHead>{t('Created at')}</TableHead>
           </TableRow>
         </TableHeader>
@@ -742,18 +773,72 @@ function LedgerPanel({
           {page.items.map((item) => (
             <TableRow key={item.id}>
               <TableCell>
-                <Badge variant='outline'>{t(item.kind)}</Badge>
+                <Badge variant='outline'>{t(item.account)}</Badge>
               </TableCell>
-              <TableCell className='max-w-64 truncate font-mono text-xs'>
-                {item.reference}
+              <TableCell
+                className={
+                  item.delta_quota >= 0
+                    ? 'text-success tabular-nums'
+                    : 'text-destructive tabular-nums'
+                }
+              >
+                {item.delta_quota >= 0 ? '+' : '-'}
+                {formatQuota(Math.abs(item.delta_quota))}
               </TableCell>
-              <TableCell>{formatQuota(item.amount_quota)}</TableCell>
+              <TableCell className='tabular-nums'>
+                {formatQuota(item.balance_after)}
+              </TableCell>
+              <TableCell>{t(item.kind)}</TableCell>
               <TableCell>{formatTimestampToDate(item.created_at)}</TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
     </DataSection>
+  )
+}
+
+function EarningsLedgerPanel({
+  status,
+  page,
+  onConvert,
+  onPageChange,
+}: {
+  status: ResellerStatus
+  page: ResellerPage<ResellerLedgerItem>
+  onConvert: () => void
+  onPageChange: (page: number) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className='space-y-4'>
+      <section className='grid gap-4 rounded-md border p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-center'>
+        <div>
+          <div className='text-muted-foreground text-xs'>
+            {t('Pending earnings')}
+          </div>
+          <div className='mt-1 font-semibold tabular-nums'>
+            {formatQuota(status.pending_commission_quota)}
+          </div>
+        </div>
+        <div>
+          <div className='text-muted-foreground text-xs'>
+            {t('Available earnings')}
+          </div>
+          <div className='mt-1 font-semibold tabular-nums'>
+            {formatQuota(status.available_commission_quota)}
+          </div>
+        </div>
+        <Button
+          onClick={onConvert}
+          disabled={status.available_commission_quota <= 0}
+        >
+          <CircleDollarSign />
+          {t('Convert all to wallet')}
+        </Button>
+      </section>
+      <LedgerPanel page={page} onPageChange={onPageChange} />
+    </div>
   )
 }
 
@@ -827,6 +912,8 @@ function TransfersPanel({
 function VouchersPanel({
   vouchers,
   batches,
+  status,
+  onStatusChange,
   onIssue,
   onReveal,
   onVoucherPageChange,
@@ -834,23 +921,45 @@ function VouchersPanel({
 }: {
   vouchers: ResellerPage<ResellerVoucher>
   batches: ResellerPage<ResellerVoucherBatch>
-  onIssue: () => void
+  status: 'all' | 'pending' | 'used'
+  onStatusChange: (status: 'all' | 'pending' | 'used') => void
+  onIssue: (kind: ResellerActionKind) => void
   onReveal: (publicId: string, batch: boolean) => void
   onVoucherPageChange: (page: number) => void
   onBatchPageChange: (page: number) => void
 }) {
   const { t } = useTranslation()
+  const statusOptions = [
+    { value: 'all' as const, label: t('All statuses') },
+    { value: 'pending' as const, label: t('Pending redemption') },
+    { value: 'used' as const, label: t('Used') },
+  ]
   return (
     <div className='space-y-4'>
+      <section className='rounded-md border p-4'>
+        <h3 className='font-medium'>{t('User code generation')}</h3>
+        <Tabs defaultValue='single' className='mt-3 gap-3'>
+          <TabsList variant='line'>
+            <TabsTrigger value='single'>{t('Single issue')}</TabsTrigger>
+            <TabsTrigger value='batch'>{t('Batch issue')}</TabsTrigger>
+          </TabsList>
+          <TabsContent value='single'>
+            <Button size='sm' onClick={() => onIssue('voucher-single')}>
+              <Ticket />
+              {t('Issue one code')}
+            </Button>
+          </TabsContent>
+          <TabsContent value='batch'>
+            <Button size='sm' onClick={() => onIssue('voucher-batch')}>
+              <Ticket />
+              {t('Issue a batch')}
+            </Button>
+          </TabsContent>
+        </Tabs>
+      </section>
       <DataSection
         title={t('User code batches')}
         count={batches.total}
-        action={
-          <Button size='sm' onClick={onIssue}>
-            <Ticket />
-            {t('Issue codes')}
-          </Button>
-        }
         empty={batches.items.length === 0}
         emptyText={t('No user code batches yet.')}
         page={batches}
@@ -895,6 +1004,20 @@ function VouchersPanel({
       <DataSection
         title={t('Individual user codes')}
         count={vouchers.total}
+        action={
+          <div className='flex gap-1'>
+            {statusOptions.map((option) => (
+              <Button
+                key={option.value}
+                variant={status === option.value ? 'secondary' : 'ghost'}
+                size='sm'
+                onClick={() => onStatusChange(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        }
         empty={vouchers.items.length === 0}
         emptyText={t('No user codes yet.')}
         page={vouchers}
@@ -950,16 +1073,31 @@ function SecurityPanel({
   security,
   receivePublicId,
   onAction,
-  onRotate,
 }: {
   security: ResellerSecurityStatus | null
   receivePublicId: string
   onAction: (action: ResellerActionKind) => void
-  onRotate: () => void
 }) {
   const { t } = useTranslation()
+  const receiveLink =
+    typeof window === 'undefined' || !receivePublicId
+      ? ''
+      : `${window.location.origin}/reseller?receive=${receivePublicId}`
   return (
     <div className='divide-y rounded-md border'>
+      {!security?.configured && (
+        <Alert className='rounded-none border-0 border-b'>
+          <ShieldAlert />
+          <AlertTitle>
+            {t('Set a quota password before using reseller operations')}
+          </AlertTitle>
+          <AlertDescription>
+            {t(
+              'This independent six-digit password is never stored in the browser.'
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
       <div className='grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'>
         <div>
           <h3 className='font-medium'>{t('Quota password')}</h3>
@@ -1001,7 +1139,7 @@ function SecurityPanel({
       </div>
       <div className='grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'>
         <div className='min-w-0'>
-          <h3 className='font-medium'>{t('Receive address')}</h3>
+          <h3 className='font-medium'>{t('32-character receive code')}</h3>
           <p className='text-muted-foreground mt-1 truncate font-mono text-xs'>
             {receivePublicId}
           </p>
@@ -1012,11 +1150,29 @@ function SecurityPanel({
             variant='outline'
             tooltip={t('Copy receive address')}
           />
-          <Button variant='outline' size='sm' onClick={onRotate}>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={() => onAction('rotate')}
+            disabled={!security?.configured}
+          >
             <RefreshCw />
             {t('Rotate')}
           </Button>
         </div>
+      </div>
+      <div className='grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'>
+        <div className='min-w-0'>
+          <h3 className='font-medium'>{t('Receive link')}</h3>
+          <p className='text-muted-foreground mt-1 truncate font-mono text-xs'>
+            {receiveLink}
+          </p>
+        </div>
+        <CopyButton
+          value={receiveLink}
+          variant='outline'
+          tooltip={t('Copy receive link')}
+        />
       </div>
     </div>
   )

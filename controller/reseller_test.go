@@ -37,10 +37,14 @@ func setupResellerControllerTest(t *testing.T) (*gorm.DB, model.User, model.Rese
 	common.RedisEnabled = false
 	common.SessionSecret = "reseller-controller-test-secret"
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	user := model.User{Username: "reseller-api-owner", Password: "unused", AffCode: "reseller-owner-aff", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default", Quota: 1000000, AuthVersion: 1}
+	loginPasswordHash, err := common.Password2Hash("login-password")
+	require.NoError(t, err)
+	user := model.User{Username: "reseller-api-owner", Password: loginPasswordHash, AffCode: "reseller-owner-aff", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default", Quota: 1000000, AuthVersion: 1}
 	require.NoError(t, db.Create(&user).Error)
 	profile := model.ResellerProfile{UserId: user.Id, Status: model.ResellerStatusActive, ReceivePublicId: "rr_owner_public", PricingVersion: 1}
 	require.NoError(t, db.Create(&profile).Error)
+	_, err = model.SetResellerQuotaPassword(user.Id, "123456", 100)
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.RedisEnabled, common.SessionSecret = previousRedis, previousSecret
@@ -98,7 +102,7 @@ func TestResellerCustomerPricingIsOwnerScoped(t *testing.T) {
 
 func TestResellerPricingConflictUsesStable409Envelope(t *testing.T) {
 	_, owner, profile := setupResellerControllerTest(t)
-	body := `{"group_name":"default","multiplier_bps":12000,"expected_version":99}`
+	body := `{"group_name":"default","multiplier_bps":12000,"expected_version":99,"quota_password":"123456"}`
 	ctx, recorder := resellerTestContext(http.MethodPut, "/api/reseller/pricing/default", body, owner)
 	UpdateDefaultResellerPricing(ctx)
 
@@ -110,13 +114,30 @@ func TestResellerPricingConflictUsesStable409Envelope(t *testing.T) {
 	assert.Equal(t, int64(1), persisted.PricingVersion)
 }
 
+func TestResellerPricingDocumentUpdatesOverallAndGroupsOnce(t *testing.T) {
+	_, owner, profile := setupResellerControllerTest(t)
+	body := `{"multiplier_bps":12500,"group_multipliers_bps":{"pro":14000,"vip":15000},"expected_version":1,"quota_password":"123456"}`
+	ctx, recorder := resellerTestContext(http.MethodPut, "/api/reseller/pricing/default", body, owner)
+	UpdateDefaultResellerPricing(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	response := decodedResellerResponse(t, recorder)["data"].(map[string]any)
+	assert.EqualValues(t, 2, response["pricing_version"])
+	rules, err := model.GetResellerPricingRules(model.ResellerPricingOwnerDefault, profile.Id)
+	require.NoError(t, err)
+	assert.Len(t, rules, 3)
+	assert.Equal(t, 12500, rules[""].CurrentMultiplierBps)
+	assert.Equal(t, 14000, rules["pro"].CurrentMultiplierBps)
+	assert.Equal(t, 15000, rules["vip"].CurrentMultiplierBps)
+}
+
 func TestDeleteDefaultResellerPricingRejectsStaleVersion(t *testing.T) {
 	_, owner, profile := setupResellerControllerTest(t)
 	_, version, err := model.UpdateResellerPricingRule(model.ResellerPricingOwnerDefault, profile.Id, "pro", 15000, 1, common.GetTimestamp())
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), version)
 
-	ctx, recorder := resellerTestContext(http.MethodDelete, "/api/reseller/pricing/default", `{"group_name":"pro","expected_version":1}`, owner)
+	ctx, recorder := resellerTestContext(http.MethodDelete, "/api/reseller/pricing/default", `{"group_name":"pro","expected_version":1,"quota_password":"123456"}`, owner)
 	DeleteDefaultResellerPricing(ctx)
 
 	assert.Equal(t, http.StatusConflict, recorder.Code)
@@ -148,24 +169,40 @@ func TestDeleteCustomerResellerPricingIsOwnerScoped(t *testing.T) {
 	assert.Contains(t, rules, "pro")
 }
 
-func TestResellerSensitiveWritesRequireProofAndIdempotency(t *testing.T) {
-	_, owner, _ := setupResellerControllerTest(t)
-	ctx, recorder := resellerTestContext(http.MethodPost, "/api/reseller/transfers/preview", `{"receive_public_id":"rr_other","amount":1}`, owner)
+func TestResellerDailyWritesUseQuotaPasswordWithoutSecurityProof(t *testing.T) {
+	db, owner, _ := setupResellerControllerTest(t)
+	receiver := model.User{Username: "preview-recipient", AffCode: "preview-recipient-aff", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
+	require.NoError(t, db.Create(&receiver).Error)
+	ctx, recorder := resellerTestContext(http.MethodPost, "/api/reseller/transfers/preview", `{"recipient_username":"preview-recipient","amount":1}`, owner)
 	PreviewResellerTransfer(ctx)
-	assert.Equal(t, http.StatusForbidden, recorder.Code)
-	assert.Equal(t, "SECURITY_PROOF_REQUIRED", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	preview := decodedResellerResponse(t, recorder)["data"].(map[string]any)
+	assert.Equal(t, "preview-recipient", preview["recipient_username"])
 
-	identity := service.AuthIdentity{UserID: owner.Id, SessionID: "reseller-session", UserAuthVersion: 1, SessionVersion: 1}
-	ctx, recorder = resellerTestContext(http.MethodPost, "/api/reseller/commission/convert", `{"amount":1,"password":"123456"}`, owner)
-	ctx.Request.Header.Set("X-Security-Proof", resellerProof(t, identity, securityProofScopeResellerConvert))
+	ctx, recorder = resellerTestContext(http.MethodPost, "/api/reseller/commission/convert", `{"quota":"500000","quota_password":"123456"}`, owner)
 	ConvertResellerCommission(ctx)
 	assert.Equal(t, http.StatusPreconditionRequired, recorder.Code)
 	assert.Equal(t, "RESELLER_IDEMPOTENCY_REQUIRED", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
 }
 
+func TestResellerPasswordSetupAcceptsLoginPasswordAndRejectsWrongPassword(t *testing.T) {
+	db, owner, _ := setupResellerControllerTest(t)
+	require.NoError(t, db.Where("user_id = ?", owner.Id).Delete(&model.ResellerSecurity{}).Error)
+
+	ctx, recorder := resellerTestContext(http.MethodPost, "/api/reseller/security/password", `{"quota_password":"654321","login_password":"wrong"}`, owner)
+	SetResellerPassword(ctx)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Equal(t, "RESELLER_LOGIN_PASSWORD_INVALID", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
+
+	ctx, recorder = resellerTestContext(http.MethodPost, "/api/reseller/security/password", `{"quota_password":"654321","login_password":"login-password"}`, owner)
+	SetResellerPassword(ctx)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.NoError(t, model.VerifyResellerQuotaPassword(owner.Id, "654321", 101, false))
+}
+
 func TestResellerReadResponsesDoNotLeakStoredSecrets(t *testing.T) {
 	db, owner, _ := setupResellerControllerTest(t)
-	require.NoError(t, db.Create(&model.ResellerSecurity{UserId: owner.Id, QuotaPasswordHash: "should-never-leak", PasswordVersion: 3, PasswordUpdatedAt: 100}).Error)
+	require.NoError(t, db.Model(&model.ResellerSecurity{}).Where("user_id = ?", owner.Id).Updates(map[string]any{"quota_password_hash": "should-never-leak", "password_version": 3}).Error)
 	batch := model.ResellerVoucherBatch{PublicId: "rvb_safe", IssuerId: owner.Id, Count: 1, Amount: 2, TotalQuota: 1000}
 	require.NoError(t, db.Create(&batch).Error)
 	require.NoError(t, db.Create(&model.ResellerVoucher{PublicId: "rvc_safe", BatchId: batch.Id, IssuerId: owner.Id, CodeDigest: "digest-secret", CodeCiphertext: "cipher-secret", Amount: 2, Quota: 1000}).Error)

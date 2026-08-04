@@ -207,6 +207,97 @@ func UpdateResellerPricingRule(
 	return &result, newVersion, nil
 }
 
+// UpdateResellerPricingRules replaces an owner's complete pricing document
+// behind one optimistic-lock transition so group edits cannot partially apply.
+func UpdateResellerPricingRules(
+	ownerType string,
+	ownerId int64,
+	overallMultiplierBps int,
+	groupMultipliersBps map[string]int,
+	expectedVersion int64,
+	now int64,
+) (map[string]ResellerPricingRule, int64, error) {
+	if err := validateResellerPricingOwner(ownerType, ownerId); err != nil {
+		return nil, 0, err
+	}
+	if expectedVersion <= 0 {
+		return nil, 0, ErrResellerPricingVersionConflict
+	}
+	desired := make(map[string]int, len(groupMultipliersBps)+1)
+	desired[""] = overallMultiplierBps
+	for groupName, multiplierBps := range groupMultipliersBps {
+		groupName = normalizeResellerPricingGroup(groupName)
+		if groupName == "" {
+			return nil, 0, ErrResellerPricingOwnerInvalid
+		}
+		desired[groupName] = multiplierBps
+	}
+	for _, multiplierBps := range desired {
+		if err := ValidateResellerMultiplierBps(multiplierBps); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	newVersion := expectedVersion + 1
+	result := make(map[string]ResellerPricingRule, len(desired))
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		ownerModel, err := resellerPricingVersionColumn(ownerType)
+		if err != nil {
+			return err
+		}
+		versionUpdate := tx.Model(ownerModel).
+			Where("id = ? AND pricing_version = ?", ownerId, expectedVersion).
+			Update("pricing_version", newVersion)
+		if versionUpdate.Error != nil {
+			return versionUpdate.Error
+		}
+		if versionUpdate.RowsAffected != 1 {
+			return ErrResellerPricingVersionConflict
+		}
+
+		var rows []ResellerPricingRule
+		if err := tx.Where("owner_type = ? AND owner_id = ?", ownerType, ownerId).Find(&rows).Error; err != nil {
+			return err
+		}
+		current := make(map[string]ResellerPricingRule, len(rows))
+		for _, row := range rows {
+			current[row.GroupName] = row
+		}
+		for groupName, multiplierBps := range desired {
+			var existing *ResellerPricingRule
+			if rule, ok := current[groupName]; ok {
+				ruleCopy := rule
+				existing = &ruleCopy
+			}
+			planned, err := PlanResellerPricingUpdate(existing, multiplierBps, now)
+			if err != nil {
+				return err
+			}
+			planned.OwnerType = ownerType
+			planned.OwnerId = ownerId
+			planned.GroupName = groupName
+			if err := tx.Save(&planned).Error; err != nil {
+				return err
+			}
+			result[groupName] = planned
+		}
+		for groupName := range current {
+			if _, keep := desired[groupName]; keep {
+				continue
+			}
+			if err := tx.Where("owner_type = ? AND owner_id = ? AND group_name = ?", ownerType, ownerId, groupName).
+				Delete(&ResellerPricingRule{}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return result, newVersion, nil
+}
+
 func GetResellerPricingRules(ownerType string, ownerId int64) (map[string]ResellerPricingRule, error) {
 	if err := validateResellerPricingOwner(ownerType, ownerId); err != nil {
 		return nil, err

@@ -89,6 +89,46 @@ func TestResellerQuotaTransferPreviewCommitAndIdempotency(t *testing.T) {
 	require.NoError(t, db.Model(&ResellerLedgerTransaction{}).Count(&journalCount).Error)
 	assert.EqualValues(t, 1, transferCount)
 	assert.EqualValues(t, 1, journalCount)
+	var lines []ResellerLedgerLine
+	require.NoError(t, db.Order("line_number asc").Find(&lines).Error)
+	require.Len(t, lines, 2)
+	assert.EqualValues(t, 1_000_000, lines[0].BalanceAfter)
+	assert.EqualValues(t, 1_000_100, lines[1].BalanceAfter)
+}
+
+func TestNewResellerReceiveCodeUsesPublic32CharacterFormat(t *testing.T) {
+	db := setupResellerFundsTestDB(t)
+	user := User{Username: "receive-code-owner", AffCode: "receive-code-owner-aff", Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&user).Error)
+	profile, err := CreateResellerProfile(user.Id, 100)
+	require.NoError(t, err)
+	assert.Regexp(t, `^[A-Za-z0-9]{32}$`, profile.ReceivePublicId)
+	rotated, err := RotateResellerReceiveAddress(user.Id)
+	require.NoError(t, err)
+	assert.Regexp(t, `^[A-Za-z0-9]{32}$`, rotated)
+	assert.NotEqual(t, profile.ReceivePublicId, rotated)
+}
+
+func TestResellerTransferAcceptsUsernameAndRejectsCommitMismatch(t *testing.T) {
+	db := setupResellerFundsTestDB(t)
+	sender, _ := createResellerFundsUser(t, db, "recipient-sender", 2_000_000)
+	receiver, _ := createResellerFundsUser(t, db, "recipient-user", 0)
+	_, err := SetResellerQuotaPassword(sender.Id, "123456", 100)
+	require.NoError(t, err)
+
+	nonce, preview, err := CreateResellerTransferPreviewForRecipient(sender.Id, receiver.Username, "", 2, 200)
+	require.NoError(t, err)
+	assert.Equal(t, receiver.Id, preview.ReceiverId)
+	_, err = CommitResellerQuotaTransferForRecipient(sender.Id, nonce, "123456", "mismatch-key", ResellerTransferCommitExpectation{
+		RecipientUserId: receiver.Id, RecipientName: receiver.Username, Amount: 3,
+	}, 201)
+	assert.ErrorIs(t, err, ErrResellerPreviewInvalid)
+
+	transfer, err := CommitResellerQuotaTransferForRecipient(sender.Id, nonce, "123456", "match-key", ResellerTransferCommitExpectation{
+		RecipientUserId: receiver.Id, RecipientName: receiver.Username, Amount: 2,
+	}, 202)
+	require.NoError(t, err)
+	assert.Equal(t, receiver.Id, transfer.ReceiverId)
 }
 
 func TestConvertResellerCommissionIsIdempotent(t *testing.T) {
@@ -106,6 +146,27 @@ func TestConvertResellerCommissionIsIdempotent(t *testing.T) {
 	require.NoError(t, db.First(&profile, profile.Id).Error)
 	assert.Equal(t, 500_050, user.Quota)
 	assert.EqualValues(t, 500_000, profile.AvailableCommissionQuota)
+}
+
+func TestConvertAllResellerCommissionRequiresCurrentFullBalance(t *testing.T) {
+	db := setupResellerFundsTestDB(t)
+	user, profile := createResellerFundsUser(t, db, "convert-all-user", 50)
+	require.NoError(t, db.Model(&profile).Update("available_commission_quota", 1_250_000).Error)
+	_, err := SetResellerQuotaPassword(user.Id, "123456", 100)
+	require.NoError(t, err)
+
+	_, _, err = ConvertAllResellerCommission(user.Id, 1_000_000, "123456", "convert-all-stale", 200)
+	assert.ErrorIs(t, err, ErrResellerQuotaInsufficient)
+	ref, quota, err := ConvertAllResellerCommission(user.Id, 1_250_000, "123456", "convert-all-key", 201)
+	require.NoError(t, err)
+	assert.NotEmpty(t, ref)
+	assert.EqualValues(t, 1_250_000, quota)
+	replayedRef, replayedQuota, err := ConvertAllResellerCommission(user.Id, 1_250_000, "123456", "convert-all-key", 202)
+	require.NoError(t, err)
+	assert.Equal(t, ref, replayedRef)
+	assert.Equal(t, quota, replayedQuota)
+	require.NoError(t, db.First(&profile, profile.Id).Error)
+	assert.Zero(t, profile.AvailableCommissionQuota)
 }
 
 func TestVoucherEscrowRevealRedeemAndSharedRollingLimit(t *testing.T) {

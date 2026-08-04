@@ -38,8 +38,10 @@ type ResellerLedgerListItem struct {
 	Id                  int64  `json:"id"`
 	Reference           string `json:"reference"`
 	Kind                string `json:"kind"`
+	Account             string `json:"account"`
 	RelatedCommissionId int64  `json:"related_commission_id"`
 	DeltaQuota          int64  `json:"delta_quota"`
+	BalanceAfter        int64  `json:"balance_after"`
 	AmountQuota         int64  `json:"amount_quota"`
 	CreatedAt           int64  `json:"created_at"`
 }
@@ -79,7 +81,7 @@ func CreateResellerProfile(userId int, now int64) (*ResellerProfile, error) {
 	}
 
 	for range 3 {
-		receiveId, err := resellerPublicId("rr_")
+		receiveId, err := resellerReceiveCode()
 		if err != nil {
 			return nil, err
 		}
@@ -193,13 +195,12 @@ func ListResellerLedger(userId int, offset int, limit int) ([]ResellerLedgerList
 		Joins("JOIN reseller_ledger_lines rl ON rl.transaction_id = rt.id").
 		Where("rl.owner_user_id = ?", userId)
 	var total int64
-	if err := base.Distinct("rt.id").Count(&total).Error; err != nil {
+	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	items := make([]ResellerLedgerListItem, 0)
-	err := base.Select("rt.id, rt.reference, rt.kind, rt.related_commission_id, SUM(rl.delta_quota) AS delta_quota, MAX(ABS(rl.delta_quota)) AS amount_quota, rt.created_at").
-		Group("rt.id, rt.reference, rt.kind, rt.related_commission_id, rt.created_at").
-		Order("rt.id DESC").Offset(offset).Limit(limit).Scan(&items).Error
+	err := base.Select("rl.id, rt.reference, rt.kind, rl.account, rt.related_commission_id, rl.delta_quota, rl.balance_after, ABS(rl.delta_quota) AS amount_quota, rt.created_at").
+		Order("rt.id DESC, rl.line_number ASC").Offset(offset).Limit(limit).Scan(&items).Error
 	return items, total, err
 }
 
@@ -215,7 +216,17 @@ func ListResellerVoucherBatches(userId int, offset int, limit int) ([]ResellerVo
 }
 
 func ListResellerVouchers(userId int, offset int, limit int) ([]ResellerVoucher, int64, error) {
+	return ListResellerVouchersByStatus(userId, "", offset, limit)
+}
+
+func ListResellerVouchersByStatus(userId int, status string, offset int, limit int) ([]ResellerVoucher, int64, error) {
 	query := DB.Model(&ResellerVoucher{}).Where("issuer_id = ?", userId)
+	switch status {
+	case "pending":
+		query = query.Where("redeemed_at = 0")
+	case "used":
+		query = query.Where("redeemed_at > 0")
+	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -240,7 +251,7 @@ func GetResellerSecurityStatus(userId int, now int64) (*ResellerSecurity, bool, 
 
 func RotateResellerReceiveAddress(userId int) (string, error) {
 	for range 3 {
-		receiveId, err := resellerPublicId("rr_")
+		receiveId, err := resellerReceiveCode()
 		if err != nil {
 			return "", err
 		}

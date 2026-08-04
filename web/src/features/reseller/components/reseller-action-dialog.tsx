@@ -25,6 +25,7 @@ import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -32,6 +33,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { formatQuota } from '@/lib/format'
 
 import {
   changeQuotaPassword,
@@ -41,38 +43,28 @@ import {
   newIdempotencyKey,
   previewTransfer,
   resetQuotaPassword,
-  setQuotaPassword,
+  rotateReceiveAddress,
+  setQuotaPassword as createQuotaPassword,
 } from '../api'
-import type { ResellerSecurityScope } from '../types'
+import type { ResellerTransferPreview } from '../types'
 
 export type ResellerActionKind =
   | 'password-set'
   | 'password-change'
   | 'password-reset'
+  | 'rotate'
   | 'transfer'
   | 'convert'
-  | 'voucher'
+  | 'voucher-single'
+  | 'voucher-batch'
 
 interface ResellerActionDialogProps {
   kind: ResellerActionKind
   open: boolean
   onOpenChange: (open: boolean) => void
   onCompleted: () => void | Promise<void>
-}
-
-interface TransferPreview {
-  nonce: string
-  receiver: { user_id: number; username: string }
-  amount: number
-  expires_at: number
-}
-
-const scopeForKind = (kind: ResellerActionKind): ResellerSecurityScope => {
-  if (kind === 'password-reset') return 'reseller.security.password_reset'
-  if (kind.startsWith('password')) return 'reseller.security.password'
-  if (kind === 'transfer') return 'reseller.transfer'
-  if (kind === 'convert') return 'reseller.commission.convert'
-  return 'reseller.voucher.issue'
+  availableCommissionQuota?: number
+  initialRecipient?: string
 }
 
 export function ResellerActionDialog({
@@ -80,42 +72,51 @@ export function ResellerActionDialog({
   open,
   onOpenChange,
   onCompleted,
+  availableCommissionQuota = 0,
+  initialRecipient = '',
 }: ResellerActionDialogProps) {
   const { t } = useTranslation()
-  const [password, setPassword] = useState('')
+  const [quotaPassword, setQuotaPassword] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [receivePublicId, setReceivePublicId] = useState('')
+  const [recipient, setRecipient] = useState(initialRecipient)
   const [amount, setAmount] = useState(1)
-  const [count, setCount] = useState(1)
+  const [count, setCount] = useState(kind === 'voucher-batch' ? 2 : 1)
   const [note, setNote] = useState('')
+  const [confirmed, setConfirmed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [unknownResult, setUnknownResult] = useState(false)
-  const [preview, setPreview] = useState<TransferPreview | null>(null)
-  const [previewProof, setPreviewProof] = useState<string>()
+  const [preview, setPreview] = useState<ResellerTransferPreview | null>(null)
   const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey())
   const [issuedCodes, setIssuedCodes] = useState<string[]>([])
-
   const verification = useSecureVerification({
     onError: () => setSubmitting(false),
   })
 
   useEffect(() => {
     if (open) return
-    setPassword('')
+    setQuotaPassword('')
+    setLoginPassword('')
     setCurrentPassword('')
     setNewPassword('')
-    setReceivePublicId('')
+    setRecipient('')
     setAmount(1)
-    setCount(1)
+    setCount(kind === 'voucher-batch' ? 2 : 1)
     setNote('')
+    setConfirmed(false)
     setSubmitting(false)
     setUnknownResult(false)
     setPreview(null)
-    setPreviewProof(undefined)
     setIdempotencyKey(newIdempotencyKey())
     setIssuedCodes([])
-  }, [open])
+  }, [kind, open])
+
+  useEffect(() => {
+    if (open && kind === 'transfer' && initialRecipient && !preview) {
+      setRecipient(initialRecipient)
+    }
+  }, [initialRecipient, kind, open, preview])
 
   const copy = useMemo(() => {
     switch (kind) {
@@ -136,6 +137,11 @@ export function ResellerActionDialog({
             'Outbound transfers and voucher issuance will be frozen for 24 hours.'
           ),
         ]
+      case 'rotate':
+        return [
+          t('Rotate receive address'),
+          t('The old receive address will stop accepting new previews.'),
+        ]
       case 'transfer':
         return [
           t('Send quota'),
@@ -143,12 +149,17 @@ export function ResellerActionDialog({
         ]
       case 'convert':
         return [
-          t('Convert earnings'),
-          t('Move available commission into your own API wallet.'),
+          t('Convert all available earnings'),
+          t('Move all available commission into your own API wallet.'),
+        ]
+      case 'voucher-batch':
+        return [
+          t('Batch issue user codes'),
+          t('Issued quota enters escrow immediately and cannot be refunded.'),
         ]
       default:
         return [
-          t('Issue user codes'),
+          t('Issue one user code'),
           t('Issued quota enters escrow immediately and cannot be refunded.'),
         ]
     }
@@ -160,10 +171,20 @@ export function ResellerActionDialog({
     onOpenChange(false)
   }
 
-  const runVerified = async (
+  const runBootstrap = async (
+    scope: 'reseller.security.password' | 'reseller.security.password_reset',
     operation: (proof?: string) => Promise<unknown>
   ) => {
     setSubmitting(true)
+    if (loginPassword.trim()) {
+      try {
+        await operation()
+        await closeCompleted()
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
     await verification.startVerification(
       async (proof) => {
         try {
@@ -175,10 +196,10 @@ export function ResellerActionDialog({
         }
       },
       {
-        scope: scopeForKind(kind),
+        scope,
         title: copy[0],
         description: t(
-          'Confirm your identity to continue this sensitive operation.'
+          'Use an established security method when no login password is available.'
         ),
       }
     )
@@ -188,91 +209,73 @@ export function ResellerActionDialog({
   const submit = async () => {
     setUnknownResult(false)
     if (kind === 'password-set') {
-      await runVerified((proof) => setQuotaPassword(password, proof))
-      return
-    }
-    if (kind === 'password-change') {
-      await runVerified((proof) =>
-        changeQuotaPassword(currentPassword, newPassword, proof)
+      await runBootstrap('reseller.security.password', (proof) =>
+        createQuotaPassword(quotaPassword, loginPassword, proof)
       )
       return
     }
     if (kind === 'password-reset') {
-      await runVerified((proof) => resetQuotaPassword(newPassword, proof))
-      return
-    }
-    if (kind === 'convert') {
-      await runVerified((proof) =>
-        convertCommission(amount, password, idempotencyKey, proof)
+      await runBootstrap('reseller.security.password_reset', (proof) =>
+        resetQuotaPassword(newPassword, loginPassword, proof)
       )
       return
     }
-    if (kind === 'voucher') {
+    if (kind === 'transfer') {
       setSubmitting(true)
-      await verification.startVerification(
-        async (proof) => {
-          try {
-            const response = await issueVouchers(
-              count,
-              amount,
-              note,
-              password,
-              idempotencyKey,
-              proof
-            )
-            setIssuedCodes(response.data.data.codes as string[])
-            toast.success(t('User codes issued'))
-            await onCompleted()
-            return response
-          } finally {
-            setSubmitting(false)
-          }
-        },
-        {
-          scope: 'reseller.voucher.issue',
-          title: copy[0],
-          description: t(
-            'Confirm your identity to continue this sensitive operation.'
-          ),
-        }
-      )
-      setSubmitting(false)
+      try {
+        const response = await previewTransfer(recipient, amount)
+        setPreview(response.data.data as ResellerTransferPreview)
+      } finally {
+        setSubmitting(false)
+      }
       return
     }
 
     setSubmitting(true)
-    await verification.startVerification(
-      async (proof) => {
-        try {
-          const response = await previewTransfer(receivePublicId, amount, proof)
-          setPreview(response.data.data as TransferPreview)
-          setPreviewProof(proof)
-          return response
-        } finally {
-          setSubmitting(false)
-        }
-      },
-      {
-        scope: 'reseller.transfer',
-        title: t('Verify transfer'),
-        description: t(
-          'Confirm your identity before previewing the recipient.'
-        ),
+    try {
+      if (kind === 'password-change') {
+        await changeQuotaPassword(currentPassword, newPassword)
+        await closeCompleted()
+        return
       }
-    )
-    setSubmitting(false)
+      if (kind === 'rotate') {
+        await rotateReceiveAddress(quotaPassword)
+        await closeCompleted()
+        return
+      }
+      if (kind === 'convert') {
+        await convertCommission(
+          availableCommissionQuota,
+          quotaPassword,
+          idempotencyKey
+        )
+        await closeCompleted()
+        return
+      }
+      const response = await issueVouchers(
+        kind === 'voucher-single' ? 1 : count,
+        amount,
+        note,
+        quotaPassword,
+        idempotencyKey
+      )
+      setIssuedCodes(response.data.data.codes as string[])
+      toast.success(t('User codes issued'))
+      await onCompleted()
+    } catch (error: unknown) {
+      const status = (error as { response?: { status?: number } })?.response
+        ?.status
+      if (!status || status >= 500) setUnknownResult(true)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const commit = async () => {
     if (!preview) return
     setSubmitting(true)
     try {
-      await commitTransfer(
-        preview.nonce,
-        password,
-        idempotencyKey,
-        previewProof
-      )
+      await commitTransfer(preview, quotaPassword, idempotencyKey)
       await closeCompleted()
     } catch (error: unknown) {
       const status = (error as { response?: { status?: number } })?.response
@@ -286,34 +289,40 @@ export function ResellerActionDialog({
   const sixDigits = /^\d{6}$/
   const passwordFormValid =
     kind === 'password-set'
-      ? sixDigits.test(password)
+      ? sixDigits.test(quotaPassword)
       : sixDigits.test(newPassword) &&
         (kind !== 'password-change' || sixDigits.test(currentPassword))
-  const fundsFormValid =
-    amount >= 1 &&
-    amount <= 2000 &&
-    sixDigits.test(password) &&
-    (kind !== 'transfer' || receivePublicId.trim().length > 0) &&
-    (kind !== 'voucher' || (count >= 1 && count <= 50 && note.length <= 255))
-  const canSubmit = kind.startsWith('password')
-    ? passwordFormValid
-    : fundsFormValid
+  const operationFormValid =
+    sixDigits.test(quotaPassword) &&
+    (kind !== 'convert' || availableCommissionQuota > 0) &&
+    (!kind.startsWith('voucher') ||
+      (amount >= 1 &&
+        amount <= 2000 &&
+        count >= 1 &&
+        count <= 50 &&
+        note.length <= 255))
+  const previewFormValid =
+    recipient.trim().length > 0 && amount >= 1 && amount <= 2000
+  let formValid = operationFormValid
+  if (kind.startsWith('password')) {
+    formValid = passwordFormValid
+  } else if (kind === 'transfer') {
+    formValid = previewFormValid
+  }
   let primaryAction: ReactNode = null
   if (!issuedCodes.length) {
     primaryAction = preview ? (
       <Button
         onClick={commit}
-        disabled={submitting || !sixDigits.test(password)}
+        disabled={submitting || !confirmed || !sixDigits.test(quotaPassword)}
       >
         {submitting && <Loader2 className='animate-spin' />}
         {t('Confirm transfer')}
       </Button>
     ) : (
-      <Button onClick={submit} disabled={submitting || !canSubmit}>
+      <Button onClick={submit} disabled={submitting || !formValid}>
         {submitting && <Loader2 className='animate-spin' />}
-        {kind === 'transfer'
-          ? t('Preview transfer')
-          : t('Continue to verification')}
+        {kind === 'transfer' ? t('Preview transfer') : t('Confirm')}
       </Button>
     )
   }
@@ -340,47 +349,33 @@ export function ResellerActionDialog({
         }
       >
         <div className='space-y-4'>
-          {issuedCodes.length > 0 && (
-            <div className='space-y-2'>
-              <Alert>
-                <ShieldCheck />
-                <AlertTitle>{t('Save these user codes now')}</AlertTitle>
-                <AlertDescription>
-                  {t(
-                    'Codes are hidden from lists. They can only be revealed again after security verification.'
-                  )}
-                </AlertDescription>
-              </Alert>
-              <div className='divide-y rounded-md border font-mono text-xs'>
-                {issuedCodes.map((code) => (
-                  <div key={code} className='flex items-center gap-2 px-3 py-2'>
-                    <span className='min-w-0 flex-1 break-all'>{code}</span>
-                    <CopyButton value={code} tooltip={t('Copy user code')} />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {issuedCodes.length === 0 && (
+          {issuedCodes.length > 0 ? (
+            <IssuedCodes codes={issuedCodes} />
+          ) : (
             <>
               {unknownResult && (
                 <Alert>
                   <AlertTriangle />
-                  <AlertTitle>{t('Transfer result unknown')}</AlertTitle>
+                  <AlertTitle>{t('Operation result unknown')}</AlertTitle>
                   <AlertDescription>
                     {t(
-                      'Check transfer history before retrying. This request keeps the same idempotency key.'
+                      'Check the relevant history before retrying. This request keeps the same idempotency key.'
                     )}
                   </AlertDescription>
                 </Alert>
               )}
-
               {kind === 'password-set' && (
-                <PasswordField
-                  label={t('New quota password')}
-                  value={password}
-                  onChange={setPassword}
-                />
+                <>
+                  <PasswordField
+                    label={t('New quota password')}
+                    value={quotaPassword}
+                    onChange={setQuotaPassword}
+                  />
+                  <LoginPasswordField
+                    value={loginPassword}
+                    onChange={setLoginPassword}
+                  />
+                </>
               )}
               {kind === 'password-change' && (
                 <>
@@ -412,57 +407,95 @@ export function ResellerActionDialog({
                     value={newPassword}
                     onChange={setNewPassword}
                   />
+                  <LoginPasswordField
+                    value={loginPassword}
+                    onChange={setLoginPassword}
+                  />
                 </>
               )}
-
-              {!kind.startsWith('password') && (
+              {kind === 'transfer' && !preview && (
                 <>
-                  {kind === 'transfer' && !preview && (
-                    <Field label={t('Recipient address')}>
-                      <Input
-                        value={receivePublicId}
-                        onChange={(event) =>
-                          setReceivePublicId(event.target.value)
-                        }
-                        autoComplete='off'
-                      />
-                    </Field>
-                  )}
-                  {preview && (
-                    <div className='bg-muted/40 grid grid-cols-2 gap-3 rounded-md border p-3 text-sm'>
-                      <div>
-                        <div className='text-muted-foreground text-xs'>
-                          {t('Recipient')}
-                        </div>
-                        <div className='mt-1 font-medium'>
-                          {preview.receiver.username ||
-                            preview.receiver.user_id}
-                        </div>
+                  <Field label={t('Recipient')}>
+                    <Input
+                      value={recipient}
+                      onChange={(event) => setRecipient(event.target.value)}
+                      placeholder={t(
+                        'Username, 32-character code, or receive link'
+                      )}
+                      autoComplete='off'
+                    />
+                  </Field>
+                  <AmountField amount={amount} onChange={setAmount} />
+                </>
+              )}
+              {kind === 'transfer' && preview && (
+                <>
+                  <div className='bg-muted/40 grid grid-cols-2 gap-3 rounded-md border p-3 text-sm'>
+                    <div>
+                      <div className='text-muted-foreground text-xs'>
+                        {t('Recipient')}
                       </div>
-                      <div>
-                        <div className='text-muted-foreground text-xs'>
-                          {t('Amount')}
-                        </div>
-                        <div className='mt-1 font-medium tabular-nums'>
-                          {preview.amount}
-                        </div>
+                      <div className='mt-1 font-medium'>
+                        {preview.recipient_username}
                       </div>
                     </div>
-                  )}
-                  {!preview && (
-                    <Field label={t('Amount')}>
-                      <Input
-                        type='number'
-                        min={1}
-                        max={2000}
-                        value={amount}
-                        onChange={(event) =>
-                          setAmount(Number(event.target.value))
-                        }
-                      />
-                    </Field>
-                  )}
-                  {kind === 'voucher' && (
+                    <div>
+                      <div className='text-muted-foreground text-xs'>
+                        {t('Amount')}
+                      </div>
+                      <div className='mt-1 font-medium tabular-nums'>
+                        {preview.amount}
+                      </div>
+                    </div>
+                  </div>
+                  <label className='flex items-start gap-2 text-sm'>
+                    <Checkbox
+                      checked={confirmed}
+                      onCheckedChange={(checked) =>
+                        setConfirmed(checked === true)
+                      }
+                    />
+                    <span>
+                      {t(
+                        'I confirmed the exact recipient and amount. This transfer cannot be reversed.'
+                      )}
+                    </span>
+                  </label>
+                  <PasswordField
+                    label={t('Quota password')}
+                    value={quotaPassword}
+                    onChange={setQuotaPassword}
+                  />
+                </>
+              )}
+              {kind === 'convert' && (
+                <>
+                  <div className='rounded-md border p-3'>
+                    <div className='text-muted-foreground text-xs'>
+                      {t('Available earnings to convert')}
+                    </div>
+                    <div className='mt-1 text-lg font-semibold tabular-nums'>
+                      {formatQuota(availableCommissionQuota)}
+                    </div>
+                  </div>
+                  <PasswordField
+                    label={t('Quota password')}
+                    value={quotaPassword}
+                    onChange={setQuotaPassword}
+                  />
+                </>
+              )}
+              {kind === 'rotate' && (
+                <PasswordField
+                  label={t('Quota password')}
+                  value={quotaPassword}
+                  onChange={setQuotaPassword}
+                />
+              )}
+              {kind.startsWith('voucher') && (
+                <>
+                  <AmountField amount={amount} onChange={setAmount} />
+                  {kind === 'voucher-batch' && (
                     <>
                       <Field label={t('Number of codes')}>
                         <Input
@@ -486,8 +519,8 @@ export function ResellerActionDialog({
                   )}
                   <PasswordField
                     label={t('Quota password')}
-                    value={password}
-                    onChange={setPassword}
+                    value={quotaPassword}
+                    onChange={setQuotaPassword}
                   />
                 </>
               )}
@@ -495,7 +528,6 @@ export function ResellerActionDialog({
           )}
         </div>
       </Dialog>
-
       <SecureVerificationDialog
         open={verification.open}
         onOpenChange={(next) => {
@@ -511,6 +543,52 @@ export function ResellerActionDialog({
         onMethodChange={verification.switchMethod}
       />
     </>
+  )
+}
+
+function IssuedCodes({ codes }: { codes: string[] }) {
+  const { t } = useTranslation()
+  return (
+    <div className='space-y-2'>
+      <Alert>
+        <ShieldCheck />
+        <AlertTitle>{t('Save these user codes now')}</AlertTitle>
+        <AlertDescription>
+          {t(
+            'Codes are hidden from lists and require the quota password to reveal again.'
+          )}
+        </AlertDescription>
+      </Alert>
+      <div className='divide-y rounded-md border font-mono text-xs'>
+        {codes.map((code) => (
+          <div key={code} className='flex items-center gap-2 px-3 py-2'>
+            <span className='min-w-0 flex-1 break-all'>{code}</span>
+            <CopyButton value={code} tooltip={t('Copy user code')} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function AmountField({
+  amount,
+  onChange,
+}: {
+  amount: number
+  onChange: (value: number) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <Field label={t('Amount')}>
+      <Input
+        type='number'
+        min={1}
+        max={2000}
+        value={amount}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </Field>
   )
 }
 
@@ -548,6 +626,29 @@ function PasswordField({
         value={value}
         onChange={(event) => onChange(event.target.value.replaceAll(/\D/g, ''))}
       />
+    </Field>
+  )
+}
+
+function LoginPasswordField({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (value: string) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <Field label={t('Login password')}>
+      <Input
+        type='password'
+        autoComplete='current-password'
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <p className='text-muted-foreground text-xs'>
+        {t('Leave blank to use an established security verification method.')}
+      </p>
     </Field>
   )
 }

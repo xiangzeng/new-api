@@ -33,12 +33,19 @@ const zhCN = {
   'Convert earnings': '转换收益',
   'Move available commission into your own API wallet.':
     '将可用收益转换到自己的 API 钱包。',
+  'Convert all available earnings': '转换全部可用收益',
+  'Move all available commission into your own API wallet.':
+    '将全部可用收益转换到自己的 API 钱包。',
+  'Batch issue user codes': '批量签发用户码',
+  'Issue one user code': '签发单张用户码',
   'Issue user codes': '签发用户码',
   'Issued quota enters escrow immediately and cannot be refunded.':
     '签发的额度会立即进入托管，且不可退款。',
   'Operation completed': '操作已完成',
   'Confirm your identity to continue this sensitive operation.':
     '验证身份后继续此敏感操作。',
+  'Use an established security method when no login password is available.':
+    '没有登录密码时，可使用已建立的安全复核方式。',
   'User codes issued': '用户码已签发',
   'Verify transfer': '验证转账',
   'Confirm your identity before previewing the recipient.':
@@ -51,6 +58,9 @@ const zhCN = {
     '列表不会显示明文，之后只能通过安全验证再次查看。',
   'Copy user code': '复制用户码',
   'Transfer result unknown': '转账结果未知',
+  'Operation result unknown': '操作结果未知',
+  'Check the relevant history before retrying. This request keeps the same idempotency key.':
+    '重试前请先检查对应记录，本次请求会保留相同的幂等键。',
   'Check transfer history before retrying. This request keeps the same idempotency key.':
     '重试前请先检查转账记录，本次请求会保留相同的幂等键。',
   'New quota password': '新额度密码',
@@ -63,6 +73,14 @@ const zhCN = {
   'Number of codes': '用户码数量',
   'Batch note': '批次备注',
   'Quota password': '额度密码',
+  'Login password': '登录密码',
+  'Leave blank to use an established security verification method.':
+    '留空可改用已建立的安全复核方式。',
+  'Username, 32-character code, or receive link':
+    '用户名、32 位收款码或收款链接',
+  'I confirmed the exact recipient and amount. This transfer cannot be reversed.':
+    '我已确认准确的收款人和金额，转账不可撤销。',
+  'Available earnings to convert': '本次转换的全部可用收益',
   'Pricing updated': '定价已更新',
   'Pricing changed elsewhere. The latest version has been reloaded.':
     '定价已在其他位置更新，现已重新加载最新版本。',
@@ -73,6 +91,10 @@ const zhCN = {
   'Set the overall multiplier and optional overrides for each platform group.':
     '设置整体倍率，并可为每个平台分组单独覆盖。',
   'Save pricing': '保存定价',
+  'Verify pricing change': '验证定价变更',
+  'Enter the six-digit quota password to apply the complete pricing document.':
+    '输入六位额度密码，一次性应用整体与全部分组定价。',
+  'Confirm pricing': '确认定价',
   'Pricing activation': '定价生效时间',
   'First-time settings and decreases apply immediately. Increases take effect after 24 hours.':
     '首次设置和降价立即生效，涨价将在 24 小时后生效。',
@@ -88,6 +110,8 @@ const zhCN = {
     '验证身份后解密已保存的用户码。',
   'The quota password and an additional verification method are both required.':
     '需要同时验证额度密码和附加安全方式。',
+  'The six-digit quota password is required to decrypt stored codes.':
+    '输入六位额度密码后查看已保存的用户码。',
   'Failed to load reseller center': '加载站长中心失败',
   'Reseller center enabled': '站长中心已开通',
   'Receive address rotated': '收款地址已轮换',
@@ -104,6 +128,8 @@ const zhCN = {
   'Transfers and user code issuance resume at {{time}}.':
     '转账和用户码签发将在 {{time}} 恢复。',
   Customers: '客户',
+  'Customer Pricing': '客户定价',
+  'Earnings & Ledger': '收益与额度流水',
   Ledger: '账本',
   Transfers: '转账',
   'User Codes': '用户码',
@@ -121,6 +147,9 @@ const zhCN = {
   'One level': '仅一级',
   'Copy invitation link': '复制邀请链接',
   'Default customer pricing': '客户默认定价',
+  'Overall multiplier: {{value}}x · allowed range 1.0000x–10.0000x':
+    '整体倍率：{{value}}x · 允许范围 1.0000x–10.0000x',
+  'Default group pricing': '默认分组定价',
   'Current overall multiplier: {{value}}x': '当前整体倍率：{{value}}x',
   'No default rule is set. Platform pricing is used at 1.0000x.':
     '尚未设置默认规则，将按平台价格的 1.0000x 计费。',
@@ -136,12 +165,33 @@ const zhCN = {
   'Ledger entries': '账本记录',
   'No ledger entries yet.': '暂无账本记录。',
   Reference: '业务引用',
+  Account: '账户',
+  Change: '变动',
+  'Balance after': '变动后余额',
+  'Convert all to wallet': '全部转入钱包',
+  api_wallet: 'API 钱包',
+  commission_pending: '待结算收益',
+  commission_available: '可用收益',
+  voucher_escrow: '用户码托管',
+  commission_accrual: '收益入账',
+  commission_release: '收益释放',
+  commission_convert: '收益转换',
+  quota_transfer: '额度转账',
+  voucher_redeem: '用户码兑换',
   'Created at': '创建时间',
   'Quota transfers': '额度转账',
   'No transfers yet.': '暂无转账记录。',
   Counterparty: '交易对方',
   Sent: '已发送',
   'User code batches': '用户码批次',
+  'User code generation': '用户码生成',
+  'Single issue': '单张生成',
+  'Batch issue': '批量生成',
+  'Issue one code': '生成单张用户码',
+  'Issue a batch': '生成一批用户码',
+  'All statuses': '全部状态',
+  'Pending redemption': '待兑换',
+  Used: '已使用',
   'Issue codes': '签发用户码',
   'No user code batches yet.': '暂无用户码批次。',
   Batch: '批次',
@@ -157,6 +207,16 @@ const zhCN = {
   'Not configured': '未设置',
   'Set password': '设置密码',
   'Receive address': '收款地址',
+  '32-character receive code': '32 位额度收款码',
+  'Receive link': '额度收款链接',
+  'Copy receive link': '复制收款链接',
+  'Set a quota password before using reseller operations': '请先设置额度密码',
+  'This independent six-digit password is never stored in the browser.':
+    '独立六位额度密码用于定价、转账、收益和用户码，不会保存在浏览器。',
+  'The old receive address will stop accepting new previews.':
+    '旧收款码将不再接受新的转账预览。',
+  'Codes are hidden from lists and require the quota password to reveal again.':
+    '列表不会显示明文，再次查看只需验证额度密码。',
   'Copy receive address': '复制收款地址',
   Rotate: '轮换',
   'Previous page': '上一页',

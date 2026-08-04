@@ -21,6 +21,7 @@ var (
 	ErrResellerQuotaPasswordInvalid    = errors.New("reseller quota password is invalid")
 	ErrResellerQuotaPasswordConfigured = errors.New("reseller quota password is already configured")
 	ErrResellerQuotaPasswordMissing    = errors.New("reseller quota password is not configured")
+	ErrResellerLoginPasswordInvalid    = errors.New("reseller login password is invalid")
 	ErrResellerOutboundFrozen          = errors.New("reseller outbound operations are frozen")
 	quotaPasswordPattern               = regexp.MustCompile(`^[0-9]{6}$`)
 )

@@ -105,10 +105,22 @@ export interface ResellerLedgerItem {
   id: number
   reference: string
   kind: string
+  account: string
   related_commission_id: number
   delta_quota: number
+  balance_after: number
   amount_quota: number
   created_at: number
+}
+
+export interface ResellerTransferPreview {
+  nonce: string
+  recipient_user_id: number
+  recipient_username: string
+  amount: number
+  quota: number
+  expires_at: number
+  receiver?: { user_id: number; username: string }
 }
 
 export interface ResellerVoucherBatch {
@@ -131,12 +143,3 @@ export interface ResellerVoucher {
   redeemed_at: number
   created_at: number
 }
-
-export type ResellerSecurityScope =
-  | 'reseller.security.password'
-  | 'reseller.security.password_reset'
-  | 'reseller.transfer'
-  | 'reseller.commission.convert'
-  | 'reseller.voucher.issue'
-  | 'reseller.voucher.reveal'
-  | 'reseller.receive_address.rotate'
