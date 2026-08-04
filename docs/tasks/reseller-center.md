@@ -23,8 +23,8 @@
 ## 2. 分阶段计划
 
 - [x] Phase 0 基线与证据契约：建立 worktree、任务档案和对标契约。完成（commit `bf41dc76a`）
-- [x] Phase 1 核心模型与定价解析器：三库兼容模型、四级优先级、延迟涨价、乐观锁。完成（本阶段提交）
-- [ ] Phase 2 邀请与归属：不透明邀请、密码/OAuth 注册原子直属绑定、来源分类。
+- [x] Phase 1 核心模型与定价解析器：三库兼容模型、四级优先级、延迟涨价、乐观锁。完成（commit `ef7e31e68`）
+- [x] Phase 2 邀请与归属：不透明邀请、密码/OAuth 注册原子直属绑定、来源分类。完成（本阶段提交）
 - [ ] Phase 3 双报价与佣金：覆盖全部计费路径并按唯一请求引用幂等入账。
 - [ ] Phase 4 收益释放：pending/available 账本及北京时间 04:10 可恢复批次。
 - [ ] Phase 5 额度操作：额度密码、冻结、preview/commit 转账、收益转换和用户码 escrow。
@@ -51,10 +51,10 @@
 
 ### 2026-08-04（会话 1）
 
-- 做了：确认 New API 仓库基线干净；创建 `feature/reseller-center` 同级 worktree；建立任务档案和行为契约；完成 profile/customer/rule 核心表、定价状态机和 owner-wide 乐观锁。
-- 基线：`353b702c2`；Phase 0：`bf41dc76a`。
-- 验证：代理定价测试、完整 `model` 测试、前端生产构建和 `go build ./...` 通过。
-- 下一步：实现不透明邀请记录、验证、密码注册及 OAuth 注册的原子直属绑定。
+- 做了：完成核心模型与定价状态机；增加 `i1` HMAC 不透明邀请；密码与 OAuth 用户创建事务原子写入直属归属；OAuth flow 只保存 invitation ID/version，不保存 bearer token。
+- 基线：`353b702c2`；Phase 0：`bf41dc76a`；Phase 1：`ef7e31e68`。
+- 验证：代理模型、完整 `model`/`controller` 测试、前端生产构建和 `go build ./...` 通过。
+- 下一步：把相对倍率接入所有计费路径，保留 base/retail quote，并在成功 settlement 后幂等创建佣金。
 - 遗留/坑：目标后端源码不可见；邀请 tenant 的反向代理实现和部分 mutation 响应体仍属于推断或待动态验证项。
 
 ## 5. 决策与坑记录

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -53,7 +54,13 @@ func setupAuthFlowControllerTest(t *testing.T) *authFlowTestOAuthProvider {
 	previousType := common.MainDatabaseType()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.AuthFlow{}))
+	require.NoError(t, db.AutoMigrate(
+		&model.AuthFlow{},
+		&model.User{},
+		&model.ResellerProfile{},
+		&model.ResellerCustomer{},
+		&model.ResellerInvitation{},
+	))
 	model.DB = db
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	provider := &authFlowTestOAuthProvider{}
@@ -93,6 +100,45 @@ func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {
 	assert.Equal(t, "invite-code", payload.AffiliateCode)
 	assert.Zero(t, flow.UserId)
 	assert.Empty(t, flow.SessionId)
+}
+
+func TestGenerateOAuthCodeCarriesResellerInvitationInLoginFlow(t *testing.T) {
+	setupAuthFlowControllerTest(t)
+	reseller := model.User{Username: "oauth-state-reseller", Password: "unused", AffCode: "oauth-state-aff", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(&reseller).Error)
+	profile := model.ResellerProfile{UserId: reseller.Id, ReceivePublicId: "abcdefghijklmnopqrstuvwx12345678"}
+	require.NoError(t, model.DB.Create(&profile).Error)
+	token, _, err := model.GetOrCreateResellerInvitation(reseller.Id, common.GetTimestamp())
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := fmt.Sprintf(`{"provider":"auth-flow-test","intent":"login","reseller_invitation":%q}`, token)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	GenerateOAuthCode(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			FlowToken string `json:"flow_token"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	flow, err := model.GetAuthFlow(response.Data.FlowToken, model.AuthFlowMatch{
+		Purpose: model.AuthFlowPurposeOAuth, Provider: "auth-flow-test", Intent: model.AuthFlowIntentLogin,
+	})
+	require.NoError(t, err)
+	var payload oauthFlowPayload
+	require.NoError(t, common.UnmarshalJsonStr(flow.Payload, &payload))
+	invitation, err := model.ResolveResellerInvitation(token, common.GetTimestamp())
+	require.NoError(t, err)
+	assert.Equal(t, invitation.Id, payload.ResellerInvitationId)
+	assert.Equal(t, invitation.Version, payload.ResellerInvitationVersion)
+	assert.NotContains(t, flow.Payload, token)
 }
 
 func TestGenerateOAuthCodeBindsFlowToAuthenticatedSession(t *testing.T) {
