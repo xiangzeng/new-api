@@ -55,7 +55,12 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - 本地实现设计：仅返回当前代理的直属绑定；使用量、请求数和收益只按 `(reseller_id, customer_id)` 聚合 `ResellerCommissionEntry`。它们是站长账本口径，不能替代客户在全站的 `used_quota`、API key、请求正文或模型输入。
 - 当前账本仅在有正差价佣金时写入，故 1.0000x 零价差成功请求不会计入这组本地累计指标；独立的全量站长归因使用表属于后续扩展，不把缺失数据伪装为零消费。
 
-### 2.5 额度安全
+### 2.5 概览统计
+
+- 已确认的目标站概览统计仅显示 `Wallet balance`、`Available earnings`、`Pending earnings` 和 `Direct customers`。
+- 转账与用户码共享滚动 24 小时额度上限属于目标站操作校验和操作表单提示，不作为概览统计字段展示。
+
+### 2.6 额度安全
 
 - 使用独立六位数字额度密码。
 - 首次设置或重置额度密码可使用登录密码，或使用已建立的 2FA / Passkey 安全复核；日常额度授权不复用该 proof。
@@ -66,7 +71,7 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - 转账、收益转换和用户码签发接受 `Idempotency-Key`。
 - 同一 key 与相同 payload 返回原结果；同一 key 与不同 payload 必须拒绝。
 
-### 2.6 限额与用户码
+### 2.7 限额与用户码
 
 - 单次操作额度范围 `1..2000`。
 - 转账和用户码签发共享滚动 24 小时 `4000` 限额。

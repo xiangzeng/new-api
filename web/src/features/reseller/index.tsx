@@ -38,6 +38,7 @@ import {
   UserRoundCog,
   Users,
 } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -330,11 +331,6 @@ export function ResellerCenter() {
                   <OverviewPanel
                     invitationUrl={invitationUrl}
                     defaultPricing={defaultPricing}
-                    onPricing={() => {
-                      setPricingCustomer(null)
-                      setPricingOpen(true)
-                    }}
-                    onAction={setAction}
                   />
                 </TabsContent>
                 <TabsContent value='pricing'>
@@ -490,6 +486,7 @@ function EnableResellerPanel({
 function SummaryBand({ status }: { status: ResellerStatus }) {
   const { t } = useTranslation()
   const stats = [
+    [t('Wallet balance'), formatQuota(status.wallet_quota), BadgeDollarSign],
     [
       t('Available earnings'),
       formatQuota(status.available_commission_quota),
@@ -501,7 +498,6 @@ function SummaryBand({ status }: { status: ResellerStatus }) {
       Clock3,
     ],
     [t('Direct customers'), String(status.customer_count), Users],
-    [t('Sent in 24 hours'), `${status.outbound_used_24h} / 4000`, ArrowUpRight],
   ] as const
   return (
     <div className='bg-card/30 grid divide-y rounded-md border sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-4'>
@@ -525,13 +521,9 @@ function SummaryBand({ status }: { status: ResellerStatus }) {
 function OverviewPanel({
   invitationUrl,
   defaultPricing,
-  onPricing,
-  onAction,
 }: {
   invitationUrl: string
   defaultPricing: ResellerPricingResponse | null
-  onPricing: () => void
-  onAction: (action: ResellerActionKind) => void
 }) {
   const { t } = useTranslation()
   const overall = defaultPricing?.rules['']
@@ -540,14 +532,13 @@ function OverviewPanel({
       <section className='space-y-2 rounded-md border p-4'>
         <div className='flex flex-wrap items-start justify-between gap-3'>
           <div>
-            <h3 className='font-semibold'>{t('Customer invitation link')}</h3>
+            <h3 className='font-semibold'>{t('Invite direct customers')}</h3>
             <p className='text-muted-foreground mt-1 text-sm'>
               {t(
-                'Only directly registered customers are attributed to this reseller account.'
+                'Users who register through this link become your direct customers. Their markup earnings belong only to you.'
               )}
             </p>
           </div>
-          <Badge variant='outline'>{t('One level')}</Badge>
         </div>
         <div className='flex gap-2'>
           <Input
@@ -563,74 +554,54 @@ function OverviewPanel({
         </div>
       </section>
 
-      <section className='grid gap-3 rounded-md border p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'>
-        <div>
-          <h3 className='font-semibold'>{t('Default customer pricing')}</h3>
-          <p className='text-muted-foreground mt-1 text-sm'>
-            {overall
-              ? t('Current overall multiplier: {{value}}x', {
-                  value: (overall.current_multiplier_bps / 10000).toFixed(4),
-                })
-              : t(
-                  'No default rule is set. Platform pricing is used at 1.0000x.'
-                )}
+      <div className='grid gap-3 lg:grid-cols-2'>
+        <section className='space-y-3 rounded-md border p-4'>
+          <div>
+            <h3 className='font-semibold'>{t('Default customer price')}</h3>
+            <p className='text-muted-foreground mt-1 text-xs'>
+              {t('Used for direct customers without a custom price')}
+            </p>
+          </div>
+          <p className='text-2xl font-semibold tabular-nums'>
+            {((overall?.current_multiplier_bps || 10000) / 10000).toFixed(4)}x
           </p>
-        </div>
-        <Button variant='outline' onClick={onPricing}>
-          <SlidersHorizontal />
-          {t('Edit pricing')}
-        </Button>
-      </section>
-
-      <div className='grid gap-3 sm:grid-cols-3'>
-        <ActionTile
-          icon={CircleDollarSign}
-          title={t('Convert earnings')}
-          description={t('Move available commission to your API wallet.')}
-          onClick={() => onAction('convert')}
-        />
-        <ActionTile
-          icon={ArrowRightLeft}
-          title={t('Send quota')}
-          description={t('Transfer quota through preview and commit.')}
-          onClick={() => onAction('transfer')}
-        />
-        <ActionTile
-          icon={Ticket}
-          title={t('Issue user codes')}
-          description={t('Create one-time codes backed by escrowed quota.')}
-          onClick={() => onAction('voucher-single')}
-        />
+          {overall?.pending_multiplier_bps ? (
+            <div className='bg-muted rounded-md px-3 py-2 text-xs'>
+              {t('Pending {{multiplier}}x from {{time}}', {
+                multiplier: (overall.pending_multiplier_bps / 10000).toFixed(4),
+                time: formatTimestampToDate(overall.pending_effective_at),
+              })}
+            </div>
+          ) : null}
+        </section>
+        <section className='space-y-3 rounded-md border p-4'>
+          <div>
+            <h3 className='font-semibold'>{t('Settlement rule')}</h3>
+            <p className='text-muted-foreground mt-1 text-xs'>
+              {t('Only direct customer markup becomes your earnings')}
+            </p>
+          </div>
+          <div className='grid grid-cols-3 gap-2 text-center'>
+            <div className='bg-muted rounded-md px-2 py-3'>
+              <div className='font-semibold'>1</div>
+              <div className='text-muted-foreground text-xs'>{t('Level')}</div>
+            </div>
+            <div className='bg-muted rounded-md px-2 py-3'>
+              <div className='font-semibold'>{t('Markup')}</div>
+              <div className='text-muted-foreground text-xs'>
+                {t('Earnings')}
+              </div>
+            </div>
+            <div className='bg-muted rounded-md px-2 py-3'>
+              <div className='font-semibold'>{t('Internal')}</div>
+              <div className='text-muted-foreground text-xs'>
+                {t('Use only')}
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
-  )
-}
-
-function ActionTile({
-  icon: Icon,
-  title,
-  description,
-  onClick,
-}: {
-  icon: typeof Ticket
-  title: string
-  description: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      type='button'
-      onClick={onClick}
-      className='hover:bg-muted/40 focus-visible:ring-ring flex min-h-28 items-start gap-3 rounded-md border p-4 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none'
-    >
-      <Icon className='text-muted-foreground mt-0.5 size-4 shrink-0' />
-      <span>
-        <span className='block font-medium'>{title}</span>
-        <span className='text-muted-foreground mt-1 block text-sm'>
-          {description}
-        </span>
-      </span>
-    </button>
   )
 }
 
@@ -1117,6 +1088,9 @@ function SecurityPanel({
       : `${window.location.origin}/reseller?receive=${receivePublicId}`
   return (
     <div className='divide-y rounded-md border'>
+      <div className='px-4 py-3'>
+        <h3 className='font-semibold'>{t('Quota security and receiving')}</h3>
+      </div>
       {!security?.configured && (
         <Alert className='rounded-none border-0 border-b'>
           <ShieldAlert />
@@ -1169,43 +1143,54 @@ function SecurityPanel({
           )}
         </div>
       </div>
-      <div className='grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'>
-        <div className='min-w-0'>
-          <h3 className='font-medium'>{t('32-character receive code')}</h3>
-          <p className='text-muted-foreground mt-1 truncate font-mono text-xs'>
-            {receivePublicId}
-          </p>
+      {receivePublicId && receiveLink ? (
+        <div className='grid gap-4 p-4 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center'>
+          <div className='mx-auto bg-white p-3'>
+            <QRCodeSVG value={receiveLink} size={148} includeMargin />
+          </div>
+          <div className='min-w-0 space-y-3'>
+            <div className='min-w-0'>
+              <h3 className='font-medium'>{t('Quota receiving address')}</h3>
+              <div className='mt-1 flex items-center gap-2'>
+                <Input
+                  value={receivePublicId}
+                  readOnly
+                  className='min-w-0 font-mono text-xs'
+                />
+                <CopyButton
+                  value={receivePublicId}
+                  variant='outline'
+                  tooltip={t('Copy receive address')}
+                />
+              </div>
+            </div>
+            <div className='min-w-0'>
+              <h3 className='font-medium'>{t('Quota receiving link')}</h3>
+              <div className='mt-1 flex items-center gap-2'>
+                <Input
+                  value={receiveLink}
+                  readOnly
+                  className='min-w-0 font-mono text-xs'
+                />
+                <CopyButton
+                  value={receiveLink}
+                  variant='outline'
+                  tooltip={t('Copy receive link')}
+                />
+              </div>
+            </div>
+            <Button
+              variant='ghost'
+              size='sm'
+              onClick={() => onAction('rotate')}
+              disabled={!security?.configured}
+            >
+              <RefreshCw />
+              {t('Rotate receive code')}
+            </Button>
+          </div>
         </div>
-        <div className='flex gap-2'>
-          <CopyButton
-            value={receivePublicId}
-            variant='outline'
-            tooltip={t('Copy receive address')}
-          />
-          <Button
-            variant='outline'
-            size='sm'
-            onClick={() => onAction('rotate')}
-            disabled={!security?.configured}
-          >
-            <RefreshCw />
-            {t('Rotate')}
-          </Button>
-        </div>
-      </div>
-      <div className='grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'>
-        <div className='min-w-0'>
-          <h3 className='font-medium'>{t('Receive link')}</h3>
-          <p className='text-muted-foreground mt-1 truncate font-mono text-xs'>
-            {receiveLink}
-          </p>
-        </div>
-        <CopyButton
-          value={receiveLink}
-          variant='outline'
-          tooltip={t('Copy receive link')}
-        />
-      </div>
+      ) : null}
     </div>
   )
 }

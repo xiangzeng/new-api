@@ -100,6 +100,28 @@ func TestResellerCustomerPricingIsOwnerScoped(t *testing.T) {
 	assert.Equal(t, "RESELLER_FORBIDDEN", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
 }
 
+func TestResellerStatusExposesOnlyObservedOverviewStats(t *testing.T) {
+	db, owner, profile := setupResellerControllerTest(t)
+	require.NoError(t, db.Model(&model.ResellerProfile{}).Where("id = ?", profile.Id).Updates(map[string]any{
+		"pending_commission_quota":   120,
+		"available_commission_quota": 80,
+	}).Error)
+	require.NoError(t, db.Create(&model.ResellerOutboundEvent{
+		UserId: owner.Id, Kind: "transfer", Amount: 500, Reference: "status-hidden-outbound-total", CreatedAt: common.GetTimestamp(),
+	}).Error)
+
+	ctx, recorder := resellerTestContext(http.MethodGet, "/api/reseller/status", "", owner)
+	GetResellerStatus(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	data := decodedResellerResponse(t, recorder)["data"].(map[string]any)
+	assert.EqualValues(t, owner.Quota, data["wallet_quota"])
+	assert.EqualValues(t, 120, data["pending_commission_quota"])
+	assert.EqualValues(t, 80, data["available_commission_quota"])
+	assert.EqualValues(t, 0, data["customer_count"])
+	assert.NotContains(t, data, "outbound_used_24h")
+}
+
 func TestResellerPricingConflictUsesStable409Envelope(t *testing.T) {
 	_, owner, profile := setupResellerControllerTest(t)
 	body := `{"group_name":"default","multiplier_bps":12000,"expected_version":99,"quota_password":"123456"}`

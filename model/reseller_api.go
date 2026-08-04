@@ -70,7 +70,6 @@ type ResellerStatusSummary struct {
 	AvailableCommissionQuota int64  `json:"available_commission_quota"`
 	CustomerCount            int64  `json:"customer_count"`
 	WalletQuota              int    `json:"wallet_quota"`
-	OutboundUsed24h          int64  `json:"outbound_used_24h"`
 	CreatedAt                int64  `json:"created_at,omitempty"`
 }
 
@@ -114,7 +113,7 @@ func CreateResellerProfile(userId int, now int64) (*ResellerProfile, error) {
 	return nil, errors.New("failed to allocate reseller receive address")
 }
 
-func GetResellerStatusSummary(userId int, now int64) (*ResellerStatusSummary, error) {
+func GetResellerStatusSummary(userId int, _ int64) (*ResellerStatusSummary, error) {
 	profile, err := GetResellerProfile(userId)
 	if errors.Is(err, ErrResellerNotEnabled) {
 		quota, quotaErr := GetUserQuota(userId, true)
@@ -130,11 +129,6 @@ func GetResellerStatusSummary(userId int, now int64) (*ResellerStatusSummary, er
 	if err := DB.Model(&ResellerCustomer{}).Where("reseller_id = ?", userId).Count(&customerCount).Error; err != nil {
 		return nil, err
 	}
-	var outboundUsed int64
-	if err := DB.Model(&ResellerOutboundEvent{}).Where("user_id = ? AND created_at > ?", userId, resellerNow(now)-24*60*60).
-		Select("COALESCE(SUM(amount), 0)").Scan(&outboundUsed).Error; err != nil {
-		return nil, err
-	}
 	quota, err := GetUserQuota(userId, true)
 	if err != nil {
 		return nil, err
@@ -143,7 +137,7 @@ func GetResellerStatusSummary(userId int, now int64) (*ResellerStatusSummary, er
 		Enabled: true, Status: profile.Status, ReceivePublicId: profile.ReceivePublicId,
 		PricingVersion: profile.PricingVersion, PendingCommissionQuota: profile.PendingCommissionQuota,
 		AvailableCommissionQuota: profile.AvailableCommissionQuota, CustomerCount: customerCount,
-		WalletQuota: quota, OutboundUsed24h: outboundUsed, CreatedAt: profile.CreatedAt,
+		WalletQuota: quota, CreatedAt: profile.CreatedAt,
 	}, nil
 }
 

@@ -39,7 +39,6 @@ export interface ResellerStatus {
   available_commission_quota: number
   customer_count: number
   wallet_quota: number
-  outbound_used_24h: number
   created_at?: number
 }
 
