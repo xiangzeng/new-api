@@ -110,7 +110,7 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/waffo/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPay)
 				selfRoute.POST("/waffo-pancake/amount", controller.RequestWaffoPancakeAmount)
 				selfRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPancakePay)
-				selfRoute.POST("/aff_transfer", controller.TransferAffQuota)
+				selfRoute.POST("/aff_transfer", middleware.DisableCache(), controller.RetiredAffiliateTransfer)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
 
 				// 2FA routes
@@ -156,6 +156,36 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.PUT("/:id/custom-pricing", controller.UpdateUserCustomPricing)
 				adminRoute.DELETE("/:id/custom-pricing", controller.DeleteUserCustomPricing)
 			}
+		}
+
+		resellerRoute := apiRouter.Group("/reseller")
+		resellerRoute.Use(middleware.UserAuth(), middleware.DisableCache())
+		{
+			resellerRoute.GET("/status", controller.GetResellerStatus)
+			resellerRoute.POST("/profile", middleware.CriticalRateLimit(), controller.CreateResellerProfile)
+			resellerRoute.GET("/invitation", controller.GetResellerInvitation)
+			resellerRoute.GET("/customers", controller.ListResellerCustomers)
+			resellerRoute.GET("/transfers", controller.ListResellerTransfers)
+			resellerRoute.GET("/ledger", controller.ListResellerLedger)
+			resellerRoute.GET("/security", controller.GetResellerSecurity)
+			resellerRoute.POST("/security/password", middleware.CriticalRateLimit(), controller.SetResellerPassword)
+			resellerRoute.PUT("/security/password", middleware.CriticalRateLimit(), controller.ChangeResellerPassword)
+			resellerRoute.POST("/security/password/reset", middleware.CriticalRateLimit(), controller.ResetResellerPassword)
+			resellerRoute.POST("/receive-address/rotate", middleware.CriticalRateLimit(), controller.RotateResellerReceiveAddress)
+			resellerRoute.GET("/pricing/default", controller.GetDefaultResellerPricing)
+			resellerRoute.PUT("/pricing/default", middleware.CriticalRateLimit(), controller.UpdateDefaultResellerPricing)
+			resellerRoute.GET("/customers/:id/pricing", controller.GetCustomerResellerPricing)
+			resellerRoute.PUT("/customers/:id/pricing", middleware.CriticalRateLimit(), controller.UpdateCustomerResellerPricing)
+			resellerRoute.POST("/transfers/preview", middleware.CriticalRateLimit(), controller.PreviewResellerTransfer)
+			resellerRoute.POST("/transfers/commit", middleware.CriticalRateLimit(), controller.CommitResellerTransfer)
+			resellerRoute.POST("/commission/convert", middleware.CriticalRateLimit(), controller.ConvertResellerCommission)
+			resellerRoute.GET("/vouchers", controller.ListResellerVouchers)
+			resellerRoute.GET("/vouchers/batches", controller.ListResellerVoucherBatches)
+			resellerRoute.POST("/vouchers/redeem", middleware.CriticalRateLimit(), controller.RedeemResellerVoucher)
+			resellerRoute.POST("/vouchers", middleware.CriticalRateLimit(), controller.IssueResellerVoucher)
+			resellerRoute.POST("/vouchers/batch", middleware.CriticalRateLimit(), controller.IssueResellerVoucherBatch)
+			resellerRoute.POST("/vouchers/batch/:id/reveal", middleware.CriticalRateLimit(), controller.RevealResellerVoucherBatch)
+			resellerRoute.POST("/vouchers/:id/reveal", middleware.CriticalRateLimit(), controller.RevealResellerVoucher)
 		}
 
 		// Subscription billing (plans, purchase, admin management)

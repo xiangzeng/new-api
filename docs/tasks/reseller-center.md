@@ -27,8 +27,8 @@
 - [x] Phase 2 邀请与归属：不透明邀请、密码/OAuth 注册原子直属绑定、来源分类。完成（commit `a6c2402dc`）
 - [x] Phase 3 双报价与佣金：覆盖全部计费路径并按唯一请求引用幂等入账。完成（commit `50f0f513`）
 - [x] Phase 4 收益释放：pending/available 账本及北京时间 04:10 可恢复批次。完成（commit `e147a8bb`）
-- [x] Phase 5 额度操作：额度密码、冻结、preview/commit 转账、收益转换和用户码 escrow。完成（本阶段提交）
-- [ ] Phase 6 API：完成 `/api/reseller/*` 契约、鉴权、限流、审计与错误语义。
+- [x] Phase 5 额度操作：额度密码、冻结、preview/commit 转账、收益转换和用户码 escrow。完成（commit `38a6e78e`）
+- [x] Phase 6 API：完成 `/api/reseller/*` 契约、鉴权、限流、审计与错误语义。完成（本阶段提交）
 - [ ] Phase 7 前端：完成站长中心路由、视图、交互、响应式和 i18n。
 - [ ] Phase 8 预览与验证：本地服务、三库测试、构建、Playwright 和跨视口检查。
 - [ ] Phase 9 差异收敛：目标站逐项对比、记录限制并修正可复现差异。
@@ -48,6 +48,16 @@
 - 技术决策：旧 `aff_quota`/`aff_history` 不自动并入新账本，避免双重记账。
 
 ## 4. 进度台账（每次会话末追加，倒序）
+
+### 2026-08-04（会话 5）
+
+- API：实现 status/profile、邀请、客户、定价、收益、账本、额度安全、转账、用户码签发/reveal/兑换的完整 `/api/reseller/*` envelope；列表统一分页。
+- 安全：所有资源读取按当前 reseller owner 限定；敏感 mutation 使用已有 2FA/Passkey security proof；资金 mutation 强制 `Idempotency-Key`；写入挂载关键限流和禁用缓存。
+- 错误：业务错误映射为稳定 HTTP 状态与 `data.code`，包括版本冲突、冻结、限额、余额不足、preview/idempotency/voucher 错误；security proof 保留旧顶层 `code` 并增加统一 `data.code`。
+- 审计：记录资源公开引用、金额、倍率和 owner，不记录密码、proof、nonce、完整邀请 token、用户码或密文；读取 DTO 显式排除 hash/digest/ciphertext。
+- 兼容：旧 `/api/user/aff_transfer` 返回 `410 AFFILIATE_TRANSFER_RETIRED`，旧余额不迁移；数据库资金事务成功后强制读取权威余额以刷新 Redis quota cache。
+- 验证：owner 越权、陈旧版本、缺 proof/idempotency、敏感字段不泄漏、旧接口退役测试及完整 `go test ./...` 通过。
+- 下一步：实现 `/reseller` 工作台、`/j/{token}` 注册入口、完整交互状态和 i18n，并移除旧邀请返利 UI。
 
 ### 2026-08-04（会话 4）
 

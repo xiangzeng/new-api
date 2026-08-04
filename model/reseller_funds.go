@@ -50,6 +50,17 @@ func resellerRequestHash(operation string, values ...any) string {
 	return resellerSecretDigest("reseller-idempotency-v1", fmt.Sprintf("%s:%v", operation, values))
 }
 
+func refreshResellerQuotaCaches(userIds ...int) {
+	for _, userId := range userIds {
+		if userId <= 0 {
+			continue
+		}
+		// A forced authoritative read refreshes Redis asynchronously while the
+		// committed database balance remains the source of truth.
+		_, _ = GetUserQuota(userId, true)
+	}
+}
+
 func getResellerIdempotencyWithTx(tx *gorm.DB, userId int, operation string, key string, requestHash string) (*ResellerIdempotencyRecord, error) {
 	if key == "" || len(key) > 128 {
 		return nil, ErrResellerIdempotencyConflict
@@ -175,9 +186,13 @@ func CommitResellerQuotaTransfer(senderId int, nonce string, password string, id
 	if err != nil {
 		if completed := getCompletedResellerIdempotency(senderId, "quota_transfer", idempotencyKey, requestHash); completed != nil {
 			if findErr := DB.Where("public_id = ?", completed.ResultRef).First(&transfer).Error; findErr == nil {
+				refreshResellerQuotaCaches(senderId, transfer.ReceiverId)
 				return &transfer, nil
 			}
 		}
+	}
+	if err == nil {
+		refreshResellerQuotaCaches(senderId, transfer.ReceiverId)
 	}
 	return &transfer, err
 }
@@ -224,8 +239,12 @@ func ConvertResellerCommission(userId int, amount int, password string, idempote
 	})
 	if err != nil {
 		if completed := getCompletedResellerIdempotency(userId, "commission_convert", idempotencyKey, requestHash); completed != nil {
+			refreshResellerQuotaCaches(userId)
 			return completed.ResultRef, nil
 		}
+	}
+	if err == nil {
+		refreshResellerQuotaCaches(userId)
 	}
 	return resultRef, err
 }
@@ -319,6 +338,9 @@ func IssueResellerVoucherBatch(issuerId int, count int, amount int, note string,
 	if err == nil && len(revealed) == 0 {
 		revealed, err = RevealResellerVoucherBatch(issuerId, batch.PublicId, password, now)
 	}
+	if err == nil {
+		refreshResellerQuotaCaches(issuerId)
+	}
 	return &batch, revealed, err
 }
 
@@ -343,6 +365,21 @@ func RevealResellerVoucherBatch(issuerId int, batchPublicId string, password str
 		codes = append(codes, code)
 	}
 	return codes, nil
+}
+
+func RevealResellerVoucher(issuerId int, voucherPublicId string, password string, now int64) (string, error) {
+	if err := VerifyResellerQuotaPassword(issuerId, password, resellerNow(now), false); err != nil {
+		return "", err
+	}
+	var voucher ResellerVoucher
+	if err := DB.Where("public_id = ? AND issuer_id = ?", voucherPublicId, issuerId).First(&voucher).Error; err != nil {
+		return "", ErrResellerVoucherInvalid
+	}
+	code, err := decryptResellerSecret(voucher.CodeCiphertext)
+	if err != nil {
+		return "", err
+	}
+	return code, nil
 }
 
 func RedeemResellerVoucher(code string, userId int, now int64) (int, error) {
@@ -371,5 +408,8 @@ func RedeemResellerVoucher(code string, userId int, now int64) (int, error) {
 		quota = voucher.Quota
 		return nil
 	})
+	if err == nil {
+		refreshResellerQuotaCaches(userId)
+	}
 	return quota, err
 }
