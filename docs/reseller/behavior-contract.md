@@ -66,7 +66,7 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - 转账、收益转换和用户码签发接受 `Idempotency-Key`。
 - 同一 key 与相同 payload 返回原结果；同一 key 与不同 payload 必须拒绝。
 
-### 2.5 限额与用户码
+### 2.6 限额与用户码
 
 - 单次操作额度范围 `1..2000`。
 - 转账和用户码签发共享滚动 24 小时 `4000` 限额。
