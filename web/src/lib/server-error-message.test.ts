@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
+import { getSecureVerificationErrorMessage } from './secure-verification'
 import { getServerErrorMessageKey } from './server-error-message'
 
 describe('server error message mapping', () => {
@@ -65,6 +66,29 @@ describe('server error message mapping', () => {
         },
       }),
       expected.TELEGRAM_BIND_INTERNAL_ERROR
+    )
+  })
+})
+
+describe('secure verification error messages', () => {
+  test('uses the backend business message from Axios responses', () => {
+    assert.equal(
+      getSecureVerificationErrorMessage(
+        {
+          response: {
+            data: { message: '额度密码错误' },
+          },
+        },
+        'Verification failed'
+      ),
+      '额度密码错误'
+    )
+  })
+
+  test('falls back for unknown thrown values', () => {
+    assert.equal(
+      getSecureVerificationErrorMessage(null, 'Verification failed'),
+      'Verification failed'
     )
   })
 })

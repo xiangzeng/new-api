@@ -42,6 +42,7 @@ import {
   getOAuthSessionStorage,
   resolveOAuthCallbackMode,
 } from '@/features/auth/lib/oauth-callback-mode'
+import { clearResellerInvitation } from '@/features/auth/lib/storage'
 import { api, applyAuthBundle, isAuthBundle } from '@/lib/api'
 import { getServerErrorMessageKey } from '@/lib/server-error-message'
 
@@ -199,6 +200,7 @@ function OAuthCallback() {
         }
         const response = await api.get(`/api/oauth/${provider}`, config)
         if (response.data?.success && isAuthBundle(response.data?.data)) {
+          clearResellerInvitation()
           applyAuthBundle(response.data.data)
           safeNavigate(search.redirect)
           toast.success(i18next.t('Signed in successfully!'))

@@ -55,6 +55,7 @@ func securityProofError(c *gin.Context, code, message string) {
 		"success": false,
 		"message": message,
 		"code":    code,
+		"data":    gin.H{"code": code},
 	})
 	c.Abort()
 }

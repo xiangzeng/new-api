@@ -261,7 +261,20 @@ func Register(c *gin.Context) {
 		return
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	resellerInvitation := strings.TrimSpace(user.ResellerInvitation)
+	if affCode != "" {
+		RetiredAffiliateProgram(c)
+		return
+	}
+	inviterId := 0
+	if resellerInvitation != "" {
+		invitation, resolveErr := model.ResolveResellerInvitation(resellerInvitation, common.GetTimestamp())
+		if resolveErr != nil {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		inviterId = invitation.ResellerId
+	}
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
@@ -272,7 +285,27 @@ func Register(c *gin.Context) {
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
-	if err := cleanUser.Insert(inviterId); err != nil {
+	if resellerInvitation != "" {
+		err = model.DB.Transaction(func(tx *gorm.DB) error {
+			if insertErr := cleanUser.InsertWithTx(tx, inviterId); insertErr != nil {
+				return insertErr
+			}
+			_, bindErr := model.BindResellerCustomerFromInvitationWithTx(
+				tx,
+				resellerInvitation,
+				cleanUser.Id,
+				model.ResellerRegistrationSourceReseller,
+				common.GetTimestamp(),
+			)
+			return bindErr
+		})
+		if err == nil {
+			cleanUser.FinishInsert(0)
+		}
+	} else {
+		err = cleanUser.Insert(inviterId)
+	}
+	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
 			return
@@ -283,7 +316,7 @@ func Register(c *gin.Context) {
 
 	// 获取插入后的用户ID
 	var insertedUser model.User
-	if err := model.DB.Where("username = ?", cleanUser.Username).First(&insertedUser).Error; err != nil {
+	if err := model.DB.Where("id = ?", cleanUser.Id).First(&insertedUser).Error; err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserRegisterFailed)
 		return
 	}
@@ -428,59 +461,6 @@ func GenerateAccessToken(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data":    user.AccessToken,
-	})
-	return
-}
-
-type TransferAffQuotaRequest struct {
-	Quota int `json:"quota" binding:"required"`
-}
-
-func TransferAffQuota(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	tran := TransferAffQuotaRequest{}
-	if err := c.ShouldBindJSON(&tran); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	err = user.TransferAffQuotaToQuota(tran.Quota)
-	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserTransferFailed, map[string]any{"Error": err.Error()})
-		return
-	}
-	common.ApiSuccessI18n(c, i18n.MsgUserTransferSuccess, nil)
-}
-
-func GetAffCode(c *gin.Context) {
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if user.AffCode == "" {
-		user.AffCode = common.GetRandomString(4)
-		if err := user.Update(false); err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
-			return
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    user.AffCode,
 	})
 	return
 }

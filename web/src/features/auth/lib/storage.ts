@@ -25,37 +25,35 @@ For commercial licensing, please contact support@quantumnous.com
 // ============================================================================
 
 const STORAGE_KEYS = {
-  AFFILIATE: 'aff',
-  STATUS: 'status',
+  LEGACY_AFFILIATE: 'aff',
+  RESELLER_INVITATION: 'reseller_invitation',
 } as const
 
-// ============================================================================
-// Affiliate Code Storage
-// ============================================================================
-
-/**
- * Get affiliate code from localStorage
- */
-export function getAffiliateCode(): string {
+export function getResellerInvitation(): string {
   if (typeof window === 'undefined') return ''
   try {
-    return window.localStorage.getItem(STORAGE_KEYS.AFFILIATE) ?? ''
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to get affiliate code:', error)
+    return window.sessionStorage.getItem(STORAGE_KEYS.RESELLER_INVITATION) ?? ''
+  } catch {
     return ''
   }
 }
 
-/**
- * Save affiliate code to localStorage
- */
-export function saveAffiliateCode(code: string): void {
+export function saveResellerInvitation(token: string): void {
   if (typeof window === 'undefined') return
   try {
-    window.localStorage.setItem(STORAGE_KEYS.AFFILIATE, code)
+    window.sessionStorage.setItem(STORAGE_KEYS.RESELLER_INVITATION, token)
+    window.localStorage.removeItem(STORAGE_KEYS.LEGACY_AFFILIATE)
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error('Failed to save affiliate code:', error)
+    console.error('Failed to save reseller invitation:', error)
+  }
+}
+
+export function clearResellerInvitation(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.removeItem(STORAGE_KEYS.RESELLER_INVITATION)
+  } catch {
+    // Browser storage can be unavailable in hardened environments.
   }
 }

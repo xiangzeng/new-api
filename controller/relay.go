@@ -624,6 +624,14 @@ func RelayTask(c *gin.Context) {
 
 	// ── 成功：结算 + 日志 + 插入任务 ──
 	if taskErr == nil {
+		perCallBilling := common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice
+		if pricing := relayInfo.ResellerPricing; pricing != nil {
+			pricing.SettlementReference = "task:" + relayInfo.PublicTaskID + ":final"
+			pricing.DeferCommissionUntilTask = !perCallBilling
+			if perCallBilling {
+				service.SetResellerActualQuota(relayInfo, pricing.BasePreConsumedQuota, result.Quota)
+			}
+		}
 		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 			common.SysError("settle task billing error: " + settleErr.Error())
 		}
@@ -641,7 +649,19 @@ func RelayTask(c *gin.Context) {
 			ModelRatio:      relayInfo.PriceData.ModelRatio,
 			OtherRatios:     relayInfo.PriceData.OtherRatios(),
 			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			PerCallBilling:  perCallBilling,
+		}
+		if pricing := relayInfo.ResellerPricing; pricing != nil {
+			billingContext := task.PrivateData.BillingContext
+			billingContext.ResellerId = pricing.ResellerId
+			billingContext.ResellerCustomerId = pricing.CustomerId
+			billingContext.ResellerCustomerBindingId = pricing.CustomerBindingId
+			billingContext.ResellerMultiplierBps = pricing.MultiplierBps
+			billingContext.ResellerMultiplierSource = pricing.MultiplierSource
+			billingContext.BaseGroupRatio = pricing.BaseGroupRatio
+			billingContext.RetailGroupRatio = pricing.RetailGroupRatio
+			billingContext.BasePreConsumedQuota = pricing.BasePreConsumedQuota
+			billingContext.RetailPreConsumedQuota = result.Quota
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

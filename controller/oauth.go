@@ -20,13 +20,15 @@ import (
 const oauthAuthFlowTTL = 10 * time.Minute
 
 type oauthStateRequest struct {
-	Provider string `json:"provider"`
-	Intent   string `json:"intent"`
-	Aff      string `json:"aff,omitempty"`
+	Provider           string `json:"provider"`
+	Intent             string `json:"intent"`
+	Aff                string `json:"aff,omitempty"`
+	ResellerInvitation string `json:"reseller_invitation,omitempty"`
 }
 
 type oauthFlowPayload struct {
-	AffiliateCode string `json:"affiliate_code,omitempty"`
+	ResellerInvitationId      int64 `json:"reseller_invitation_id,omitempty"`
+	ResellerInvitationVersion int64 `json:"reseller_invitation_version,omitempty"`
 }
 
 // providerParams returns map with Provider key for i18n templates
@@ -44,12 +46,28 @@ func GenerateOAuthCode(c *gin.Context) {
 	request.Provider = strings.TrimSpace(request.Provider)
 	request.Intent = strings.TrimSpace(request.Intent)
 	request.Aff = strings.TrimSpace(request.Aff)
+	request.ResellerInvitation = strings.TrimSpace(request.ResellerInvitation)
+	if request.Aff != "" {
+		RetiredAffiliateProgram(c)
+		return
+	}
 	if oauth.GetProvider(request.Provider) == nil ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Intent != model.AuthFlowIntentBind) ||
-		len(request.Aff) > 32 ||
-		(request.Intent == model.AuthFlowIntentBind && request.Aff != "") {
+		len(request.ResellerInvitation) > 128 ||
+		(request.Intent == model.AuthFlowIntentBind && request.ResellerInvitation != "") {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
+	}
+	var resellerInvitationId int64
+	var resellerInvitationVersion int64
+	if request.ResellerInvitation != "" {
+		invitation, err := model.ResolveResellerInvitation(request.ResellerInvitation, common.GetTimestamp())
+		if err != nil {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		resellerInvitationId = invitation.Id
+		resellerInvitationVersion = invitation.Version
 	}
 	userID := 0
 	sessionID := ""
@@ -62,7 +80,10 @@ func GenerateOAuthCode(c *gin.Context) {
 		userID = identity.UserID
 		sessionID = identity.SessionID
 	}
-	payload, err := common.Marshal(oauthFlowPayload{AffiliateCode: request.Aff})
+	payload, err := common.Marshal(oauthFlowPayload{
+		ResellerInvitationId:      resellerInvitationId,
+		ResellerInvitationVersion: resellerInvitationVersion,
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -193,7 +214,13 @@ func HandleOAuth(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	user, err := findOrCreateOAuthUser(c, provider, oauthUser, payload.AffiliateCode)
+	user, err := findOrCreateOAuthUser(
+		c,
+		provider,
+		oauthUser,
+		payload.ResellerInvitationId,
+		payload.ResellerInvitationVersion,
+	)
 	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
@@ -294,7 +321,13 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 }
 
 // findOrCreateOAuthUser finds existing user or creates new user
-func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *oauth.OAuthUser, affiliateCode string) (*model.User, error) {
+func findOrCreateOAuthUser(
+	c *gin.Context,
+	provider oauth.Provider,
+	oauthUser *oauth.OAuthUser,
+	resellerInvitationId int64,
+	resellerInvitationVersion int64,
+) (*model.User, error) {
 	user := &model.User{}
 
 	// Check if user already exists with new ID
@@ -366,10 +399,32 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	user.Role = common.RoleCommonUser
 	user.Status = common.UserStatusEnabled
 
-	// Handle affiliate code
 	inviterId := 0
-	if affiliateCode != "" {
-		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
+	if resellerInvitationId > 0 {
+		invitation, err := model.ResolveResellerInvitationReference(
+			resellerInvitationId,
+			resellerInvitationVersion,
+			common.GetTimestamp(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		inviterId = invitation.ResellerId
+	}
+	user.InviterId = inviterId
+	bindReseller := func(tx *gorm.DB) error {
+		if resellerInvitationId <= 0 {
+			return nil
+		}
+		_, err := model.BindResellerCustomerFromInvitationReferenceWithTx(
+			tx,
+			resellerInvitationId,
+			resellerInvitationVersion,
+			user.Id,
+			model.ResellerRegistrationSourceReseller,
+			common.GetTimestamp(),
+		)
+		return err
 	}
 
 	// Use transaction to ensure user creation and OAuth binding are atomic
@@ -378,6 +433,9 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
 			if err := user.InsertWithTx(tx, inviterId); err != nil {
+				return err
+			}
+			if err := bindReseller(tx); err != nil {
 				return err
 			}
 
@@ -397,13 +455,16 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 			return nil, err
 		}
 
-		// Perform post-transaction tasks (logs, sidebar config, inviter rewards)
-		user.FinalizeOAuthUserCreation(inviterId)
+		// Perform post-transaction tasks after the atomic user/binding commit.
+		user.FinalizeOAuthUserCreation(0)
 	} else {
 		// Built-in provider: create user and update provider ID in a transaction
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
 			if err := user.InsertWithTx(tx, inviterId); err != nil {
+				return err
+			}
+			if err := bindReseller(tx); err != nil {
 				return err
 			}
 
@@ -427,7 +488,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		}
 
 		// Perform post-transaction tasks
-		user.FinalizeOAuthUserCreation(inviterId)
+		user.FinalizeOAuthUserCreation(0)
 	}
 
 	return user, nil

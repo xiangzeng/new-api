@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 
 import {
   extractVerificationInfo,
+  getSecureVerificationErrorMessage,
   isVerificationRequiredError,
 } from '@/lib/secure-verification'
 
@@ -170,10 +171,10 @@ export function useSecureVerification(
 
         return result
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : i18next.t('Verification failed')
+        const message = getSecureVerificationErrorMessage(
+          error,
+          i18next.t('Verification failed')
+        )
         toast.error(message)
         onError?.(error)
         throw error

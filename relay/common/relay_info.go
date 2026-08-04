@@ -159,6 +159,9 @@ type RelayInfo struct {
 	UpstreamRequestBodySize int64
 
 	PriceData hosttypes.PriceData
+	// ResellerPricing keeps the platform and retail quote inputs together for
+	// request settlement. It is nil for users without a direct reseller owner.
+	ResellerPricing *hosttypes.ResellerPricingSnapshot
 
 	// QuotaClamp is set (non-nil) when a quota conversion saturated at the
 	// int32 bound (or NaN fallback) while computing this request's charge.

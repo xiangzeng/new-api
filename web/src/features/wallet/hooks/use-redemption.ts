@@ -23,7 +23,8 @@ import { toast } from 'sonner'
 import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 
-import { redeemTopupCode } from '../api'
+import { redeemResellerUserCode, redeemTopupCode } from '../api'
+import { isResellerUserCode } from '../lib/redemption'
 
 // ============================================================================
 // Redemption Hook
@@ -40,10 +41,16 @@ export function useRedemption() {
 
     try {
       setRedeeming(true)
-      const response = await redeemTopupCode({ key: code })
+      const trimmedCode = code.trim()
+      const resellerCode = isResellerUserCode(trimmedCode)
+      const response = resellerCode
+        ? await redeemResellerUserCode(trimmedCode)
+        : await redeemTopupCode({ key: trimmedCode })
 
       if (response.success && response.data) {
-        const quotaAdded = response.data
+        const quotaAdded = resellerCode
+          ? (response.data as { quota: number }).quota
+          : (response.data as number)
         toast.success(
           i18next.t('Redemption successful! Added: {{quota}}', {
             quota: formatQuota(quotaAdded),
@@ -55,7 +62,7 @@ export function useRedemption() {
 
       toast.error(response.message || i18next.t('Redemption failed'))
       return false
-    } catch (_error) {
+    } catch {
       toast.error(i18next.t('Redemption failed'))
       return false
     } finally {

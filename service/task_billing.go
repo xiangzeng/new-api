@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -207,9 +208,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 // actualQuota 是任务完成后的实际应扣额度，与预扣额度 (task.Quota) 做差额结算。
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
 // clamps 可选：若计算 actualQuota 时发生额度饱和，将其记入日志 admin_info（仅管理员可见）。
-func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) {
+func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) bool {
 	if actualQuota <= 0 {
-		return
+		return false
 	}
 	preConsumedQuota := task.Quota
 	quotaDelta := actualQuota - preConsumedQuota
@@ -217,7 +218,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
-		return
+		return true
 	}
 
 	logger.LogInfo(ctx, fmt.Sprintf("任务 %s 差额结算：delta=%s（实际：%s，预扣：%s，%s）",
@@ -231,7 +232,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	// 调整资金来源
 	if err := taskAdjustFunding(task, quotaDelta); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
-		return
+		return false
 	}
 
 	// 调整令牌额度
@@ -272,6 +273,29 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		Other:     other,
 		NodeName:  task.PrivateData.NodeName,
 	})
+	return true
+}
+
+func FinalizeTaskResellerCommission(task *model.Task, baseQuota int, retailQuota int) error {
+	if task == nil || task.PrivateData.BillingContext == nil {
+		return nil
+	}
+	bc := task.PrivateData.BillingContext
+	if bc.ResellerId <= 0 {
+		return nil
+	}
+	_, err := model.CreateResellerCommission(model.CreateResellerCommissionParams{
+		RequestReference:  "task:" + task.TaskID + ":final",
+		ResellerId:        bc.ResellerId,
+		CustomerId:        bc.ResellerCustomerId,
+		CustomerBindingId: bc.ResellerCustomerBindingId,
+		MultiplierBps:     bc.ResellerMultiplierBps,
+		MultiplierSource:  bc.ResellerMultiplierSource,
+		BaseQuota:         baseQuota,
+		RetailQuota:       retailQuota,
+		Now:               time.Now(),
+	})
+	return err
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。
@@ -319,9 +343,22 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		otherMultiplier = priceData.OtherRatioMultiplier()
 	}
 
-	// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio * otherMultiplier（饱和转换，防止溢出成负数）
-	actualQuota, clamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
+	baseGroupRatio := finalGroupRatio
+	retailGroupRatio := finalGroupRatio
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.ResellerId > 0 {
+		baseGroupRatio = bc.BaseGroupRatio
+		retailGroupRatio = bc.RetailGroupRatio
+	}
 
-	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
+	// Base and retail use the same token input, model ratio, extra multipliers,
+	// conversion and rounding. Only the captured group ratio differs.
+	actualQuota, clamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * retailGroupRatio * otherMultiplier)
+	baseActualQuota, baseClamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * baseGroupRatio * otherMultiplier)
+
+	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, retailGroupRatio, otherMultiplier)
+	if RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp, baseClamp) {
+		if err := FinalizeTaskResellerCommission(task, baseActualQuota, actualQuota); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("任务 %s 代理佣金入账失败: %s", task.TaskID, err.Error()))
+		}
+	}
 }

@@ -20,6 +20,7 @@ import {
   Activity,
   Box,
   CreditCard,
+  BadgeDollarSign,
   FileText,
   FlaskConical,
   Key,
@@ -29,7 +30,6 @@ import {
   Radio,
   ServerCog,
   Settings,
-  Share2,
   SlidersHorizontal,
   Ticket,
   User,
@@ -111,6 +111,11 @@ export function useSidebarData(): SidebarData {
             icon: Wallet,
           },
           {
+            title: t('Reseller Center'),
+            url: '/reseller',
+            icon: BadgeDollarSign,
+          },
+          {
             title: t('Profile'),
             url: '/profile',
             icon: User,
@@ -140,11 +145,6 @@ export function useSidebarData(): SidebarData {
             title: t('Custom Pricing'),
             url: '/custom-pricing',
             icon: SlidersHorizontal,
-          },
-          {
-            title: t('Invitations'),
-            url: '/invitations',
-            icon: Share2,
           },
           {
             title: t('Redemption Codes'),
