@@ -29,8 +29,8 @@
 - [x] Phase 4 收益释放：pending/available 账本及北京时间 04:10 可恢复批次。完成（commit `e147a8bb`）
 - [x] Phase 5 额度操作：额度密码、冻结、preview/commit 转账、收益转换和用户码 escrow。完成（commit `38a6e78e`）
 - [x] Phase 6 API：完成 `/api/reseller/*` 契约、鉴权、限流、审计与错误语义。完成（commit `515a8a325`）
-- [x] Phase 7 前端：完成站长中心路由、视图、交互、响应式和 i18n。完成（本阶段提交）
-- [ ] Phase 8 预览与验证：本地服务、三库测试、构建、Playwright 和跨视口检查。
+- [x] Phase 7 前端：完成站长中心路由、视图、交互、响应式和 i18n。完成（commit `c44eb6774`）
+- [x] Phase 8 预览与验证：本地服务、三库测试、构建、浏览器逐视图和跨视口检查。完成（本阶段提交）
 - [ ] Phase 9 差异收敛：目标站逐项对比、记录限制并修正可复现差异。
 
 ## 3. 架构与上下文
@@ -48,6 +48,16 @@
 - 技术决策：旧 `aff_quota`/`aff_history` 不自动并入新账本，避免双重记账。
 
 ## 4. 进度台账（每次会话末追加，倒序）
+
+### 2026-08-04（会话 7）
+
+- 三库：SQLite 本地预览、MySQL `5.7.44` 和 PostgreSQL `9.6.24` 均完成 `InitDB/AutoMigrate` 与 `/api/status` 启动检查；三库创建 14 张 `reseller_*` 表，佣金引用、客户归属、幂等 scope 和账本 reference 的唯一索引均存在。
+- 前置条件：MySQL 官方镜像默认 `latin1` 会被项目字符集门禁拒绝；将测试库改为 `utf8mb4_unicode_ci` 后迁移成功，故部署契约明确要求 `utf8mb4`。
+- 运行时修复：桌面逐标签检查发现无账本时后端返回 `items: null`，前端点击“账本”触发 `.length` 500；后端所有 reseller 空列表改为 `[]`，前端分页解析兼容旧节点的 `null`，并新增 Go/TypeScript 回归测试。
+- 退役收敛：管理员侧栏删除旧“邀请返利”入口，系统设置删除已经失效的邀请人与被邀请人固定奖励输入；历史 option、字段和旧路由继续保留兼容审计。
+- 视图：桌面 `1440x900` 与移动 `390x844` 完成概览、客户、账本、转账、用户码、安全及全部弹窗检查；全页无横向溢出，移动 Tabs 与表格使用各自滚动容器，弹窗保持视口内可操作。
+- 证据：无敏感值截图位于 `analysis/zzone-reseller/local-preview/reseller-customers-desktop.png` 和 `reseller-customers-mobile.png`；临时 reveal 占位记录已在验证后删除。
+- 下一步：使用同一浏览器会话对目标站与本地逐项比较可见行为、只读 API、错误 envelope 和移动布局，修正有运行时证据支持的差异。
 
 ### 2026-08-04（会话 6）
 

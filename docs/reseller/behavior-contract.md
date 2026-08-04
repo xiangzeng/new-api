@@ -142,6 +142,7 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - [x] 本地资金操作与并发测试：六位额度密码、重置冻结、preview/commit nonce、幂等收益转换/转账/用户码、共享滚动限额、escrow/reveal/redeem 与账本平衡均有事务测试和 race detector 覆盖。
 - [x] 本地 API 契约测试：完整路由、owner scope、分页、稳定错误码、security proof、幂等键、审计脱敏、读取 DTO 脱敏和旧返利 mutation 退役均已实现；Redis quota cache 在资金事务成功后刷新。
 - [x] 本地前端逻辑测试：`/j/{token}` 使用 sessionStorage 并清理遗留 `aff`，注册/OAuth 成功后清理邀请；钱包 `RV-` 路由选择、服务端安全复核错误展示和列表分页已实现。
-- [ ] 本地前端逐视图与跨视口测试。
+- [x] 本地前端逐视图与跨视口测试：SQLite 预览在 `1440x900` 和 `390x844` 完成六个标签及默认/客户定价、收益转换、preview 转账、签发、reveal、额度密码和地址轮换入口检查；页面无全局横向溢出，移动 Tabs/表格独立横滚，弹窗位于视口内。无账本时 `items: null` 引发的 500 已通过后端空数组契约和前端兼容归一化修复并回归。
+- [x] 三数据库迁移检查：SQLite、MySQL `5.7.44` 和 PostgreSQL `9.6.24` 均创建 14 张 `reseller_*` 表及四个关键唯一索引；MySQL 数据库必须使用 `utf8mb4`，默认 `latin1` 会被启动门禁拒绝。
 - [ ] 目标站只读接口和本地响应字段差异检查。
 - [ ] 使用可重置测试账户验证目标 mutation 的服务端错误和状态迁移。

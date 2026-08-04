@@ -183,6 +183,32 @@ func TestResellerReadResponsesDoNotLeakStoredSecrets(t *testing.T) {
 	assert.NotContains(t, combined, "code_ciphertext")
 }
 
+func TestEmptyResellerCollectionsUseArrayEnvelope(t *testing.T) {
+	_, owner, _ := setupResellerControllerTest(t)
+	tests := []struct {
+		name    string
+		path    string
+		handler func(*gin.Context)
+	}{
+		{name: "ledger", path: "/api/reseller/ledger", handler: ListResellerLedger},
+		{name: "transfers", path: "/api/reseller/transfers", handler: ListResellerTransfers},
+		{name: "voucher batches", path: "/api/reseller/vouchers/batches", handler: ListResellerVoucherBatches},
+		{name: "vouchers", path: "/api/reseller/vouchers", handler: ListResellerVouchers},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, recorder := resellerTestContext(http.MethodGet, test.path, "", owner)
+			test.handler(ctx)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			response := decodedResellerResponse(t, recorder)
+			page := response["data"].(map[string]any)
+			assert.Equal(t, []any{}, page["items"])
+		})
+	}
+}
+
 func TestRetiredAffiliateTransferReturnsGone(t *testing.T) {
 	_, owner, _ := setupResellerControllerTest(t)
 	ctx, recorder := resellerTestContext(http.MethodPost, "/api/user/aff_transfer", `{}`, owner)

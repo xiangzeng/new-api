@@ -124,11 +124,27 @@ export async function deletePricing(
   return response.data
 }
 
+type ResellerPagePayload<T> = Omit<ResellerPage<T>, 'items'> & {
+  items?: T[] | null
+}
+
+export function normalizeResellerPage<T>(
+  page: ResellerPagePayload<T>
+): ResellerPage<T> {
+  return {
+    ...page,
+    items: Array.isArray(page.items) ? page.items : [],
+  }
+}
+
 async function getPage<T>(path: string, page = 1, pageSize = 50) {
-  const response = await api.get<ResellerEnvelope<ResellerPage<T>>>(path, {
-    params: { p: page, page_size: pageSize },
-  })
-  return response.data.data
+  const response = await api.get<ResellerEnvelope<ResellerPagePayload<T>>>(
+    path,
+    {
+      params: { p: page, page_size: pageSize },
+    }
+  )
+  return normalizeResellerPage(response.data.data)
 }
 
 export const getResellerCustomers = (page = 1) =>

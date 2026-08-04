@@ -196,7 +196,7 @@ func ListResellerLedger(userId int, offset int, limit int) ([]ResellerLedgerList
 	if err := base.Distinct("rt.id").Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	var items []ResellerLedgerListItem
+	items := make([]ResellerLedgerListItem, 0)
 	err := base.Select("rt.id, rt.reference, rt.kind, rt.related_commission_id, SUM(rl.delta_quota) AS delta_quota, MAX(ABS(rl.delta_quota)) AS amount_quota, rt.created_at").
 		Group("rt.id, rt.reference, rt.kind, rt.related_commission_id, rt.created_at").
 		Order("rt.id DESC").Offset(offset).Limit(limit).Scan(&items).Error
@@ -209,7 +209,7 @@ func ListResellerVoucherBatches(userId int, offset int, limit int) ([]ResellerVo
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	var items []ResellerVoucherBatch
+	items := make([]ResellerVoucherBatch, 0)
 	err := query.Order("id DESC").Offset(offset).Limit(limit).Find(&items).Error
 	return items, total, err
 }
@@ -220,7 +220,7 @@ func ListResellerVouchers(userId int, offset int, limit int) ([]ResellerVoucher,
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	var items []ResellerVoucher
+	items := make([]ResellerVoucher, 0)
 	err := query.Select("id", "public_id", "batch_id", "issuer_id", "amount", "quota", "redeemed_by", "redeemed_at", "created_at").
 		Order("id DESC").Offset(offset).Limit(limit).Find(&items).Error
 	return items, total, err
