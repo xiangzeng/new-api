@@ -25,8 +25,8 @@
 - [x] Phase 0 基线与证据契约：建立 worktree、任务档案和对标契约。完成（commit `bf41dc76a`）
 - [x] Phase 1 核心模型与定价解析器：三库兼容模型、四级优先级、延迟涨价、乐观锁。完成（commit `ef7e31e68`）
 - [x] Phase 2 邀请与归属：不透明邀请、密码/OAuth 注册原子直属绑定、来源分类。完成（commit `a6c2402dc`）
-- [x] Phase 3 双报价与佣金：覆盖全部计费路径并按唯一请求引用幂等入账。完成（本阶段提交）
-- [ ] Phase 4 收益释放：pending/available 账本及北京时间 04:10 可恢复批次。
+- [x] Phase 3 双报价与佣金：覆盖全部计费路径并按唯一请求引用幂等入账。完成（commit `50f0f513`）
+- [x] Phase 4 收益释放：pending/available 账本及北京时间 04:10 可恢复批次。完成（本阶段提交）
 - [ ] Phase 5 额度操作：额度密码、冻结、preview/commit 转账、收益转换和用户码 escrow。
 - [ ] Phase 6 API：完成 `/api/reseller/*` 契约、鉴权、限流、审计与错误语义。
 - [ ] Phase 7 前端：完成站长中心路由、视图、交互、响应式和 i18n。
@@ -48,6 +48,14 @@
 - 技术决策：旧 `aff_quota`/`aff_history` 不自动并入新账本，避免双重记账。
 
 ## 4. 进度台账（每次会话末追加，倒序）
+
+### 2026-08-04（会话 3）
+
+- 做了：新增不可变 `ResellerLedgerTransaction` / `ResellerLedgerLine`；commission accrual 原子写平台成本与代理 pending；到期释放原子写 pending/available、commission 状态和余额投影。
+- 调度：新增 `reseller_commission_release` scheduled system-task；仅存在到期项时每分钟调度，复用多实例数据库 lease 与心跳；每条 commission 独立事务，崩溃后按权威 pending 状态继续。
+- 不变量：journal 至少两行且总和为零；引用唯一；pending 不得透支；投影或状态 CAS 不一致时整笔回滚。
+- 验证：accrual 并发重放、journal 平衡、单次释放、重复批次、投影失败回滚、全仓 `go test ./...` 与 race detector 通过。
+- 下一步：实现独立额度密码、安全复核与重置冻结，并在同一账本上完成转账、收益转换和用户码 escrow。
 
 ### 2026-08-04（会话 2）
 

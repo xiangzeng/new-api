@@ -14,6 +14,13 @@ const (
 
 	ResellerCommissionStatusPending   = "pending"
 	ResellerCommissionStatusAvailable = "available"
+
+	ResellerLedgerKindCommissionAccrual = "commission_accrual"
+	ResellerLedgerKindCommissionRelease = "commission_release"
+
+	ResellerLedgerAccountPlatformCommissionExpense = "platform_commission_expense"
+	ResellerLedgerAccountCommissionPending         = "commission_pending"
+	ResellerLedgerAccountCommissionAvailable       = "commission_available"
 )
 
 // ResellerProfile is the reseller-level aggregate. Commission balances are
@@ -76,4 +83,23 @@ type ResellerCommissionEntry struct {
 	ReleaseAt         int64  `json:"release_at" gorm:"type:bigint;not null;index:idx_reseller_commission_owner_status_release,priority:3"`
 	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt         int64  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+type ResellerLedgerTransaction struct {
+	Id                  int64  `json:"id" gorm:"primaryKey"`
+	Reference           string `json:"reference" gorm:"type:varchar(191);not null;uniqueIndex:ux_reseller_ledger_transaction_reference"`
+	Kind                string `json:"kind" gorm:"type:varchar(32);not null;index"`
+	ResellerId          int    `json:"reseller_id" gorm:"not null;index:idx_reseller_ledger_owner_created,priority:1"`
+	RelatedCommissionId int64  `json:"related_commission_id" gorm:"not null;default:0;index"`
+	CreatedAt           int64  `json:"created_at" gorm:"autoCreateTime;index:idx_reseller_ledger_owner_created,priority:2"`
+}
+
+type ResellerLedgerLine struct {
+	Id            int64  `json:"id" gorm:"primaryKey"`
+	TransactionId int64  `json:"transaction_id" gorm:"not null;uniqueIndex:ux_reseller_ledger_line_number,priority:1;index"`
+	LineNumber    int    `json:"line_number" gorm:"not null;uniqueIndex:ux_reseller_ledger_line_number,priority:2"`
+	Account       string `json:"account" gorm:"type:varchar(40);not null;index"`
+	OwnerUserId   int    `json:"owner_user_id" gorm:"not null;default:0;index"`
+	DeltaQuota    int64  `json:"delta_quota" gorm:"type:bigint;not null"`
+	CreatedAt     int64  `json:"created_at" gorm:"autoCreateTime"`
 }

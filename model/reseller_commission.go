@@ -141,7 +141,7 @@ func CreateResellerCommission(params CreateResellerCommissionParams) (*ResellerC
 			return fmt.Errorf("%w: %s", ErrResellerCommissionReferenceConflict, params.RequestReference)
 		}
 		entry = persisted
-		return nil
+		return postCommissionAccrualWithTx(tx, &entry)
 	})
 	if err != nil {
 		return nil, err
