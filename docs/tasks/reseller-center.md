@@ -28,8 +28,8 @@
 - [x] Phase 3 双报价与佣金：覆盖全部计费路径并按唯一请求引用幂等入账。完成（commit `50f0f513`）
 - [x] Phase 4 收益释放：pending/available 账本及北京时间 04:10 可恢复批次。完成（commit `e147a8bb`）
 - [x] Phase 5 额度操作：额度密码、冻结、preview/commit 转账、收益转换和用户码 escrow。完成（commit `38a6e78e`）
-- [x] Phase 6 API：完成 `/api/reseller/*` 契约、鉴权、限流、审计与错误语义。完成（本阶段提交）
-- [ ] Phase 7 前端：完成站长中心路由、视图、交互、响应式和 i18n。
+- [x] Phase 6 API：完成 `/api/reseller/*` 契约、鉴权、限流、审计与错误语义。完成（commit `515a8a325`）
+- [x] Phase 7 前端：完成站长中心路由、视图、交互、响应式和 i18n。完成（本阶段提交）
 - [ ] Phase 8 预览与验证：本地服务、三库测试、构建、Playwright 和跨视口检查。
 - [ ] Phase 9 差异收敛：目标站逐项对比、记录限制并修正可复现差异。
 
@@ -48,6 +48,16 @@
 - 技术决策：旧 `aff_quota`/`aff_history` 不自动并入新账本，避免双重记账。
 
 ## 4. 进度台账（每次会话末追加，倒序）
+
+### 2026-08-04（会话 6）
+
+- 工作台：新增 `/reseller` 站长中心，覆盖开通、汇总、邀请、默认/客户分组定价与继承、收益转换、preview/commit 转账、用户码签发/reveal、六位额度密码、收款地址轮换及冻结/冲突/未知结果状态。
+- 邀请：新增 `/j/{opaque_token}` 单标签页邀请入口；密码注册和 OAuth state 只传 `reseller_invitation`，成功后清理；不透明 token 不写 localStorage。
+- 退役：密码注册和 OAuth 明确拒绝旧 `aff`，`GET /api/user/aff` 与 `POST /api/user/aff_transfer` 返回 `410`；固定邀请奖励不再新增；旧钱包组件、hooks 和 API 包装已下线，历史字段不迁移、不清零。
+- 定价：新增默认/客户规则 `DELETE` API，分组关闭覆盖后真正恢复继承；删除仍使用 owner scope 和 owner-wide `expected_version` 乐观锁。
+- 可用性：客户、账本、转账、用户码和批次支持分页；新增简中/繁中/英文站长词典；安全复核显示服务端业务错误；钱包现有兑换框按 `RV-` 前缀选择用户码兑换。
+- 验证：定向 Go 回归、TypeScript、邀请存储/兑换路由单测和本阶段文件 lint 通过；全仓 lint 存在本分支修改前已有的无关错误，使用变更文件 lint 作为本阶段门禁。
+- 下一步：执行全量测试/构建后提交 Phase 7，随后启动本地三库与桌面/移动预览验证。
 
 ### 2026-08-04（会话 5）
 

@@ -22,6 +22,13 @@ export type SecurityProofScope =
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'
+  | 'reseller.security.password'
+  | 'reseller.security.password_reset'
+  | 'reseller.transfer'
+  | 'reseller.commission.convert'
+  | 'reseller.voucher.issue'
+  | 'reseller.voucher.reveal'
+  | 'reseller.receive_address.rotate'
 
 export interface SecurityProof {
   proof_token: string

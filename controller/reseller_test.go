@@ -110,6 +110,44 @@ func TestResellerPricingConflictUsesStable409Envelope(t *testing.T) {
 	assert.Equal(t, int64(1), persisted.PricingVersion)
 }
 
+func TestDeleteDefaultResellerPricingRejectsStaleVersion(t *testing.T) {
+	_, owner, profile := setupResellerControllerTest(t)
+	_, version, err := model.UpdateResellerPricingRule(model.ResellerPricingOwnerDefault, profile.Id, "pro", 15000, 1, common.GetTimestamp())
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), version)
+
+	ctx, recorder := resellerTestContext(http.MethodDelete, "/api/reseller/pricing/default", `{"group_name":"pro","expected_version":1}`, owner)
+	DeleteDefaultResellerPricing(ctx)
+
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Equal(t, "RESELLER_VERSION_CONFLICT", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
+	rules, err := model.GetResellerPricingRules(model.ResellerPricingOwnerDefault, profile.Id)
+	require.NoError(t, err)
+	assert.Contains(t, rules, "pro")
+}
+
+func TestDeleteCustomerResellerPricingIsOwnerScoped(t *testing.T) {
+	db, owner, _ := setupResellerControllerTest(t)
+	other := model.User{Username: "delete-other-reseller", AffCode: "delete-other-reseller-aff", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
+	customer := model.User{Username: "delete-other-customer", AffCode: "delete-other-customer-aff", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
+	require.NoError(t, db.Create(&other).Error)
+	require.NoError(t, db.Create(&customer).Error)
+	binding := model.ResellerCustomer{ResellerId: other.Id, CustomerId: customer.Id, RegistrationSource: model.ResellerRegistrationSourceReseller, BoundAt: common.GetTimestamp(), PricingVersion: 1}
+	require.NoError(t, db.Create(&binding).Error)
+	_, version, err := model.UpdateResellerPricingRule(model.ResellerPricingOwnerCustomer, binding.Id, "pro", 15000, 1, common.GetTimestamp())
+	require.NoError(t, err)
+
+	ctx, recorder := resellerTestContext(http.MethodDelete, fmt.Sprintf("/api/reseller/customers/%d/pricing", binding.Id), fmt.Sprintf(`{"group_name":"pro","expected_version":%d}`, version), owner)
+	ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprint(binding.Id)}}
+	DeleteCustomerResellerPricing(ctx)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Equal(t, "RESELLER_FORBIDDEN", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
+	rules, err := model.GetResellerPricingRules(model.ResellerPricingOwnerCustomer, binding.Id)
+	require.NoError(t, err)
+	assert.Contains(t, rules, "pro")
+}
+
 func TestResellerSensitiveWritesRequireProofAndIdempotency(t *testing.T) {
 	_, owner, _ := setupResellerControllerTest(t)
 	ctx, recorder := resellerTestContext(http.MethodPost, "/api/reseller/transfers/preview", `{"receive_public_id":"rr_other","amount":1}`, owner)
@@ -151,4 +189,12 @@ func TestRetiredAffiliateTransferReturnsGone(t *testing.T) {
 	RetiredAffiliateTransfer(ctx)
 	assert.Equal(t, http.StatusGone, recorder.Code)
 	assert.Equal(t, "AFFILIATE_TRANSFER_RETIRED", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
+}
+
+func TestRetiredAffiliateProgramReturnsGone(t *testing.T) {
+	_, owner, _ := setupResellerControllerTest(t)
+	ctx, recorder := resellerTestContext(http.MethodGet, "/api/user/aff", "", owner)
+	RetiredAffiliateProgram(ctx)
+	assert.Equal(t, http.StatusGone, recorder.Code)
+	assert.Equal(t, "AFFILIATE_PROGRAM_RETIRED", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
 }

@@ -28,15 +28,21 @@ import ru from './locales/ru.json'
 import vi from './locales/vi.json'
 import zhTW from './locales/zh-TW.json'
 import zhCN from './locales/zh.json'
+import { resellerTranslations } from './reseller-translations'
+
+const extend = (
+  resource: { translation: Record<string, string> },
+  additions: Record<string, string>
+) => ({ translation: { ...resource.translation, ...additions } })
 
 export const resources = {
-  en,
-  zhCN,
+  en: extend(en, resellerTranslations.en),
+  zhCN: extend(zhCN, resellerTranslations.zhCN),
   fr,
   ru,
   ja,
   vi,
-  zhTW,
+  zhTW: extend(zhTW, resellerTranslations.zhTW),
 } as const
 
 i18n

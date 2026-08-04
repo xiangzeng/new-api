@@ -27,9 +27,8 @@ type oauthStateRequest struct {
 }
 
 type oauthFlowPayload struct {
-	AffiliateCode             string `json:"affiliate_code,omitempty"`
-	ResellerInvitationId      int64  `json:"reseller_invitation_id,omitempty"`
-	ResellerInvitationVersion int64  `json:"reseller_invitation_version,omitempty"`
+	ResellerInvitationId      int64 `json:"reseller_invitation_id,omitempty"`
+	ResellerInvitationVersion int64 `json:"reseller_invitation_version,omitempty"`
 }
 
 // providerParams returns map with Provider key for i18n templates
@@ -48,12 +47,14 @@ func GenerateOAuthCode(c *gin.Context) {
 	request.Intent = strings.TrimSpace(request.Intent)
 	request.Aff = strings.TrimSpace(request.Aff)
 	request.ResellerInvitation = strings.TrimSpace(request.ResellerInvitation)
+	if request.Aff != "" {
+		RetiredAffiliateProgram(c)
+		return
+	}
 	if oauth.GetProvider(request.Provider) == nil ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Intent != model.AuthFlowIntentBind) ||
-		len(request.Aff) > 32 ||
 		len(request.ResellerInvitation) > 128 ||
-		(request.Aff != "" && request.ResellerInvitation != "") ||
-		(request.Intent == model.AuthFlowIntentBind && (request.Aff != "" || request.ResellerInvitation != "")) {
+		(request.Intent == model.AuthFlowIntentBind && request.ResellerInvitation != "") {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
@@ -80,7 +81,6 @@ func GenerateOAuthCode(c *gin.Context) {
 		sessionID = identity.SessionID
 	}
 	payload, err := common.Marshal(oauthFlowPayload{
-		AffiliateCode:             request.Aff,
 		ResellerInvitationId:      resellerInvitationId,
 		ResellerInvitationVersion: resellerInvitationVersion,
 	})
@@ -218,7 +218,6 @@ func HandleOAuth(c *gin.Context) {
 		c,
 		provider,
 		oauthUser,
-		payload.AffiliateCode,
 		payload.ResellerInvitationId,
 		payload.ResellerInvitationVersion,
 	)
@@ -326,7 +325,6 @@ func findOrCreateOAuthUser(
 	c *gin.Context,
 	provider oauth.Provider,
 	oauthUser *oauth.OAuthUser,
-	affiliateCode string,
 	resellerInvitationId int64,
 	resellerInvitationVersion int64,
 ) (*model.User, error) {
@@ -401,14 +399,7 @@ func findOrCreateOAuthUser(
 	user.Role = common.RoleCommonUser
 	user.Status = common.UserStatusEnabled
 
-	// Handle affiliate code
 	inviterId := 0
-	if affiliateCode != "" && resellerInvitationId > 0 {
-		return nil, model.ErrResellerInvitationInvalid
-	}
-	if affiliateCode != "" {
-		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
-	}
 	if resellerInvitationId > 0 {
 		invitation, err := model.ResolveResellerInvitationReference(
 			resellerInvitationId,
@@ -464,12 +455,8 @@ func findOrCreateOAuthUser(
 			return nil, err
 		}
 
-		// Perform post-transaction tasks (logs, sidebar config, inviter rewards)
-		if resellerInvitationId > 0 {
-			user.FinalizeOAuthUserCreation(0)
-		} else {
-			user.FinalizeOAuthUserCreation(inviterId)
-		}
+		// Perform post-transaction tasks after the atomic user/binding commit.
+		user.FinalizeOAuthUserCreation(0)
 	} else {
 		// Built-in provider: create user and update provider ID in a transaction
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
@@ -501,11 +488,7 @@ func findOrCreateOAuthUser(
 		}
 
 		// Perform post-transaction tasks
-		if resellerInvitationId > 0 {
-			user.FinalizeOAuthUserCreation(0)
-		} else {
-			user.FinalizeOAuthUserCreation(inviterId)
-		}
+		user.FinalizeOAuthUserCreation(0)
 	}
 
 	return user, nil

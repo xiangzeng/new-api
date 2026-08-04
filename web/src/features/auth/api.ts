@@ -21,7 +21,7 @@ import axios from 'axios'
 import { api, refreshAuthentication, type RefreshOutcome } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getAffiliateCode } from './lib/storage'
+import { getResellerInvitation } from './lib/storage'
 import type { TelegramAuthorization } from './lib/telegram-login'
 import type {
   LoginPayload,
@@ -142,10 +142,14 @@ export async function createOAuthFlow(
   provider: string,
   intent: 'login' | 'bind'
 ): Promise<string> {
-  const aff = intent === 'login' ? getAffiliateCode() : ''
+  const resellerInvitation = intent === 'login' ? getResellerInvitation() : ''
   const res = await api.post(
     '/api/oauth/state',
-    { provider, intent, aff: aff || undefined },
+    {
+      provider,
+      intent,
+      reseller_invitation: resellerInvitation || undefined,
+    },
     { skipAuthRefresh: intent === 'login' }
   )
   if (res.data?.success) {

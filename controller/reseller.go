@@ -298,6 +298,57 @@ func UpdateCustomerResellerPricing(c *gin.Context) {
 	updateResellerPricing(c, model.ResellerPricingOwnerCustomer, binding.Id, request)
 }
 
+type resellerPricingDeleteRequest struct {
+	GroupName       string `json:"group_name"`
+	ExpectedVersion int64  `json:"expected_version"`
+}
+
+func deleteResellerPricing(c *gin.Context, ownerType string, ownerId int64, request resellerPricingDeleteRequest) {
+	version, err := model.DeleteResellerPricingRule(ownerType, ownerId, request.GroupName, request.ExpectedVersion)
+	if err != nil {
+		resellerError(c, err)
+		return
+	}
+	recordUserSecurityAudit(c, c.GetInt("id"), "reseller.pricing.delete", map[string]interface{}{
+		"owner_type": ownerType, "owner_id": ownerId, "group_name": strings.TrimSpace(request.GroupName),
+	})
+	resellerSuccess(c, gin.H{"pricing_version": version})
+}
+
+func DeleteDefaultResellerPricing(c *gin.Context) {
+	profile, ok := requireActiveReseller(c)
+	if !ok {
+		return
+	}
+	var request resellerPricingDeleteRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resellerBadRequest(c, "定价参数无效")
+		return
+	}
+	deleteResellerPricing(c, model.ResellerPricingOwnerDefault, profile.Id, request)
+}
+
+func DeleteCustomerResellerPricing(c *gin.Context) {
+	if _, ok := requireActiveReseller(c); !ok {
+		return
+	}
+	bindingId, ok := resellerBindingId(c)
+	if !ok {
+		return
+	}
+	binding, err := model.GetResellerOwnedCustomer(c.GetInt("id"), bindingId)
+	if err != nil {
+		resellerError(c, err)
+		return
+	}
+	var request resellerPricingDeleteRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resellerBadRequest(c, "定价参数无效")
+		return
+	}
+	deleteResellerPricing(c, model.ResellerPricingOwnerCustomer, binding.Id, request)
+}
+
 type resellerPasswordRequest struct {
 	Password        string `json:"password"`
 	CurrentPassword string `json:"current_password"`
@@ -567,6 +618,13 @@ func RedeemResellerVoucher(c *gin.Context) {
 	}
 	recordUserSecurityAudit(c, c.GetInt("id"), "reseller.voucher.redeem", map[string]interface{}{"quota": quota})
 	resellerSuccess(c, gin.H{"quota": quota})
+}
+
+func RetiredAffiliateProgram(c *gin.Context) {
+	c.JSON(http.StatusGone, gin.H{
+		"success": false, "data": gin.H{"code": "AFFILIATE_PROGRAM_RETIRED"},
+		"message": "旧邀请返利已停用，请使用站长中心",
+	})
 }
 
 func RetiredAffiliateTransfer(c *gin.Context) {

@@ -91,7 +91,9 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - `POST /api/reseller/security/password/reset`
 - `POST /api/reseller/receive-address/rotate`
 - `PUT /api/reseller/pricing/default`
+- `DELETE /api/reseller/pricing/default`（删除分组覆盖并恢复继承）
 - `PUT /api/reseller/customers/{id}/pricing`
+- `DELETE /api/reseller/customers/{id}/pricing`（删除分组覆盖并恢复继承）
 - `POST /api/reseller/transfers/preview`
 - `POST /api/reseller/transfers/commit`
 - `POST /api/reseller/commission/convert`
@@ -100,6 +102,13 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - `POST /api/reseller/vouchers/{id}/reveal`
 - `POST /api/reseller/vouchers/batch/{id}/reveal`
 - `POST /api/reseller/vouchers/redeem`（登录用户兑换，不要求兑换人已开通站长中心）
+
+### 3.3 旧邀请返利退役
+
+- `GET /api/user/aff` 返回 `410 AFFILIATE_PROGRAM_RETIRED`，不再签发或展示旧邀请码。
+- `POST /api/user/aff_transfer` 返回 `410 AFFILIATE_TRANSFER_RETIRED`，旧余额不能转换到钱包。
+- 密码注册携带 `aff_code`、OAuth state 携带 `aff` 均返回 `410 AFFILIATE_PROGRAM_RETIRED`，不会创建用户或认证 flow。
+- `users.aff_quota`、`users.aff_history`、`users.aff_code` 和历史记录保留用于数据库兼容与历史审计，但不再新增固定邀请奖励，也不迁移到 reseller 账本。
 
 ## 4. 必须保护的不变量
 
@@ -132,6 +141,7 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - [x] 本地 pending/available 复式账本与释放测试：accrual/release journal 借贷和为零，余额投影与 commission 状态同事务更新，投影不一致整体回滚，system-task lease 下可恢复重放。
 - [x] 本地资金操作与并发测试：六位额度密码、重置冻结、preview/commit nonce、幂等收益转换/转账/用户码、共享滚动限额、escrow/reveal/redeem 与账本平衡均有事务测试和 race detector 覆盖。
 - [x] 本地 API 契约测试：完整路由、owner scope、分页、稳定错误码、security proof、幂等键、审计脱敏、读取 DTO 脱敏和旧返利 mutation 退役均已实现；Redis quota cache 在资金事务成功后刷新。
-- [ ] 本地前端逐视图测试。
+- [x] 本地前端逻辑测试：`/j/{token}` 使用 sessionStorage 并清理遗留 `aff`，注册/OAuth 成功后清理邀请；钱包 `RV-` 路由选择、服务端安全复核错误展示和列表分页已实现。
+- [ ] 本地前端逐视图与跨视口测试。
 - [ ] 目标站只读接口和本地响应字段差异检查。
 - [ ] 使用可重置测试账户验证目标 mutation 的服务端错误和状态迁移。

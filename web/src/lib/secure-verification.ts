@@ -24,6 +24,20 @@ export interface VerificationRequiredInfo {
   required: boolean
 }
 
+export function getSecureVerificationErrorMessage(
+  error: unknown,
+  fallback: string
+): string {
+  if (error && typeof error === 'object') {
+    const responseMessage = (error as AxiosError<{ message?: unknown }>)
+      .response?.data?.message
+    if (typeof responseMessage === 'string' && responseMessage.trim()) {
+      return responseMessage
+    }
+  }
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
 /**
  * Determine whether an Axios error indicates secure verification is required.
  */

@@ -262,11 +262,11 @@ func Register(c *gin.Context) {
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
 	resellerInvitation := strings.TrimSpace(user.ResellerInvitation)
-	if affCode != "" && resellerInvitation != "" {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+	if affCode != "" {
+		RetiredAffiliateProgram(c)
 		return
 	}
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	inviterId := 0
 	if resellerInvitation != "" {
 		invitation, resolveErr := model.ResolveResellerInvitation(resellerInvitation, common.GetTimestamp())
 		if resolveErr != nil {
@@ -461,59 +461,6 @@ func GenerateAccessToken(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data":    user.AccessToken,
-	})
-	return
-}
-
-type TransferAffQuotaRequest struct {
-	Quota int `json:"quota" binding:"required"`
-}
-
-func TransferAffQuota(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	tran := TransferAffQuotaRequest{}
-	if err := c.ShouldBindJSON(&tran); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	err = user.TransferAffQuotaToQuota(tran.Quota)
-	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserTransferFailed, map[string]any{"Error": err.Error()})
-		return
-	}
-	common.ApiSuccessI18n(c, i18n.MsgUserTransferSuccess, nil)
-}
-
-func GetAffCode(c *gin.Context) {
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if user.AffCode == "" {
-		user.AffCode = common.GetRandomString(4)
-		if err := user.Update(false); err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
-			return
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    user.AffCode,
 	})
 	return
 }

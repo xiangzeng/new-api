@@ -22,15 +22,12 @@ import type {
   RedemptionRequest,
   PaymentRequest,
   AmountRequest,
-  AffiliateTransferRequest,
   ApiResponse,
   TopupInfoResponse,
   RedemptionResponse,
   AmountResponse,
   PaymentResponse,
   StripePaymentResponse,
-  AffiliateCodeResponse,
-  AffiliateTransferResponse,
   BillingHistoryResponse,
   CompleteOrderRequest,
   CreemPaymentRequest,
@@ -67,6 +64,13 @@ export async function redeemTopupCode(
   request: RedemptionRequest
 ): Promise<RedemptionResponse> {
   const res = await api.post('/api/user/topup', request)
+  return res.data
+}
+
+export async function redeemResellerUserCode(
+  code: string
+): Promise<ApiResponse<{ quota: number }>> {
+  const res = await api.post('/api/reseller/vouchers/redeem', { code })
   return res.data
 }
 
@@ -178,24 +182,6 @@ export async function requestWaffoPancakePayment(
   const res = await api.post('/api/user/waffo-pancake/pay', request, {
     skipBusinessError: true,
   } as Record<string, unknown>)
-  return res.data
-}
-
-/**
- * Get affiliate code
- */
-export async function getAffiliateCode(): Promise<AffiliateCodeResponse> {
-  const res = await api.get('/api/user/aff')
-  return res.data
-}
-
-/**
- * Transfer affiliate quota to balance
- */
-export async function transferAffiliateQuota(
-  request: AffiliateTransferRequest
-): Promise<AffiliateTransferResponse> {
-  const res = await api.post('/api/user/aff_transfer', request)
   return res.data
 }
 

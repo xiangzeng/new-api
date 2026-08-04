@@ -16,14 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-// ============================================================================
-// Affiliate Functions
-// ============================================================================
-
-/**
- * Generate affiliate registration link
- */
-export function generateAffiliateLink(affCode: string): string {
-  if (typeof window === 'undefined') return ''
-  return `${window.location.origin}/sign-up?aff=${affCode}`
+export function isResellerUserCode(code: string): boolean {
+  return code.trim().toUpperCase().startsWith('RV-')
 }

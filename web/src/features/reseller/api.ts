@@ -1,0 +1,256 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { api } from '@/lib/api'
+
+import type {
+  ResellerCustomer,
+  ResellerEnvelope,
+  ResellerInvitation,
+  ResellerLedgerItem,
+  ResellerPage,
+  ResellerPricingResponse,
+  ResellerSecurityStatus,
+  ResellerStatus,
+  ResellerTransfer,
+  ResellerVoucher,
+  ResellerVoucherBatch,
+} from './types'
+
+const sensitiveConfig = (proof?: string, idempotencyKey?: string) => ({
+  headers: {
+    ...(proof ? { 'X-Security-Proof': proof } : {}),
+    ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+  },
+  skipErrorHandler: true,
+})
+
+export const newIdempotencyKey = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `reseller-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+export async function getResellerStatus() {
+  const response = await api.get<ResellerEnvelope<ResellerStatus>>(
+    '/api/reseller/status',
+    { skipErrorHandler: true }
+  )
+  return response.data.data
+}
+
+export async function enableResellerProfile() {
+  const response = await api.post<ResellerEnvelope<unknown>>(
+    '/api/reseller/profile',
+    {},
+    { skipErrorHandler: true }
+  )
+  return response.data
+}
+
+export async function getResellerInvitation() {
+  const response = await api.get<ResellerEnvelope<ResellerInvitation>>(
+    '/api/reseller/invitation'
+  )
+  return response.data.data
+}
+
+export async function getResellerSecurity() {
+  const response = await api.get<ResellerEnvelope<ResellerSecurityStatus>>(
+    '/api/reseller/security'
+  )
+  return response.data.data
+}
+
+export async function getDefaultPricing() {
+  const response = await api.get<ResellerEnvelope<ResellerPricingResponse>>(
+    '/api/reseller/pricing/default'
+  )
+  return response.data.data
+}
+
+export async function getCustomerPricing(bindingId: number) {
+  const response = await api.get<ResellerEnvelope<ResellerPricingResponse>>(
+    `/api/reseller/customers/${bindingId}/pricing`
+  )
+  return response.data.data
+}
+
+export async function updatePricing(
+  owner: 'default' | number,
+  payload: {
+    group_name: string
+    multiplier_bps: number
+    expected_version: number
+  }
+) {
+  const path =
+    owner === 'default'
+      ? '/api/reseller/pricing/default'
+      : `/api/reseller/customers/${owner}/pricing`
+  const response = await api.put<ResellerEnvelope<ResellerPricingResponse>>(
+    path,
+    payload,
+    { skipErrorHandler: true }
+  )
+  return response.data
+}
+
+export async function deletePricing(
+  owner: 'default' | number,
+  payload: { group_name: string; expected_version: number }
+) {
+  const path =
+    owner === 'default'
+      ? '/api/reseller/pricing/default'
+      : `/api/reseller/customers/${owner}/pricing`
+  const response = await api.delete<
+    ResellerEnvelope<{ pricing_version: number }>
+  >(path, { data: payload, skipErrorHandler: true })
+  return response.data
+}
+
+async function getPage<T>(path: string, page = 1, pageSize = 50) {
+  const response = await api.get<ResellerEnvelope<ResellerPage<T>>>(path, {
+    params: { p: page, page_size: pageSize },
+  })
+  return response.data.data
+}
+
+export const getResellerCustomers = (page = 1) =>
+  getPage<ResellerCustomer>('/api/reseller/customers', page)
+export const getResellerTransfers = (page = 1) =>
+  getPage<ResellerTransfer>('/api/reseller/transfers', page)
+export const getResellerLedger = (page = 1) =>
+  getPage<ResellerLedgerItem>('/api/reseller/ledger', page)
+export const getResellerVouchers = (page = 1) =>
+  getPage<ResellerVoucher>('/api/reseller/vouchers', page)
+export const getResellerVoucherBatches = (page = 1) =>
+  getPage<ResellerVoucherBatch>('/api/reseller/vouchers/batches', page)
+
+export async function setQuotaPassword(password: string, proof?: string) {
+  return api.post(
+    '/api/reseller/security/password',
+    { password },
+    sensitiveConfig(proof)
+  )
+}
+
+export async function changeQuotaPassword(
+  currentPassword: string,
+  newPassword: string,
+  proof?: string
+) {
+  return api.put(
+    '/api/reseller/security/password',
+    { current_password: currentPassword, new_password: newPassword },
+    sensitiveConfig(proof)
+  )
+}
+
+export async function resetQuotaPassword(newPassword: string, proof?: string) {
+  return api.post(
+    '/api/reseller/security/password/reset',
+    { new_password: newPassword },
+    sensitiveConfig(proof)
+  )
+}
+
+export async function rotateReceiveAddress(proof?: string) {
+  return api.post(
+    '/api/reseller/receive-address/rotate',
+    {},
+    sensitiveConfig(proof)
+  )
+}
+
+export async function previewTransfer(
+  receivePublicId: string,
+  amount: number,
+  proof?: string
+) {
+  return api.post(
+    '/api/reseller/transfers/preview',
+    { receive_public_id: receivePublicId, amount },
+    sensitiveConfig(proof)
+  )
+}
+
+export async function commitTransfer(
+  nonce: string,
+  password: string,
+  idempotencyKey: string,
+  proof?: string
+) {
+  return api.post(
+    '/api/reseller/transfers/commit',
+    { nonce, password },
+    sensitiveConfig(proof, idempotencyKey)
+  )
+}
+
+export async function convertCommission(
+  amount: number,
+  password: string,
+  idempotencyKey: string,
+  proof?: string
+) {
+  return api.post(
+    '/api/reseller/commission/convert',
+    { amount, password },
+    sensitiveConfig(proof, idempotencyKey)
+  )
+}
+
+export async function issueVouchers(
+  count: number,
+  amount: number,
+  note: string,
+  password: string,
+  idempotencyKey: string,
+  proof?: string
+) {
+  return api.post(
+    count === 1 ? '/api/reseller/vouchers' : '/api/reseller/vouchers/batch',
+    { count, amount, note, password },
+    sensitiveConfig(proof, idempotencyKey)
+  )
+}
+
+export async function revealVoucher(
+  publicId: string,
+  password: string,
+  proof?: string
+) {
+  return api.post(
+    `/api/reseller/vouchers/${publicId}/reveal`,
+    { password },
+    sensitiveConfig(proof)
+  )
+}
+
+export async function revealVoucherBatch(
+  publicId: string,
+  password: string,
+  proof?: string
+) {
+  return api.post(
+    `/api/reseller/vouchers/batch/${publicId}/reveal`,
+    { password },
+    sensitiveConfig(proof)
+  )
+}

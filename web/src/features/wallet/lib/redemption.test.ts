@@ -16,13 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-// ============================================================================
-// Wallet Hooks Exports
-// ============================================================================
+import assert from 'node:assert/strict'
+import { describe, test } from 'node:test'
 
-export * from './use-topup-info'
-export * from './use-payment'
-export * from './use-redemption'
-export * from './use-creem-payment'
-export * from './use-waffo-payment'
-export * from './use-waffo-pancake-payment'
+import { isResellerUserCode } from './redemption'
+
+describe('wallet redemption routing', () => {
+  test('routes RV codes to reseller escrow redemption', () => {
+    assert.equal(isResellerUserCode('RV-ABC123'), true)
+    assert.equal(isResellerUserCode('  rv-abc123  '), true)
+  })
+
+  test('keeps ordinary top-up codes on the legacy top-up endpoint', () => {
+    assert.equal(isResellerUserCode('TOPUP-ABC123'), false)
+    assert.equal(isResellerUserCode('RVA-ABC123'), false)
+  })
+})

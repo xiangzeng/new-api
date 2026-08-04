@@ -136,6 +136,33 @@ func TestUpdateResellerPricingRuleRejectsStaleVersion(t *testing.T) {
 	assert.Zero(t, persisted.PendingMultiplierBps)
 }
 
+func TestDeleteResellerPricingRuleRestoresInheritanceWithOptimisticLock(t *testing.T) {
+	setupResellerPricingTestDB(t)
+	profile := ResellerProfile{UserId: 901, ReceivePublicId: "delete-pricing-owner", PricingVersion: 1}
+	require.NoError(t, DB.Create(&profile).Error)
+	rule, version, err := UpdateResellerPricingRule(
+		ResellerPricingOwnerDefault,
+		profile.Id,
+		"pro",
+		15000,
+		1,
+		100,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, rule)
+	assert.Equal(t, int64(2), version)
+
+	_, err = DeleteResellerPricingRule(ResellerPricingOwnerDefault, profile.Id, "pro", 1)
+	assert.ErrorIs(t, err, ErrResellerPricingVersionConflict)
+	nextVersion, err := DeleteResellerPricingRule(ResellerPricingOwnerDefault, profile.Id, "pro", version)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), nextVersion)
+
+	rules, err := GetResellerPricingRules(ResellerPricingOwnerDefault, profile.Id)
+	require.NoError(t, err)
+	assert.NotContains(t, rules, "pro")
+}
+
 func TestUpdateResellerPricingRuleAllowsOneConcurrentWriter(t *testing.T) {
 	setupResellerPricingTestDB(t)
 	sqlDB, err := DB.DB()

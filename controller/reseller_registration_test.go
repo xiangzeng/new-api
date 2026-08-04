@@ -52,6 +52,7 @@ func setupResellerRegistrationControllerTest(t *testing.T) (*gorm.DB, model.User
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
 		&model.Log{},
+		&model.AuthFlow{},
 		&model.ResellerProfile{},
 		&model.ResellerCustomer{},
 		&model.ResellerInvitation{},
@@ -134,7 +135,7 @@ func TestOAuthRegistrationAtomicallyBindsDirectReseller(t *testing.T) {
 		ProviderUserID: "reseller-external-user",
 		Username:       "oauth-customer",
 		DisplayName:    "OAuth Customer",
-	}, "", invitation.Id, invitation.Version)
+	}, invitation.Id, invitation.Version)
 	require.NoError(t, err)
 	assert.Equal(t, reseller.Id, user.InviterId)
 	var stored model.User
@@ -143,4 +144,67 @@ func TestOAuthRegistrationAtomicallyBindsDirectReseller(t *testing.T) {
 	var binding model.ResellerCustomer
 	require.NoError(t, db.Where("customer_id = ?", user.Id).First(&binding).Error)
 	assert.Equal(t, reseller.Id, binding.ResellerId)
+}
+
+func TestPasswordRegistrationRejectsRetiredAffiliateProgram(t *testing.T) {
+	db, reseller, _ := setupResellerRegistrationControllerTest(t)
+	body := fmt.Sprintf(`{"username":"legacy-aff-customer","password":"password123","aff_code":%q}`, reseller.AffCode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	Register(ctx)
+
+	assert.Equal(t, http.StatusGone, recorder.Code)
+	assert.Equal(t, "AFFILIATE_PROGRAM_RETIRED", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "legacy-aff-customer").Count(&count).Error)
+	assert.Zero(t, count)
+}
+
+func TestOAuthStateRejectsRetiredAffiliateProgram(t *testing.T) {
+	setupResellerRegistrationControllerTest(t)
+	const providerName = "reseller-retired-aff"
+	oauth.Register(providerName, &resellerRegistrationOAuthProvider{})
+	t.Cleanup(func() { oauth.Unregister(providerName) })
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(
+		`{"provider":"reseller-retired-aff","intent":"login","aff":"legacy"}`,
+	))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	GenerateOAuthCode(ctx)
+
+	assert.Equal(t, http.StatusGone, recorder.Code)
+	assert.Equal(t, "AFFILIATE_PROGRAM_RETIRED", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
+}
+
+func TestLegacyFinalizerDoesNotGrantFixedAffiliateRewards(t *testing.T) {
+	db, reseller, _ := setupResellerRegistrationControllerTest(t)
+	previousInviterQuota, previousInviteeQuota := common.QuotaForInviter, common.QuotaForInvitee
+	common.QuotaForInviter, common.QuotaForInvitee = 1000, 500
+	t.Cleanup(func() {
+		common.QuotaForInviter, common.QuotaForInvitee = previousInviterQuota, previousInviteeQuota
+	})
+	customer := model.User{
+		Username: "legacy-finalizer-customer",
+		AffCode:  "legacy-finalizer-customer-aff",
+		Status:   common.UserStatusEnabled,
+		Role:     common.RoleCommonUser,
+		Group:    "default",
+	}
+	require.NoError(t, db.Create(&customer).Error)
+
+	customer.FinishInsert(reseller.Id)
+
+	var persistedCustomer, persistedReseller model.User
+	require.NoError(t, db.First(&persistedCustomer, customer.Id).Error)
+	require.NoError(t, db.First(&persistedReseller, reseller.Id).Error)
+	assert.Zero(t, persistedCustomer.Quota)
+	assert.Zero(t, persistedReseller.AffCount)
+	assert.Zero(t, persistedReseller.AffQuota)
+	assert.Zero(t, persistedReseller.AffHistoryQuota)
 }

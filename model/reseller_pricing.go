@@ -221,3 +221,35 @@ func GetResellerPricingRules(ownerType string, ownerId int64) (map[string]Resell
 	}
 	return rules, nil
 }
+
+func DeleteResellerPricingRule(ownerType string, ownerId int64, groupName string, expectedVersion int64) (int64, error) {
+	if err := validateResellerPricingOwner(ownerType, ownerId); err != nil {
+		return 0, err
+	}
+	if expectedVersion <= 0 {
+		return 0, ErrResellerPricingVersionConflict
+	}
+	groupName = normalizeResellerPricingGroup(groupName)
+	newVersion := expectedVersion + 1
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		ownerModel, err := resellerPricingVersionColumn(ownerType)
+		if err != nil {
+			return err
+		}
+		versionUpdate := tx.Model(ownerModel).
+			Where("id = ? AND pricing_version = ?", ownerId, expectedVersion).
+			Update("pricing_version", newVersion)
+		if versionUpdate.Error != nil {
+			return versionUpdate.Error
+		}
+		if versionUpdate.RowsAffected != 1 {
+			return ErrResellerPricingVersionConflict
+		}
+		return tx.Where("owner_type = ? AND owner_id = ? AND group_name = ?", ownerType, ownerId, groupName).
+			Delete(&ResellerPricingRule{}).Error
+	})
+	if err != nil {
+		return 0, err
+	}
+	return newVersion, nil
+}

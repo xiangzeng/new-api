@@ -16,13 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-// ============================================================================
-// Wallet Hooks Exports
-// ============================================================================
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-export * from './use-topup-info'
-export * from './use-payment'
-export * from './use-redemption'
-export * from './use-creem-payment'
-export * from './use-waffo-payment'
-export * from './use-waffo-pancake-payment'
+import { saveResellerInvitation } from '@/features/auth'
+import { useAuthStore } from '@/stores/auth-store'
+
+export const Route = createFileRoute('/j/$token')({
+  beforeLoad: ({ params }) => {
+    if (useAuthStore.getState().auth.user) {
+      throw redirect({ to: '/dashboard' })
+    }
+    const token = params.token.trim()
+    if (!token || token.length > 128) {
+      throw redirect({ to: '/sign-up' })
+    }
+    saveResellerInvitation(token)
+    throw redirect({ to: '/sign-up', replace: true })
+  },
+})

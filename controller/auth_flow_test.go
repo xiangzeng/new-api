@@ -73,7 +73,7 @@ func setupAuthFlowControllerTest(t *testing.T) *authFlowTestOAuthProvider {
 	return provider
 }
 
-func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {
+func TestGenerateOAuthCodeRejectsRetiredAffiliateInLoginFlow(t *testing.T) {
 	setupAuthFlowControllerTest(t)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -82,24 +82,19 @@ func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {
 
 	GenerateOAuthCode(c)
 
-	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, http.StatusGone, recorder.Code)
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			FlowToken string `json:"flow_token"`
+			Code string `json:"code"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
-	require.True(t, response.Success)
-	flow, err := model.GetAuthFlow(response.Data.FlowToken, model.AuthFlowMatch{
-		Purpose: model.AuthFlowPurposeOAuth, Provider: "auth-flow-test", Intent: model.AuthFlowIntentLogin,
-	})
-	require.NoError(t, err)
-	var payload oauthFlowPayload
-	require.NoError(t, common.UnmarshalJsonStr(flow.Payload, &payload))
-	assert.Equal(t, "invite-code", payload.AffiliateCode)
-	assert.Zero(t, flow.UserId)
-	assert.Empty(t, flow.SessionId)
+	assert.False(t, response.Success)
+	assert.Equal(t, "AFFILIATE_PROGRAM_RETIRED", response.Data.Code)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.AuthFlow{}).Count(&count).Error)
+	assert.Zero(t, count)
 }
 
 func TestGenerateOAuthCodeCarriesResellerInvitationInLoginFlow(t *testing.T) {

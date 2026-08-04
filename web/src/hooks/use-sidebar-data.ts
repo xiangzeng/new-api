@@ -20,6 +20,7 @@ import {
   Activity,
   Box,
   CreditCard,
+  BadgeDollarSign,
   FileText,
   FlaskConical,
   Key,
@@ -109,6 +110,11 @@ export function useSidebarData(): SidebarData {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
+          },
+          {
+            title: t('Reseller Center'),
+            url: '/reseller',
+            icon: BadgeDollarSign,
           },
           {
             title: t('Profile'),
