@@ -196,6 +196,29 @@ export interface CustomPricingUserItem {
   groups: CustomPricingConfiguredGroup[]
 }
 
+/** Admin view of one user's direct-reseller ownership. */
+export interface UserResellerBinding {
+  customer_id: number
+  customer_username: string
+  bound: boolean
+  binding_id: number
+  reseller_id: number
+  reseller_username: string
+  reseller_status: string
+  registration_source: string
+  bound_at: number
+  current_multiplier_bps: number
+  multiplier_source: string
+  /** True when this user runs a reseller center of its own. */
+  is_reseller: boolean
+  own_customer_count: number
+}
+
+export interface BindUserToResellerPayload {
+  reseller_id?: number
+  reseller_username?: string
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

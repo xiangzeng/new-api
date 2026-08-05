@@ -31,6 +31,8 @@ import type {
   CustomPricingUserItem,
   UserCustomPricingDetail,
   UserCustomPricingPayload,
+  UserResellerBinding,
+  BindUserToResellerPayload,
 } from './types'
 
 // ============================================================================
@@ -195,6 +197,47 @@ export async function deleteUserCustomPricing(
   id: number
 ): Promise<ApiResponse> {
   const res = await api.delete(`/api/user/${id}/custom-pricing`)
+  return res.data
+}
+
+// ============================================================================
+// Reseller Ownership APIs
+// ============================================================================
+
+/**
+ * Get the user's direct-reseller ownership
+ */
+export async function getUserResellerBinding(
+  id: number
+): Promise<ApiResponse<UserResellerBinding>> {
+  const res = await api.get(`/api/user/${id}/reseller-binding`, {
+    skipErrorHandler: true,
+  })
+  return res.data
+}
+
+/**
+ * Bind the user to a reseller as a direct customer
+ */
+export async function bindUserToReseller(
+  id: number,
+  payload: BindUserToResellerPayload
+): Promise<ApiResponse> {
+  const res = await api.put(`/api/user/${id}/reseller-binding`, payload, {
+    skipErrorHandler: true,
+  })
+  return res.data
+}
+
+/**
+ * Release the user from its reseller
+ */
+export async function unbindUserFromReseller(
+  id: number
+): Promise<ApiResponse> {
+  const res = await api.delete(`/api/user/${id}/reseller-binding`, {
+    skipErrorHandler: true,
+  })
   return res.data
 }
 

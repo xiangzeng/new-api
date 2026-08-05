@@ -29,6 +29,7 @@ import {
   Link2,
   CreditCard,
   SlidersHorizontal,
+  Store,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -60,6 +61,7 @@ import { getUserActionMessage, isCustomPricingEnabled } from '../lib'
 import type { User, ManageUserAction } from '../types'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { UserCustomPricingDialog } from './dialogs/user-custom-pricing-dialog'
+import { UserResellerBindingDialog } from './dialogs/user-reseller-binding-dialog'
 import { useUsers } from './users-provider'
 
 interface DataTableRowActionsProps {
@@ -75,6 +77,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
   const [customPricingDialogOpen, setCustomPricingDialogOpen] = useState(false)
+  const [resellerBindingDialogOpen, setResellerBindingDialogOpen] =
+    useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -239,6 +243,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuShortcut>
         </DropdownMenuItem>
 
+        <DropdownMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            setResellerBindingDialogOpen(true)
+          }}
+        >
+          {t('Reseller Binding')}
+          <DropdownMenuShortcut>
+            <Store size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
@@ -316,6 +332,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         open={subscriptionsDialogOpen}
         onOpenChange={setSubscriptionsDialogOpen}
         user={{ id: user.id, username: user.username }}
+        onSuccess={triggerRefresh}
+      />
+
+      <UserResellerBindingDialog
+        open={resellerBindingDialogOpen}
+        onOpenChange={setResellerBindingDialogOpen}
+        userId={user.id}
         onSuccess={triggerRefresh}
       />
 
