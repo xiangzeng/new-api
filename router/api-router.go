@@ -150,6 +150,11 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
 
+				// Reseller ownership (站长直属客户绑定)
+				adminRoute.GET("/:id/reseller-binding", controller.GetUserResellerBinding)
+				adminRoute.PUT("/:id/reseller-binding", controller.BindUserToReseller)
+				adminRoute.DELETE("/:id/reseller-binding", controller.UnbindUserFromReseller)
+
 				// Custom pricing (千人千面)
 				adminRoute.GET("/custom-pricing/list", controller.GetCustomPricingUsers)
 				adminRoute.GET("/:id/custom-pricing", controller.GetUserCustomPricing)

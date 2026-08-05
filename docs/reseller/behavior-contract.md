@@ -21,6 +21,10 @@
 - 创建用户和绑定直属代理必须是同一原子业务操作。
 - 来源枚举至少包括 `primary`、`reseller`、`admin`、`legacy_unknown`。
 - 客户只允许一个有效直属代理归属。
+- 管理员通道是上一条原子性约束的显式例外：对**已存在**的用户，管理员可以在注册流程之外单独建立或解除归属，绑定与解绑各自是一个单独事务，来源记为 `admin`。该通道复用与邀请注册相同的绑定实现，因此「一个客户最多一个直属代理」「不能自绑」「`users.inviter_id` 同步」三条不变量同时对两条通道成立。
+- 管理员绑定不做静默改绑：目标用户已归属其他代理时必须先解绑，再重新绑定。
+- 解绑必须同时删除该绑定的客户级定价规则，因为定价规则以 binding id 为 owner，数据库可能把释放的 binding id 再次分配给同一客户的新绑定。
+- 解绑不回滚已产生的佣金记录与代理余额，已结算历史保持不可变。
 
 ### 2.2 定价
 
@@ -117,7 +121,17 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - `POST /api/reseller/vouchers/batch/{id}/reveal`
 - `POST /api/reseller/vouchers/redeem`（登录用户兑换，不要求兑换人已开通站长中心）
 
-### 3.3 旧邀请返利退役
+### 3.3 管理员归属通道
+
+以下路由属于 New API 管理后台（`AdminAuth`），不是目标站已确认接口，用于给已存在的用户补建或解除直属归属：
+
+- `GET /api/user/{id}/reseller-binding`（当前归属、生效倍率，以及该用户自身是否已开通站长中心）
+- `PUT /api/user/{id}/reseller-binding`（按 `reseller_id` 或 `reseller_username` 绑定；目标代理未开通站长中心时自动开通）
+- `DELETE /api/user/{id}/reseller-binding`（解绑）
+
+稳定错误码：`RESELLER_CUSTOMER_BOUND`（409，已属其他代理）、`RESELLER_SELF_BINDING`（422）、`RESELLER_FORBIDDEN`（403，代理被禁用或冻结）、`RESELLER_NOT_FOUND`（404）。两个写操作均登记到操作审计（`user.reseller_bind` / `user.reseller_unbind`）。
+
+### 3.4 旧邀请返利退役
 
 - `GET /api/user/aff` 返回 `410 AFFILIATE_PROGRAM_RETIRED`，不再签发或展示旧邀请码。
 - `POST /api/user/aff_transfer` 返回 `410 AFFILIATE_TRANSFER_RETIRED`，旧余额不能转换到钱包。

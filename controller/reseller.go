@@ -57,6 +57,10 @@ func resellerError(c *gin.Context, err error) {
 		spec = resellerErrorSpec{http.StatusNotFound, "RESELLER_VOUCHER_INVALID", "用户码无效或已兑换"}
 	case errors.Is(err, model.ErrResellerInvitationInvalid), errors.Is(err, model.ErrResellerInvitationExpired):
 		spec = resellerErrorSpec{http.StatusConflict, "RESELLER_INVITATION_INVALID", "邀请链接无效或已过期"}
+	case errors.Is(err, model.ErrResellerCustomerBound):
+		spec = resellerErrorSpec{http.StatusConflict, "RESELLER_CUSTOMER_BOUND", "该用户已归属其他站长，请先解绑"}
+	case errors.Is(err, model.ErrResellerSelfBinding):
+		spec = resellerErrorSpec{http.StatusUnprocessableEntity, "RESELLER_SELF_BINDING", "站长不能把自己绑定为客户"}
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		spec = resellerErrorSpec{http.StatusNotFound, "RESELLER_NOT_FOUND", "资源不存在"}
 	default:
