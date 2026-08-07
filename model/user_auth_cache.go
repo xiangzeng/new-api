@@ -45,20 +45,13 @@ func userAuthFenceTTLSeconds() int {
 	return cacheTTL + extra
 }
 
-func writeUserCache(user *UserBase, includeQuota bool) error {
-	if user == nil || user.Id <= 0 || !common.RedisEnabled {
-		return nil
-	}
-	user.CacheSchema = userCacheSchemaVersion
-	if user.AuthVersion <= 0 {
-		return fmt.Errorf("invalid user auth version")
-	}
-	includeQuotaArg := "0"
-	if includeQuota {
-		includeQuotaArg = "1"
-	}
-	ttl := userCacheTTLSeconds()
-	const script = `
+// userCacheWriteScript must HSET every field that UserBase exposes to readers.
+// common.RedisHGetObj fills the struct by Go field name, so a field missing here
+// silently reads back as its zero value instead of the database state. Omitting
+// CustomPricing this way once disabled per-user pricing overrides on every cache
+// hit and billed those users at the plain group ratio, so field coverage is
+// asserted by TestUserCacheWriteScriptCoversEveryCachedField.
+const userCacheWriteScript = `
 local incoming = tonumber(ARGV[1])
 local pending = tonumber(redis.call('GET', KEYS[2]) or '0')
 local committed = tonumber(redis.call('GET', KEYS[3]) or '0')
@@ -78,16 +71,32 @@ end
 redis.call('HSET', KEYS[1],
   'Id', ARGV[2], 'Group', ARGV[3], 'Email', ARGV[4],
   'Status', ARGV[5], 'Role', ARGV[6], 'Username', ARGV[7],
-  'Setting', ARGV[8], 'AuthVersion', ARGV[1], 'CacheSchema', ARGV[9])
+  'Setting', ARGV[8], 'CustomPricing', ARGV[13],
+  'AuthVersion', ARGV[1], 'CacheSchema', ARGV[9])
 if ARGV[10] == '1' and redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
   redis.call('HSET', KEYS[1], 'Quota', ARGV[11])
 end
 redis.call('EXPIRE', KEYS[1], ARGV[12])
 return 1`
-	result, err := common.RDB.Eval(context.Background(), script,
+
+func writeUserCache(user *UserBase, includeQuota bool) error {
+	if user == nil || user.Id <= 0 || !common.RedisEnabled {
+		return nil
+	}
+	user.CacheSchema = userCacheSchemaVersion
+	if user.AuthVersion <= 0 {
+		return fmt.Errorf("invalid user auth version")
+	}
+	includeQuotaArg := "0"
+	if includeQuota {
+		includeQuotaArg = "1"
+	}
+	ttl := userCacheTTLSeconds()
+	result, err := common.RDB.Eval(context.Background(), userCacheWriteScript,
 		[]string{getUserCacheKey(user.Id), getUserAuthFenceKey(user.Id), getUserAuthVersionKey(user.Id)},
 		user.AuthVersion, user.Id, user.Group, user.Email, user.Status, user.Role,
 		user.Username, user.Setting, user.CacheSchema, includeQuotaArg, user.Quota, ttl,
+		user.CustomPricing,
 	).Int()
 	if err != nil {
 		return err

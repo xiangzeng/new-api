@@ -13,7 +13,8 @@ import (
 )
 
 // v3: 新增 custom_pricing 字段（千人千面），旧缓存自动判 stale 回源重建
-const userCacheSchemaVersion = 3
+// v4: 写缓存脚本补回漏写的 CustomPricing，旧 hash 缺该字段必须立即重建
+const userCacheSchemaVersion = 4
 
 type UserBase struct {
 	Id            int    `json:"id"`
