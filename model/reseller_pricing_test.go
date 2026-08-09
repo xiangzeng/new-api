@@ -305,7 +305,7 @@ func TestListResellerCustomersUsesOwnerScopedCommissionTotalsAndPricing(t *testi
 	setupResellerPricingTestDB(t)
 	now := common.GetTimestamp()
 	reseller := User{Username: "customer-list-reseller", AffCode: "customer-list-reseller-aff", Status: common.UserStatusEnabled}
-	first := User{Username: "customer-list-first", DisplayName: "First customer", AffCode: "customer-list-first-aff", Status: common.UserStatusEnabled, Group: "vip"}
+	first := User{Username: "customer-list-first", DisplayName: "First customer", AffCode: "customer-list-first-aff", Status: common.UserStatusEnabled, Group: "vip", Quota: 1_250_000, UsedQuota: 320_000}
 	second := User{Username: "customer-list-second", AffCode: "customer-list-second-aff", Status: common.UserStatusDisabled, Group: "default"}
 	unbound := User{Username: "customer-list-unbound", AffCode: "customer-list-unbound-aff", Status: common.UserStatusEnabled}
 	otherReseller := User{Username: "customer-list-other-reseller", AffCode: "customer-list-other-reseller-aff", Status: common.UserStatusEnabled}
@@ -314,7 +314,7 @@ func TestListResellerCustomersUsesOwnerScopedCommissionTotalsAndPricing(t *testi
 	}
 	profile := ResellerProfile{UserId: reseller.Id, Status: ResellerStatusActive, ReceivePublicId: "customer-list-reseller-receive-id", PricingVersion: 1}
 	require.NoError(t, DB.Create(&profile).Error)
-	firstBinding := ResellerCustomer{ResellerId: reseller.Id, CustomerId: first.Id, RegistrationSource: ResellerRegistrationSourceReseller, BoundAt: now + 2, PricingVersion: 1}
+	firstBinding := ResellerCustomer{ResellerId: reseller.Id, CustomerId: first.Id, RegistrationSource: ResellerRegistrationSourceReseller, Note: "老王工作室", BoundAt: now + 2, PricingVersion: 1}
 	secondBinding := ResellerCustomer{ResellerId: reseller.Id, CustomerId: second.Id, RegistrationSource: ResellerRegistrationSourceReseller, BoundAt: now + 1, PricingVersion: 1}
 	require.NoError(t, DB.Create(&firstBinding).Error)
 	require.NoError(t, DB.Create(&secondBinding).Error)
@@ -343,6 +343,9 @@ func TestListResellerCustomersUsesOwnerScopedCommissionTotalsAndPricing(t *testi
 	require.Len(t, items, 2)
 	assert.Equal(t, first.Id, items[0].CustomerId)
 	assert.Equal(t, "First customer", items[0].DisplayName)
+	assert.Equal(t, "老王工作室", items[0].Note)
+	assert.Equal(t, 1_250_000, items[0].Quota)
+	assert.Equal(t, 320_000, items[0].UsedQuota)
 	assert.Equal(t, common.UserStatusEnabled, items[0].Status)
 	assert.Equal(t, 13000, items[0].CurrentMultiplierBps)
 	assert.Equal(t, 14000, items[0].PendingMultiplierBps)
@@ -357,6 +360,42 @@ func TestListResellerCustomersUsesOwnerScopedCommissionTotalsAndPricing(t *testi
 	assert.EqualValues(t, 88, items[1].CustomerRetailQuota)
 	assert.EqualValues(t, 1, items[1].ResellerRequestCount)
 	assert.EqualValues(t, 8, items[1].ResellerCommissionQuota)
+	assert.Empty(t, items[1].Note)
+}
+
+func TestUpdateResellerCustomerNoteIsOwnerScopedAndLengthBounded(t *testing.T) {
+	setupResellerPricingTestDB(t)
+	owner := User{Username: "note-owner", AffCode: "note-owner-aff", Status: common.UserStatusEnabled}
+	intruder := User{Username: "note-intruder", AffCode: "note-intruder-aff", Status: common.UserStatusEnabled}
+	customer := User{Username: "note-customer", AffCode: "note-customer-aff", Status: common.UserStatusEnabled}
+	for _, user := range []*User{&owner, &intruder, &customer} {
+		require.NoError(t, DB.Create(user).Error)
+	}
+	binding := ResellerCustomer{ResellerId: owner.Id, CustomerId: customer.Id, RegistrationSource: ResellerRegistrationSourceReseller, BoundAt: 100, PricingVersion: 1}
+	require.NoError(t, DB.Create(&binding).Error)
+
+	note, err := UpdateResellerCustomerNote(owner.Id, binding.Id, "  深圳老客户  ")
+	require.NoError(t, err)
+	assert.Equal(t, "深圳老客户", note)
+
+	_, err = UpdateResellerCustomerNote(intruder.Id, binding.Id, "劫持")
+	assert.ErrorIs(t, err, ErrResellerForbidden)
+	_, err = UpdateResellerCustomerNote(owner.Id, binding.Id, strings.Repeat("备", ResellerCustomerNoteMaxLength+1))
+	assert.ErrorIs(t, err, ErrResellerNoteTooLong)
+
+	var stored ResellerCustomer
+	require.NoError(t, DB.First(&stored, binding.Id).Error)
+	assert.Equal(t, "深圳老客户", stored.Note)
+
+	// Rewriting the identical value must stay a success, not a false ownership
+	// failure on databases that report zero affected rows for a no-op update.
+	repeated, err := UpdateResellerCustomerNote(owner.Id, binding.Id, "深圳老客户")
+	require.NoError(t, err)
+	assert.Equal(t, "深圳老客户", repeated)
+
+	cleared, err := UpdateResellerCustomerNote(owner.Id, binding.Id, "")
+	require.NoError(t, err)
+	assert.Empty(t, cleared)
 }
 
 func TestCreateResellerCommissionIsConcurrentAndReplaySafe(t *testing.T) {

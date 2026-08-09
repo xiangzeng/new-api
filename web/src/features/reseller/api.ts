@@ -149,8 +149,8 @@ async function getPage<T>(path: string, page = 1, pageSize = 50) {
   return normalizeResellerPage(response.data.data)
 }
 
-export const getResellerCustomers = (page = 1) =>
-  getPage<ResellerCustomer>('/api/reseller/customers', page, 20)
+export const getResellerCustomers = (page = 1, pageSize = 20) =>
+  getPage<ResellerCustomer>('/api/reseller/customers', page, pageSize)
 export const getResellerTransfers = (page = 1) =>
   getPage<ResellerTransfer>('/api/reseller/transfers', page)
 export const getResellerLedger = (page = 1) =>
@@ -206,40 +206,19 @@ export async function resetQuotaPassword(
   )
 }
 
-export async function rotateReceiveAddress(quotaPassword: string) {
-  return api.post(
-    '/api/reseller/receive-address/rotate',
-    { quota_password: quotaPassword },
-    sensitiveConfig()
+export async function updateCustomerNote(bindingId: number, note: string) {
+  const response = await api.put<ResellerEnvelope<{ note: string }>>(
+    `/api/reseller/customers/${bindingId}/note`,
+    { note },
+    { skipErrorHandler: true }
   )
+  return response.data
 }
 
-const receiveCodePattern = /^[A-Za-z0-9]{32}$/
-
-export function parseTransferRecipient(value: string): {
-  recipient_username?: string
-  recipient_public_id?: string
-} {
-  const trimmed = value.trim()
-  if (receiveCodePattern.test(trimmed)) {
-    return { recipient_public_id: trimmed }
-  }
-  try {
-    const url = new URL(trimmed)
-    const receiveCode = url.searchParams.get('receive')?.trim() || ''
-    if (receiveCodePattern.test(receiveCode)) {
-      return { recipient_public_id: receiveCode }
-    }
-  } catch {
-    // A non-URL value is treated as a username.
-  }
-  return { recipient_username: trimmed }
-}
-
-export async function previewTransfer(recipient: string, amount: number) {
+export async function previewTransfer(bindingId: number, quota: number) {
   return api.post(
     '/api/reseller/transfers/preview',
-    { ...parseTransferRecipient(recipient), amount },
+    { binding_id: bindingId, quota: String(Math.trunc(quota)) },
     sensitiveConfig()
   )
 }
@@ -254,7 +233,7 @@ export async function commitTransfer(
     {
       recipient_user_id: preview.recipient_user_id,
       recipient_username: preview.recipient_username,
-      amount: preview.amount,
+      quota: String(Math.trunc(preview.quota)),
       nonce: preview.nonce,
       quota_password: password,
     },

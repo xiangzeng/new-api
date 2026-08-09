@@ -26,6 +26,7 @@ import { Dialog } from '@/components/dialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -33,26 +34,26 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
-import { formatQuota } from '@/lib/format'
+import { getCurrencyLabel } from '@/lib/currency'
+import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
 
 import {
   changeQuotaPassword,
   commitTransfer,
   convertCommission,
+  getResellerCustomers,
   issueVouchers,
   newIdempotencyKey,
   previewTransfer,
   resetQuotaPassword,
-  rotateReceiveAddress,
   setQuotaPassword as createQuotaPassword,
 } from '../api'
-import type { ResellerTransferPreview } from '../types'
+import type { ResellerCustomer, ResellerTransferPreview } from '../types'
 
 export type ResellerActionKind =
   | 'password-set'
   | 'password-change'
   | 'password-reset'
-  | 'rotate'
   | 'transfer'
   | 'convert'
   | 'voucher-single'
@@ -64,7 +65,8 @@ interface ResellerActionDialogProps {
   onOpenChange: (open: boolean) => void
   onCompleted: () => void | Promise<void>
   availableCommissionQuota?: number
-  initialRecipient?: string
+  walletQuota?: number
+  initialBindingId?: number
 }
 
 export function ResellerActionDialog({
@@ -73,14 +75,19 @@ export function ResellerActionDialog({
   onOpenChange,
   onCompleted,
   availableCommissionQuota = 0,
-  initialRecipient = '',
+  walletQuota = 0,
+  initialBindingId = 0,
 }: ResellerActionDialogProps) {
   const { t } = useTranslation()
   const [quotaPassword, setQuotaPassword] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [recipient, setRecipient] = useState(initialRecipient)
+  const [customers, setCustomers] = useState<ResellerCustomer[]>([])
+  const [bindingId, setBindingId] = useState(
+    initialBindingId ? String(initialBindingId) : ''
+  )
+  const [transferAmount, setTransferAmount] = useState('')
   const [amount, setAmount] = useState(1)
   const [count, setCount] = useState(kind === 'voucher-batch' ? 2 : 1)
   const [note, setNote] = useState('')
@@ -100,7 +107,8 @@ export function ResellerActionDialog({
     setLoginPassword('')
     setCurrentPassword('')
     setNewPassword('')
-    setRecipient('')
+    setBindingId('')
+    setTransferAmount('')
     setAmount(1)
     setCount(kind === 'voucher-batch' ? 2 : 1)
     setNote('')
@@ -113,10 +121,10 @@ export function ResellerActionDialog({
   }, [kind, open])
 
   useEffect(() => {
-    if (open && kind === 'transfer' && initialRecipient && !preview) {
-      setRecipient(initialRecipient)
-    }
-  }, [initialRecipient, kind, open, preview])
+    if (!open || kind !== 'transfer') return
+    setBindingId(initialBindingId ? String(initialBindingId) : '')
+    void getResellerCustomers(1, 200).then((page) => setCustomers(page.items))
+  }, [initialBindingId, kind, open])
 
   const copy = useMemo(() => {
     switch (kind) {
@@ -137,14 +145,9 @@ export function ResellerActionDialog({
             'Outbound transfers and voucher issuance will be frozen for 24 hours.'
           ),
         ]
-      case 'rotate':
-        return [
-          t('Rotate receive address'),
-          t('The old receive address will stop accepting new previews.'),
-        ]
       case 'transfer':
         return [
-          t('Send quota'),
+          t('Send quota to a customer'),
           t('Preview the recipient before committing this transfer.'),
         ]
       case 'convert':
@@ -164,6 +167,25 @@ export function ResellerActionDialog({
         ]
     }
   }, [kind, t])
+
+  const customerOptions = useMemo(
+    () =>
+      customers
+        .filter((customer) => customer.status === 1)
+        .map((customer) => ({
+          value: String(customer.binding_id),
+          label: customer.note
+            ? `${customer.note} · ${customer.username}`
+            : customer.username,
+        })),
+    [customers]
+  )
+
+  const transferQuota = useMemo(() => {
+    const parsed = Number(transferAmount)
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0
+    return parseQuotaFromDollars(parsed)
+  }, [transferAmount])
 
   const closeCompleted = async () => {
     toast.success(t('Operation completed'))
@@ -223,7 +245,7 @@ export function ResellerActionDialog({
     if (kind === 'transfer') {
       setSubmitting(true)
       try {
-        const response = await previewTransfer(recipient, amount)
+        const response = await previewTransfer(Number(bindingId), transferQuota)
         setPreview(response.data.data as ResellerTransferPreview)
       } finally {
         setSubmitting(false)
@@ -235,11 +257,6 @@ export function ResellerActionDialog({
     try {
       if (kind === 'password-change') {
         await changeQuotaPassword(currentPassword, newPassword)
-        await closeCompleted()
-        return
-      }
-      if (kind === 'rotate') {
-        await rotateReceiveAddress(quotaPassword)
         await closeCompleted()
         return
       }
@@ -302,7 +319,7 @@ export function ResellerActionDialog({
         count <= 50 &&
         note.length <= 255))
   const previewFormValid =
-    recipient.trim().length > 0 && amount >= 1 && amount <= 2000
+    bindingId !== '' && transferQuota > 0 && transferQuota <= walletQuota
   let formValid = operationFormValid
   if (kind.startsWith('password')) {
     formValid = passwordFormValid
@@ -415,17 +432,37 @@ export function ResellerActionDialog({
               )}
               {kind === 'transfer' && !preview && (
                 <>
-                  <Field label={t('Recipient')}>
-                    <Input
-                      value={recipient}
-                      onChange={(event) => setRecipient(event.target.value)}
-                      placeholder={t(
-                        'Username, 32-character code, or receive link'
-                      )}
-                      autoComplete='off'
+                  <Field label={t('Customer')}>
+                    <Combobox
+                      options={customerOptions}
+                      value={bindingId}
+                      onValueChange={(value) => setBindingId(value || '')}
+                      placeholder={t('Select one of your direct customers')}
+                      emptyText={t('No direct customers yet')}
                     />
                   </Field>
-                  <AmountField amount={amount} onChange={setAmount} />
+                  <Field
+                    label={t('Amount ({{currency}})', {
+                      currency: getCurrencyLabel(),
+                    })}
+                  >
+                    <Input
+                      type='number'
+                      min={0}
+                      step='0.01'
+                      inputMode='decimal'
+                      value={transferAmount}
+                      onChange={(event) =>
+                        setTransferAmount(event.target.value)
+                      }
+                    />
+                    <p className='text-muted-foreground text-xs'>
+                      {t('Deducts {{quota}} from your wallet ({{balance}})', {
+                        quota: formatQuota(transferQuota),
+                        balance: formatQuota(walletQuota),
+                      })}
+                    </p>
+                  </Field>
                 </>
               )}
               {kind === 'transfer' && preview && (
@@ -444,7 +481,7 @@ export function ResellerActionDialog({
                         {t('Amount')}
                       </div>
                       <div className='mt-1 font-medium tabular-nums'>
-                        {preview.amount}
+                        {formatQuota(preview.quota)}
                       </div>
                     </div>
                   </div>
@@ -484,13 +521,6 @@ export function ResellerActionDialog({
                     onChange={setQuotaPassword}
                   />
                 </>
-              )}
-              {kind === 'rotate' && (
-                <PasswordField
-                  label={t('Quota password')}
-                  value={quotaPassword}
-                  onChange={setQuotaPassword}
-                />
               )}
               {kind.startsWith('voucher') && (
                 <>

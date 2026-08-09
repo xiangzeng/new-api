@@ -35,6 +35,10 @@ func resellerError(c *gin.Context, err error) {
 		spec = resellerErrorSpec{http.StatusConflict, "RESELLER_VERSION_CONFLICT", "定价已被更新，请刷新后重试"}
 	case errors.Is(err, model.ErrResellerMultiplierOutOfRange), errors.Is(err, model.ErrResellerAmountInvalid):
 		spec = resellerErrorSpec{http.StatusUnprocessableEntity, "RESELLER_AMOUNT_INVALID", "金额或倍率超出允许范围"}
+	case errors.Is(err, model.ErrResellerNoteTooLong):
+		spec = resellerErrorSpec{http.StatusUnprocessableEntity, "RESELLER_NOTE_TOO_LONG", "客户备注超出长度限制"}
+	case errors.Is(err, model.ErrResellerRecipientNotCustomer):
+		spec = resellerErrorSpec{http.StatusForbidden, "RESELLER_RECIPIENT_NOT_CUSTOMER", "只能向自己的直属客户转账"}
 	case errors.Is(err, model.ErrResellerQuotaPasswordInvalid):
 		spec = resellerErrorSpec{http.StatusForbidden, "RESELLER_QUOTA_PASSWORD_INVALID", "额度密码错误"}
 	case errors.Is(err, model.ErrResellerLoginPasswordInvalid):
@@ -144,7 +148,7 @@ func CreateResellerProfile(c *gin.Context) {
 		return
 	}
 	recordUserSecurityAudit(c, c.GetInt("id"), "reseller.profile.create", nil)
-	resellerSuccess(c, gin.H{"status": profile.Status, "receive_public_id": profile.ReceivePublicId, "pricing_version": profile.PricingVersion})
+	resellerSuccess(c, gin.H{"status": profile.Status, "pricing_version": profile.PricingVersion})
 }
 
 func GetResellerInvitation(c *gin.Context) {
@@ -482,33 +486,35 @@ func ResetResellerPassword(c *gin.Context) {
 	resellerSuccess(c, gin.H{"reset": true, "outbound_frozen_until": common.GetTimestamp() + model.ResellerOutboundFreezeSeconds})
 }
 
-func RotateResellerReceiveAddress(c *gin.Context) {
+type resellerCustomerNoteRequest struct {
+	Note string `json:"note"`
+}
+
+func UpdateResellerCustomerNote(c *gin.Context) {
 	if _, ok := requireActiveReseller(c); !ok {
 		return
 	}
-	var request resellerRevealRequest
+	bindingId, ok := resellerBindingId(c)
+	if !ok {
+		return
+	}
+	var request resellerCustomerNoteRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		resellerBadRequest(c, "额度密码格式无效")
+		resellerBadRequest(c, "客户备注参数无效")
 		return
 	}
-	if err := model.VerifyResellerQuotaPassword(c.GetInt("id"), request.quotaPassword(), common.GetTimestamp(), false); err != nil {
-		resellerError(c, err)
-		return
-	}
-	receiveId, err := model.RotateResellerReceiveAddress(c.GetInt("id"))
+	note, err := model.UpdateResellerCustomerNote(c.GetInt("id"), bindingId, request.Note)
 	if err != nil {
 		resellerError(c, err)
 		return
 	}
-	recordUserSecurityAudit(c, c.GetInt("id"), "reseller.receive_address.rotate", nil)
-	resellerSuccess(c, gin.H{"receive_public_id": receiveId})
+	resellerSuccess(c, gin.H{"binding_id": bindingId, "note": note})
 }
 
 type resellerTransferPreviewRequest struct {
-	RecipientUsername string `json:"recipient_username"`
-	RecipientPublicId string `json:"recipient_public_id"`
-	ReceivePublicId   string `json:"receive_public_id"`
-	Amount            int    `json:"amount"`
+	BindingId         int64              `json:"binding_id"`
+	RecipientUsername string             `json:"recipient_username"`
+	Quota             resellerQuotaValue `json:"quota"`
 }
 
 func PreviewResellerTransfer(c *gin.Context) {
@@ -520,30 +526,26 @@ func PreviewResellerTransfer(c *gin.Context) {
 		resellerBadRequest(c, "转账参数无效")
 		return
 	}
-	publicId := request.RecipientPublicId
-	if publicId == "" {
-		publicId = request.ReceivePublicId
-	}
-	nonce, preview, err := model.CreateResellerTransferPreviewForRecipient(c.GetInt("id"), request.RecipientUsername, publicId, request.Amount, common.GetTimestamp())
+	nonce, preview, err := model.CreateResellerCustomerTransferPreview(c.GetInt("id"), request.BindingId, request.RecipientUsername, int64(request.Quota), common.GetTimestamp())
 	if err != nil {
 		resellerError(c, err)
 		return
 	}
 	name, _ := model.GetUsernameById(preview.ReceiverId, true)
 	resellerSuccess(c, gin.H{
-		"nonce": nonce, "amount": preview.Amount, "quota": preview.Quota,
+		"nonce": nonce, "quota": preview.Quota,
 		"recipient_user_id": preview.ReceiverId, "recipient_username": name,
-		"receiver": gin.H{"user_id": preview.ReceiverId, "username": name}, "expires_at": preview.ExpiresAt,
+		"expires_at": preview.ExpiresAt,
 	})
 }
 
 type resellerTransferCommitRequest struct {
-	Nonce             string `json:"nonce"`
-	Password          string `json:"password"`
-	QuotaPassword     string `json:"quota_password"`
-	RecipientUserId   int    `json:"recipient_user_id"`
-	RecipientUsername string `json:"recipient_username"`
-	Amount            int    `json:"amount"`
+	Nonce             string             `json:"nonce"`
+	Password          string             `json:"password"`
+	QuotaPassword     string             `json:"quota_password"`
+	RecipientUserId   int                `json:"recipient_user_id"`
+	RecipientUsername string             `json:"recipient_username"`
+	Quota             resellerQuotaValue `json:"quota"`
 }
 
 func CommitResellerTransfer(c *gin.Context) {
@@ -563,15 +565,15 @@ func CommitResellerTransfer(c *gin.Context) {
 	if password == "" {
 		password = request.Password
 	}
-	transfer, err := model.CommitResellerQuotaTransferForRecipient(c.GetInt("id"), request.Nonce, password, key, model.ResellerTransferCommitExpectation{
-		RecipientUserId: request.RecipientUserId, RecipientName: request.RecipientUsername, Amount: request.Amount,
+	transfer, err := model.CommitResellerQuotaTransfer(c.GetInt("id"), request.Nonce, password, key, model.ResellerTransferCommitExpectation{
+		RecipientUserId: request.RecipientUserId, RecipientName: request.RecipientUsername, Quota: int64(request.Quota),
 	}, common.GetTimestamp())
 	if err != nil {
 		resellerError(c, err)
 		return
 	}
-	recordUserSecurityAudit(c, c.GetInt("id"), "reseller.transfer.commit", map[string]interface{}{"result_ref": transfer.PublicId, "receiver_id": transfer.ReceiverId, "amount": transfer.Amount})
-	resellerSuccess(c, gin.H{"public_id": transfer.PublicId, "receiver_id": transfer.ReceiverId, "amount": transfer.Amount, "quota": transfer.Quota, "created_at": transfer.CreatedAt})
+	recordUserSecurityAudit(c, c.GetInt("id"), "reseller.transfer.commit", map[string]interface{}{"result_ref": transfer.PublicId, "receiver_id": transfer.ReceiverId, "quota": transfer.Quota})
+	resellerSuccess(c, gin.H{"public_id": transfer.PublicId, "receiver_id": transfer.ReceiverId, "quota": transfer.Quota, "created_at": transfer.CreatedAt})
 }
 
 type resellerConvertRequest struct {

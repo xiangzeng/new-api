@@ -120,6 +120,7 @@ func TestResellerStatusExposesOnlyObservedOverviewStats(t *testing.T) {
 	assert.EqualValues(t, 80, data["available_commission_quota"])
 	assert.EqualValues(t, 0, data["customer_count"])
 	assert.NotContains(t, data, "outbound_used_24h")
+	assert.NotContains(t, data, "receive_public_id")
 }
 
 func TestResellerPricingConflictUsesStable409Envelope(t *testing.T) {
@@ -195,16 +196,56 @@ func TestResellerDailyWritesUseQuotaPasswordWithoutSecurityProof(t *testing.T) {
 	db, owner, _ := setupResellerControllerTest(t)
 	receiver := model.User{Username: "preview-recipient", AffCode: "preview-recipient-aff", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
 	require.NoError(t, db.Create(&receiver).Error)
-	ctx, recorder := resellerTestContext(http.MethodPost, "/api/reseller/transfers/preview", `{"recipient_username":"preview-recipient","amount":1}`, owner)
+	binding := model.ResellerCustomer{ResellerId: owner.Id, CustomerId: receiver.Id, RegistrationSource: model.ResellerRegistrationSourceReseller, BoundAt: common.GetTimestamp(), PricingVersion: 1}
+	require.NoError(t, db.Create(&binding).Error)
+	body := fmt.Sprintf(`{"binding_id":%d,"quota":"250000"}`, binding.Id)
+	ctx, recorder := resellerTestContext(http.MethodPost, "/api/reseller/transfers/preview", body, owner)
 	PreviewResellerTransfer(ctx)
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	preview := decodedResellerResponse(t, recorder)["data"].(map[string]any)
 	assert.Equal(t, "preview-recipient", preview["recipient_username"])
+	assert.EqualValues(t, 250000, preview["quota"])
 
 	ctx, recorder = resellerTestContext(http.MethodPost, "/api/reseller/commission/convert", `{"quota":"500000","quota_password":"123456"}`, owner)
 	ConvertResellerCommission(ctx)
 	assert.Equal(t, http.StatusPreconditionRequired, recorder.Code)
 	assert.Equal(t, "RESELLER_IDEMPOTENCY_REQUIRED", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
+}
+
+func TestResellerTransferPreviewRejectsRecipientOutsideOwnCustomers(t *testing.T) {
+	db, owner, _ := setupResellerControllerTest(t)
+	stranger := model.User{Username: "unbound-stranger", AffCode: "unbound-stranger-aff", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
+	require.NoError(t, db.Create(&stranger).Error)
+
+	ctx, recorder := resellerTestContext(http.MethodPost, "/api/reseller/transfers/preview", `{"recipient_username":"unbound-stranger","quota":"250000"}`, owner)
+	PreviewResellerTransfer(ctx)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Equal(t, "RESELLER_RECIPIENT_NOT_CUSTOMER", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
+}
+
+func TestUpdateResellerCustomerNoteIsOwnerScoped(t *testing.T) {
+	db, owner, _ := setupResellerControllerTest(t)
+	customer := model.User{Username: "note-api-customer", AffCode: "note-api-customer-aff", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
+	foreign := model.User{Username: "note-api-foreign", AffCode: "note-api-foreign-aff", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
+	require.NoError(t, db.Create(&customer).Error)
+	require.NoError(t, db.Create(&foreign).Error)
+	owned := model.ResellerCustomer{ResellerId: owner.Id, CustomerId: customer.Id, RegistrationSource: model.ResellerRegistrationSourceReseller, BoundAt: common.GetTimestamp(), PricingVersion: 1}
+	foreignBinding := model.ResellerCustomer{ResellerId: foreign.Id, CustomerId: foreign.Id, RegistrationSource: model.ResellerRegistrationSourceReseller, BoundAt: common.GetTimestamp(), PricingVersion: 1}
+	require.NoError(t, db.Create(&owned).Error)
+	require.NoError(t, db.Create(&foreignBinding).Error)
+
+	ctx, recorder := resellerTestContext(http.MethodPut, fmt.Sprintf("/api/reseller/customers/%d/note", owned.Id), `{"note":"深圳老客户"}`, owner)
+	ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprint(owned.Id)}}
+	UpdateResellerCustomerNote(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "深圳老客户", decodedResellerResponse(t, recorder)["data"].(map[string]any)["note"])
+
+	ctx, recorder = resellerTestContext(http.MethodPut, fmt.Sprintf("/api/reseller/customers/%d/note", foreignBinding.Id), `{"note":"劫持"}`, owner)
+	ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprint(foreignBinding.Id)}}
+	UpdateResellerCustomerNote(ctx)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Equal(t, "RESELLER_FORBIDDEN", decodedResellerResponse(t, recorder)["data"].(map[string]any)["code"])
 }
 
 func TestResellerPasswordSetupAcceptsLoginPasswordAndRejectsWrongPassword(t *testing.T) {
