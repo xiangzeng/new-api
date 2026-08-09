@@ -54,6 +54,10 @@ Commission = max(RetailQuota - BaseQuota, 0)
 
 ### 2.4 直属客户可见性
 
+> **RelayTeam 偏离**：客户列表额外展示客户钱包余额与已用额度，并支持站长私有备注。这两项是本站定制，不属于目标站已确认行为。
+
+- 客户列表返回客户当前钱包余额 `quota` 与 `used_quota`，供站长判断是否需要补额度；两者取自 `users` 表实时值，不经站长账本聚合。
+- 客户备注 `note` 存在绑定行上（`reseller_customers.note`，最长 255 字符），只对拥有该绑定的站长可见，不下发给客户，也不替换用户名；前端优先显示备注，用户名始终并列展示。
 - 已确认的目标站客户列表为 `GET /api/reseller/customers?p={page}&page_size={pageSize}`，桌面表格列为客户、当前价格、使用量、你的收益和操作，目标前端分页大小为 20。
 - 每个客户行使用已服务字段 `current_multiplier_bps`、`pending_multiplier_bps`、`pending_multiplier_at`、`customer_retail_quota_text`、`reseller_request_count` 与 `reseller_commission_quota_text`；禁用用户可见但不能编辑价格。
 - 本地实现设计：仅返回当前代理的直属绑定；使用量、请求数和收益只按 `(reseller_id, customer_id)` 聚合 `ResellerCommissionEntry`。它们是站长账本口径，不能替代客户在全站的 `used_quota`、API key、请求正文或模型输入。
@@ -66,19 +70,26 @@ Commission = max(RetailQuota - BaseQuota, 0)
 
 ### 2.6 额度安全
 
+> **RelayTeam 偏离**：额度收款（收款码、收款链接、收款二维码、轮换收款码）整体退役；转账收款方只能是本站长的直属客户。
+
 - 使用独立六位数字额度密码。
 - 首次设置或重置额度密码可使用登录密码，或使用已建立的 2FA / Passkey 安全复核；日常额度授权不复用该 proof。
-- 修改额度密码只校验当前额度密码；定价、收款码轮换、转账 commit、收益转换和用户码签发/reveal 均只校验额度密码。
+- 修改额度密码只校验当前额度密码；定价、转账 commit、收益转换和用户码签发/reveal 均只校验额度密码。
 - 重置后发送额度和签发用户码冻结 24 小时，但仍允许接收额度。
-- 收款码是 32 位字母数字公开标识；转账 preview 接受用户名、收款码或带 `receive` 参数的收款链接。
+- 收款码不再对外暴露：`GET /api/reseller/status` 与 `POST /api/reseller/profile` 不返回 `receive_public_id`，轮换接口已下线。`reseller_profiles.receive_public_id` 列保留（非空唯一约束，建档时仍生成），仅为避免生产迁移风险，不参与任何业务路径。
+- 转账 preview 只接受 `binding_id`（或已绑定客户的 `recipient_username`）。收款方不是本站长的直属客户时返回 `403 RESELLER_RECIPIENT_NOT_CUSTOMER`；被禁用的客户同样拒绝。
+- 转账金额以 `quota` 为准（整数 quota 单位，支持不足一美元的金额），不再受整数美元 `amount` 约束；`reseller_quota_transfers.amount` 退化为向下取整的展示字段。
 - 转账采用 preview/commit；preview 仅需要登录会话，commit 的 nonce 必须绑定发送人、标准化接收人、额度、过期时间并一次性消费，且提交额度密码。
 - 转账、收益转换和用户码签发接受 `Idempotency-Key`。
 - 同一 key 与相同 payload 返回原结果；同一 key 与不同 payload 必须拒绝。
 
 ### 2.7 限额与用户码
 
-- 单次操作额度范围 `1..2000`。
-- 转账和用户码签发共享滚动 24 小时 `4000` 限额。
+> **RelayTeam 偏离**：转账退出滚动限额，只受发送方钱包余额约束；滚动 24 小时限额收敛为用户码签发专用。
+
+- 转账金额上限为发送方钱包当前余额：preview 阶段预检，commit 阶段以 `UPDATE ... WHERE quota >= ?` 原子扣减为准。转账仍写 `reseller_outbound_events`（`kind = transfer`）留审计，但不计入滚动窗口。
+- 用户码单次操作额度范围 `1..2000`。
+- 用户码签发受滚动 24 小时 `4000` 限额，窗口只统计 `kind = voucher` 的事件。
 - 单批最多 50 张用户码，批次备注最多 255 字符。
 - 签发时立即从 API 钱包转入 escrow。
 - 用户码一次性使用，不可取消、不可退款。
@@ -107,9 +118,9 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - `POST /api/reseller/security/password`
 - `PUT /api/reseller/security/password`
 - `POST /api/reseller/security/password/reset`
-- `POST /api/reseller/receive-address/rotate`
 - `PUT /api/reseller/pricing/default`
 - `DELETE /api/reseller/pricing/default`（删除分组覆盖并恢复继承）
+- `PUT /api/reseller/customers/{id}/note`（站长私有备注，只校验绑定归属，不要求额度密码）
 - `PUT /api/reseller/customers/{id}/pricing`
 - `DELETE /api/reseller/customers/{id}/pricing`（删除分组覆盖并恢复继承）
 - `POST /api/reseller/transfers/preview`
@@ -146,7 +157,8 @@ Commission = max(RetailQuota - BaseQuota, 0)
 - 一个 request reference 最多产生一个 commission entry。
 - ledger 中每次内部账户转移的借贷总额为零。
 - release batch、转账 commit、收益转换、用户码签发和兑换均可安全重试。
-- rolling window 限额在并发事务下不可超卖。
+- 用户码 rolling window 限额在并发事务下不可超卖。
+- 转账收款方必须是发送方的直属客户；发送方钱包余额是转账金额的唯一上限，且扣减必须原子。
 - 日志、响应、缓存和前端存储中不得出现额度密码、完整邀请 token、完整用户码或加密密钥。
 - 每一条账本行保存该账户在该笔变动后的余额快照，列表按账户行展示 `account`、`delta_quota`、`balance_after`、`kind` 和 `created_at`。
 
@@ -196,12 +208,12 @@ sequenceDiagram
   participant S as Sender
   participant API as Reseller API
   participant DB as Ledger and preview state
-  S->>API: preview(username/code/link, amount)
-  API->>DB: 标准化接收人并保存 nonce digest
-  API-->>S: recipient, amount, nonce
-  S->>API: commit(recipient, amount, nonce, quota password, idempotency key)
-  API->>DB: 校验 nonce、额度密码、限额和幂等键
-  API->>DB: 原子钱包借贷与账本行
+  S->>API: preview(binding_id, quota)
+  API->>DB: 校验绑定归属与发送方余额，保存 nonce digest
+  API-->>S: recipient, quota, nonce
+  S->>API: commit(recipient, quota, nonce, quota password, idempotency key)
+  API->>DB: 校验 nonce、额度密码和幂等键
+  API->>DB: 原子钱包借贷（余额不足即失败）与账本行
   API-->>S: committed transfer
 ```
 
@@ -214,7 +226,7 @@ flowchart TD
   Identity -->|通过| Set["设置/重置 6 位额度密码"]
   Identity -->|失败| Reject["拒绝请求"]
   Bootstrap -->|否| Quota{"提交当前额度密码"}
-  Quota -->|通过| Execute["定价、轮换、commit、转换、用户码"]
+  Quota -->|通过| Execute["定价、commit、转换、用户码"]
   Quota -->|失败| Reject
 ```
 
@@ -236,7 +248,8 @@ flowchart TD
 - [x] 本地注册归属测试。
 - [x] 本地全计费路径双报价测试：比例价、固定价、缓存/工具附加费、阶梯表达式、Audio/WSS、Midjourney、图片/视频任务及异步 token 重算均保留同输入 base/retail quote；commission reference 有数据库唯一约束和并发重放测试。
 - [x] 本地 pending/available 复式账本与释放测试：accrual/release journal 借贷和为零，余额投影与 commission 状态同事务更新，投影不一致整体回滚，system-task lease 下可恢复重放。
-- [x] 本地资金操作与并发测试：六位额度密码、重置冻结、preview/commit nonce、幂等收益转换/转账/用户码、共享滚动限额、escrow/reveal/redeem 与账本平衡均有事务测试和 race detector 覆盖。
+- [x] 本地资金操作与并发测试：六位额度密码、重置冻结、preview/commit nonce、幂等收益转换/转账/用户码、用户码滚动限额、escrow/reveal/redeem 与账本平衡均有事务测试和 race detector 覆盖。
+- [x] RelayTeam 定制契约测试：收款码退出 status 响应、转账仅限直属客户、转账受钱包余额约束且支持不足一美元金额、转账不消耗用户码滚动窗口、客户备注 owner scope 与长度上限。
 - [x] 本地 API 契约测试：完整路由、owner scope、分页、稳定错误码、security proof、幂等键、审计脱敏、读取 DTO 脱敏和旧返利 mutation 退役均已实现；Redis quota cache 在资金事务成功后刷新。
 - [x] 本地前端逻辑测试：`/j/{token}` 使用 sessionStorage 并清理遗留 `aff`，注册/OAuth 成功后清理邀请；钱包 `RV-` 路由选择、服务端安全复核错误展示和列表分页已实现。
 - [x] 本地前端逐视图与跨视口测试：SQLite 预览在 `1440x900` 和 `390x844` 完成六个标签及默认/客户定价、收益转换、preview 转账、签发、reveal、额度密码和地址轮换入口检查；页面无全局横向溢出，移动 Tabs/表格独立横滚，弹窗位于视口内。无账本时 `items: null` 引发的 500 已通过后端空数组契约和前端兼容归一化修复并回归。

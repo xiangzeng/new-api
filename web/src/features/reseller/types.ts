@@ -33,7 +33,6 @@ export interface ResellerPage<T> {
 export interface ResellerStatus {
   enabled: boolean
   status?: 'active' | 'frozen'
-  receive_public_id?: string
   pricing_version?: number
   pending_commission_quota: number
   available_commission_quota: number
@@ -82,6 +81,7 @@ export interface ResellerCustomer {
   customer_id: number
   username: string
   display_name: string
+  note: string
   status: number
   group: string
   quota: number
@@ -123,10 +123,8 @@ export interface ResellerTransferPreview {
   nonce: string
   recipient_user_id: number
   recipient_username: string
-  amount: number
   quota: number
   expires_at: number
-  receiver?: { user_id: number; username: string }
 }
 
 export interface ResellerVoucherBatch {

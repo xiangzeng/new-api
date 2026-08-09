@@ -2,14 +2,16 @@ package model
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
 )
 
 var (
-	ErrResellerNotEnabled = errors.New("reseller is not enabled")
-	ErrResellerForbidden  = errors.New("reseller resource is forbidden")
+	ErrResellerNotEnabled  = errors.New("reseller is not enabled")
+	ErrResellerForbidden   = errors.New("reseller resource is forbidden")
+	ErrResellerNoteTooLong = errors.New("reseller customer note is too long")
 )
 
 type ResellerCustomerListItem struct {
@@ -17,6 +19,7 @@ type ResellerCustomerListItem struct {
 	CustomerId              int    `json:"customer_id"`
 	Username                string `json:"username"`
 	DisplayName             string `json:"display_name"`
+	Note                    string `json:"note"`
 	Status                  int    `json:"status"`
 	Group                   string `json:"group"`
 	Quota                   int    `json:"quota"`
@@ -64,7 +67,6 @@ type ResellerLedgerListItem struct {
 type ResellerStatusSummary struct {
 	Enabled                  bool   `json:"enabled"`
 	Status                   string `json:"status,omitempty"`
-	ReceivePublicId          string `json:"receive_public_id,omitempty"`
 	PricingVersion           int64  `json:"pricing_version,omitempty"`
 	PendingCommissionQuota   int64  `json:"pending_commission_quota"`
 	AvailableCommissionQuota int64  `json:"available_commission_quota"`
@@ -134,7 +136,7 @@ func GetResellerStatusSummary(userId int, _ int64) (*ResellerStatusSummary, erro
 		return nil, err
 	}
 	return &ResellerStatusSummary{
-		Enabled: true, Status: profile.Status, ReceivePublicId: profile.ReceivePublicId,
+		Enabled: true, Status: profile.Status,
 		PricingVersion: profile.PricingVersion, PendingCommissionQuota: profile.PendingCommissionQuota,
 		AvailableCommissionQuota: profile.AvailableCommissionQuota, CustomerCount: customerCount,
 		WalletQuota: quota, CreatedAt: profile.CreatedAt,
@@ -238,7 +240,8 @@ func ListResellerCustomers(resellerId int, offset int, limit int) ([]ResellerCus
 		totals := totalsByCustomerId[binding.CustomerId]
 		items = append(items, ResellerCustomerListItem{
 			BindingId: binding.Id, CustomerId: binding.CustomerId, Username: user.Username,
-			DisplayName: user.DisplayName, Status: user.Status, Group: user.Group, Quota: user.Quota, UsedQuota: user.UsedQuota,
+			DisplayName: user.DisplayName, Note: binding.Note, Status: user.Status, Group: user.Group,
+			Quota: user.Quota, UsedQuota: user.UsedQuota,
 			RegistrationSource: binding.RegistrationSource, BoundAt: binding.BoundAt, PricingVersion: binding.PricingVersion,
 			CurrentMultiplierBps: resolved.MultiplierBps, PendingMultiplierBps: pendingMultiplierBps,
 			PendingEffectiveAt: pendingEffectiveAt, CustomerRetailQuota: totals.RetailQuota,
@@ -329,20 +332,21 @@ func GetResellerSecurityStatus(userId int, now int64) (*ResellerSecurity, bool, 
 	return &security, security.OutboundFrozenUntil > resellerNow(now), nil
 }
 
-func RotateResellerReceiveAddress(userId int) (string, error) {
-	for range 3 {
-		receiveId, err := resellerReceiveCode()
-		if err != nil {
-			return "", err
-		}
-		result := DB.Model(&ResellerProfile{}).Where("user_id = ? AND status = ?", userId, ResellerStatusActive).
-			Update("receive_public_id", receiveId)
-		if result.Error == nil && result.RowsAffected == 1 {
-			return receiveId, nil
-		}
-		if result.Error == nil {
-			return "", ErrResellerNotEnabled
-		}
+// UpdateResellerCustomerNote stores the reseller-private label for one owned
+// customer. It carries no funds, so ownership is the only authorization needed.
+// Ownership is resolved with an explicit read because MySQL reports zero
+// affected rows when an update rewrites an identical value.
+func UpdateResellerCustomerNote(resellerId int, bindingId int64, note string) (string, error) {
+	note = strings.TrimSpace(note)
+	if len([]rune(note)) > ResellerCustomerNoteMaxLength {
+		return "", ErrResellerNoteTooLong
 	}
-	return "", errors.New("failed to rotate reseller receive address")
+	binding, err := GetResellerOwnedCustomer(resellerId, bindingId)
+	if err != nil {
+		return "", err
+	}
+	if err := DB.Model(&ResellerCustomer{}).Where("id = ?", binding.Id).Update("note", note).Error; err != nil {
+		return "", err
+	}
+	return note, nil
 }

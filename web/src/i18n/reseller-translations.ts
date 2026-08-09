@@ -68,7 +68,6 @@ const zhCN = {
   '24-hour outbound freeze': '发送操作冻结 24 小时',
   'Receiving quota and converting earnings remain available during the freeze.':
     '冻结期间仍可接收额度和转换收益。',
-  'Recipient address': '收款地址',
   Recipient: '收款方',
   'Number of codes': '用户码数量',
   'Batch note': '批次备注',
@@ -76,8 +75,12 @@ const zhCN = {
   'Login password': '登录密码',
   'Leave blank to use an established security verification method.':
     '留空可改用已建立的安全复核方式。',
-  'Username, 32-character code, or receive link':
-    '用户名、32 位收款码或收款链接',
+  'Send quota to a customer': '给客户转额度',
+  'Select one of your direct customers': '选择一个直属客户',
+  'No direct customers yet': '暂无直属客户',
+  'Amount ({{currency}})': '金额（{{currency}}）',
+  'Deducts {{quota}} from your wallet ({{balance}})':
+    '将从你的钱包扣除 {{quota}}（当前余额 {{balance}}）',
   'I confirmed the exact recipient and amount. This transfer cannot be reversed.':
     '我已确认准确的收款人和金额，转账不可撤销。',
   'Available earnings to convert': '本次转换的全部可用收益',
@@ -114,10 +117,6 @@ const zhCN = {
     '输入六位额度密码后查看已保存的用户码。',
   'Failed to load reseller center': '加载站长中心失败',
   'Reseller center enabled': '站长中心已开通',
-  'Receive address rotated': '收款地址已轮换',
-  'Rotate receive address': '轮换收款地址',
-  'The old receive address will stop accepting new transfer previews.':
-    '旧收款地址将不再接受新的转账预览。',
   'Reseller Center': '站长中心',
   'Refresh reseller data': '刷新站长数据',
   'Unable to load reseller center': '无法加载站长中心',
@@ -128,7 +127,17 @@ const zhCN = {
   'Transfers and user code issuance resume at {{time}}.':
     '转账和用户码签发将在 {{time}} 恢复。',
   Customers: '客户',
-  'Customer Pricing': '客户定价',
+  Balance: '余额',
+  '{{quota}} used': '已用 {{quota}}',
+  'Send quota to this customer': '给该客户转额度',
+  'Edit customer note': '编辑客户备注',
+  'Customer note': '客户备注',
+  'This note is private to you and never shown to the customer.':
+    '备注仅你自己可见，客户不会看到。',
+  'Note for {{username}}': '{{username}} 的备注',
+  'Leave blank to clear the note': '留空表示清除备注',
+  'Customer note saved': '客户备注已保存',
+  Save: '保存',
   'Earnings & Ledger': '收益与额度流水',
   Ledger: '账本',
   Transfers: '转账',
@@ -228,23 +237,12 @@ const zhCN = {
   'Configured · version {{version}}': '已设置 · 版本 {{version}}',
   'Not configured': '未设置',
   'Set password': '设置密码',
-  'Receive address': '收款地址',
-  'Quota security and receiving': '额度安全与收款',
-  'Quota receiving address': '额度收款地址',
-  'Quota receiving link': '额度收款链接',
-  'Rotate receive code': '轮换收款码',
-  '32-character receive code': '32 位额度收款码',
-  'Receive link': '额度收款链接',
-  'Copy receive link': '复制收款链接',
+  'Quota security': '额度安全',
   'Set a quota password before using reseller operations': '请先设置额度密码',
   'This independent six-digit password is never stored in the browser.':
     '独立六位额度密码用于定价、转账、收益和用户码，不会保存在浏览器。',
-  'The old receive address will stop accepting new previews.':
-    '旧收款码将不再接受新的转账预览。',
   'Codes are hidden from lists and require the quota password to reveal again.':
     '列表不会显示明文，再次查看只需验证额度密码。',
-  'Copy receive address': '复制收款地址',
-  Rotate: '轮换',
   'Previous page': '上一页',
   'Next page': '下一页',
   'Page {{page}} of {{total}}': '第 {{page}} / {{total}} 页',
@@ -265,8 +263,11 @@ const zhTW = {
   'Direct customers': '直屬客戶',
   'Customer invitation link': '客戶邀請連結',
   'Copy invitation link': '複製邀請連結',
-  'Receive address': '收款地址',
-  'Copy receive address': '複製收款地址',
+  Balance: '餘額',
+  'Customer note': '客戶備註',
+  'Send quota to a customer': '給客戶轉額度',
+  'Select one of your direct customers': '選擇一個直屬客戶',
+  'No direct customers yet': '暫無直屬客戶',
 } as const
 
 export const resellerTranslations = { en, zhCN, zhTW } as const

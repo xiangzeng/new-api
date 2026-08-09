@@ -45,11 +45,14 @@ type ResellerProfile struct {
 
 // ResellerCustomer is the immutable, one-level ownership edge between a
 // reseller and a customer. CustomerId is globally unique by design.
+// Note is a private label the owning reseller writes for itself; the customer
+// never sees it and it never replaces the account username.
 type ResellerCustomer struct {
 	Id                 int64  `json:"id" gorm:"primaryKey"`
 	ResellerId         int    `json:"reseller_id" gorm:"not null;index:idx_reseller_customers_reseller_bound,priority:1"`
 	CustomerId         int    `json:"customer_id" gorm:"not null;uniqueIndex:ux_reseller_customers_customer"`
 	RegistrationSource string `json:"registration_source" gorm:"type:varchar(24);not null;default:'legacy_unknown';index"`
+	Note               string `json:"note" gorm:"type:varchar(255);not null;default:''"`
 	BoundAt            int64  `json:"bound_at" gorm:"type:bigint;not null;index:idx_reseller_customers_reseller_bound,priority:2"`
 	PricingVersion     int64  `json:"pricing_version" gorm:"type:bigint;not null;default:1"`
 	CreatedAt          int64  `json:"created_at" gorm:"autoCreateTime"`

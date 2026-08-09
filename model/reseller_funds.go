@@ -16,15 +16,20 @@ const (
 	ResellerVoucherBatchMaxCount    = 50
 	ResellerTransferPreviewTTL      = 5 * 60
 	ResellerVoucherNoteMaxLength    = 255
+	ResellerCustomerNoteMaxLength   = 255
+
+	resellerOutboundKindTransfer = "transfer"
+	resellerOutboundKindVoucher  = "voucher"
 )
 
 var (
-	ErrResellerAmountInvalid       = errors.New("reseller amount is invalid")
-	ErrResellerRollingLimit        = errors.New("reseller rolling limit exceeded")
-	ErrResellerIdempotencyConflict = errors.New("reseller idempotency conflict")
-	ErrResellerPreviewInvalid      = errors.New("reseller transfer preview is invalid")
-	ErrResellerQuotaInsufficient   = errors.New("reseller quota is insufficient")
-	ErrResellerVoucherInvalid      = errors.New("reseller voucher is invalid")
+	ErrResellerAmountInvalid        = errors.New("reseller amount is invalid")
+	ErrResellerRollingLimit         = errors.New("reseller rolling limit exceeded")
+	ErrResellerIdempotencyConflict  = errors.New("reseller idempotency conflict")
+	ErrResellerPreviewInvalid       = errors.New("reseller transfer preview is invalid")
+	ErrResellerQuotaInsufficient    = errors.New("reseller quota is insufficient")
+	ErrResellerVoucherInvalid       = errors.New("reseller voucher is invalid")
+	ErrResellerRecipientNotCustomer = errors.New("reseller transfer recipient is not a direct customer")
 )
 
 func resellerAmountToQuota(amount int) (int, error) {
@@ -91,14 +96,18 @@ func getCompletedResellerIdempotency(userId int, operation string, key string, r
 	return &record
 }
 
-func ensureRollingOutboundLimitWithTx(tx *gorm.DB, userId int, amount int, now int64) error {
+// ensureVoucherRollingLimitWithTx guards user code issuance only. Direct
+// transfers to owned customers are bounded by the sender wallet balance alone,
+// so they are recorded as outbound events for audit but excluded from this
+// rolling window.
+func ensureVoucherRollingLimitWithTx(tx *gorm.DB, userId int, amount int, now int64) error {
 	var security ResellerSecurity
 	if err := lockForUpdate(tx).Where("user_id = ?", userId).First(&security).Error; err != nil {
 		return ErrResellerQuotaPasswordMissing
 	}
 	var used int64
 	if err := tx.Model(&ResellerOutboundEvent{}).
-		Where("user_id = ? AND created_at > ?", userId, now-24*60*60).
+		Where("user_id = ? AND kind = ? AND created_at > ?", userId, resellerOutboundKindVoucher, now-24*60*60).
 		Select("COALESCE(SUM(amount), 0)").Scan(&used).Error; err != nil {
 		return err
 	}
@@ -108,31 +117,62 @@ func ensureRollingOutboundLimitWithTx(tx *gorm.DB, userId int, amount int, now i
 	return nil
 }
 
-func CreateResellerTransferPreviewForRecipient(senderId int, recipientUsername string, recipientPublicId string, amount int, now int64) (string, *ResellerTransferPreview, error) {
-	quota, err := resellerAmountToQuota(amount)
+// resellerTransferUnits derives the whole-unit figure kept on transfer and audit
+// rows for display. Quota remains the authoritative amount that moves.
+func resellerTransferUnits(quota int64) int {
+	if common.QuotaPerUnit <= 0 {
+		return 0
+	}
+	return int(quota / int64(common.QuotaPerUnit))
+}
+
+// ResolveResellerTransferRecipient resolves a transfer target to a direct
+// customer of the sender. A reseller can only send quota to its own customers,
+// so an unbound username is rejected instead of silently resolving to a
+// stranger with a similar name.
+func ResolveResellerTransferRecipient(resellerId int, bindingId int64, recipientUsername string) (*User, error) {
+	var binding ResellerCustomer
+	recipientUsername = strings.TrimSpace(recipientUsername)
+	switch {
+	case bindingId > 0:
+		if err := DB.Where("id = ? AND reseller_id = ?", bindingId, resellerId).First(&binding).Error; err != nil {
+			return nil, ErrResellerRecipientNotCustomer
+		}
+	case recipientUsername != "":
+		var candidate User
+		if err := DB.Select("id").Where("username = ?", recipientUsername).First(&candidate).Error; err != nil {
+			return nil, ErrResellerRecipientNotCustomer
+		}
+		if err := DB.Where("customer_id = ? AND reseller_id = ?", candidate.Id, resellerId).First(&binding).Error; err != nil {
+			return nil, ErrResellerRecipientNotCustomer
+		}
+	default:
+		return nil, ErrResellerPreviewInvalid
+	}
+	if binding.CustomerId == resellerId {
+		return nil, ErrResellerPreviewInvalid
+	}
+	var receiver User
+	if err := DB.Where("id = ? AND status = ?", binding.CustomerId, common.UserStatusEnabled).First(&receiver).Error; err != nil {
+		return nil, ErrResellerRecipientNotCustomer
+	}
+	return &receiver, nil
+}
+
+func CreateResellerCustomerTransferPreview(senderId int, bindingId int64, recipientUsername string, quota int64, now int64) (string, *ResellerTransferPreview, error) {
+	if quota <= 0 {
+		return "", nil, ErrResellerAmountInvalid
+	}
+	receiver, err := ResolveResellerTransferRecipient(senderId, bindingId, recipientUsername)
 	if err != nil {
 		return "", nil, err
 	}
-	recipientUsername = strings.TrimSpace(recipientUsername)
-	recipientPublicId = strings.TrimSpace(recipientPublicId)
-	if (recipientUsername == "") == (recipientPublicId == "") {
-		return "", nil, ErrResellerPreviewInvalid
+	senderQuota, err := GetUserQuota(senderId, true)
+	if err != nil {
+		return "", nil, err
 	}
-
-	var receiver User
-	if recipientPublicId != "" {
-		var profile ResellerProfile
-		if err := DB.Where("receive_public_id = ? AND status = ?", recipientPublicId, ResellerStatusActive).First(&profile).Error; err != nil {
-			return "", nil, ErrResellerPreviewInvalid
-		}
-		if err := DB.Where("id = ? AND status = ?", profile.UserId, common.UserStatusEnabled).First(&receiver).Error; err != nil {
-			return "", nil, ErrResellerPreviewInvalid
-		}
-	} else if err := DB.Where("username = ? AND status = ?", recipientUsername, common.UserStatusEnabled).First(&receiver).Error; err != nil {
-		return "", nil, ErrResellerPreviewInvalid
-	}
-	if receiver.Id == senderId {
-		return "", nil, ErrResellerPreviewInvalid
+	if int64(senderQuota) < quota {
+		return "", nil, ErrResellerQuotaInsufficient
 	}
 	nonce, err := resellerPublicId("rpv_")
 	if err != nil {
@@ -141,7 +181,8 @@ func CreateResellerTransferPreviewForRecipient(senderId int, recipientUsername s
 	now = resellerNow(now)
 	preview := ResellerTransferPreview{
 		NonceHash: resellerSecretDigest("reseller-preview-v1", nonce), SenderId: senderId,
-		ReceiverId: receiver.Id, Amount: amount, Quota: quota, ExpiresAt: now + ResellerTransferPreviewTTL,
+		ReceiverId: receiver.Id, Amount: resellerTransferUnits(quota), Quota: int(quota),
+		ExpiresAt: now + ResellerTransferPreviewTTL,
 	}
 	if err := DB.Create(&preview).Error; err != nil {
 		return "", nil, err
@@ -149,17 +190,13 @@ func CreateResellerTransferPreviewForRecipient(senderId int, recipientUsername s
 	return nonce, &preview, nil
 }
 
-func CreateResellerTransferPreview(senderId int, receivePublicId string, amount int, now int64) (string, *ResellerTransferPreview, error) {
-	return CreateResellerTransferPreviewForRecipient(senderId, "", receivePublicId, amount, now)
-}
-
 type ResellerTransferCommitExpectation struct {
 	RecipientUserId int
 	RecipientName   string
-	Amount          int
+	Quota           int64
 }
 
-func CommitResellerQuotaTransferForRecipient(senderId int, nonce string, password string, idempotencyKey string, expectation ResellerTransferCommitExpectation, now int64) (*ResellerQuotaTransfer, error) {
+func CommitResellerQuotaTransfer(senderId int, nonce string, password string, idempotencyKey string, expectation ResellerTransferCommitExpectation, now int64) (*ResellerQuotaTransfer, error) {
 	now = resellerNow(now)
 	if err := VerifyResellerQuotaPassword(senderId, password, now, true); err != nil {
 		return nil, err
@@ -182,7 +219,7 @@ func CommitResellerQuotaTransferForRecipient(senderId int, nonce string, passwor
 		if expectation.RecipientUserId > 0 && expectation.RecipientUserId != preview.ReceiverId {
 			return ErrResellerPreviewInvalid
 		}
-		if expectation.Amount > 0 && expectation.Amount != preview.Amount {
+		if expectation.Quota > 0 && expectation.Quota != int64(preview.Quota) {
 			return ErrResellerPreviewInvalid
 		}
 		if strings.TrimSpace(expectation.RecipientName) != "" {
@@ -190,9 +227,6 @@ func CommitResellerQuotaTransferForRecipient(senderId int, nonce string, passwor
 			if err := tx.Select("id", "username").Where("id = ? AND username = ?", preview.ReceiverId, strings.TrimSpace(expectation.RecipientName)).First(&receiver).Error; err != nil {
 				return ErrResellerPreviewInvalid
 			}
-		}
-		if err := ensureRollingOutboundLimitWithTx(tx, senderId, preview.Amount, now); err != nil {
-			return err
 		}
 		publicId, err := resellerPublicId("rtx_")
 		if err != nil {
@@ -215,7 +249,7 @@ func CommitResellerQuotaTransferForRecipient(senderId int, nonce string, passwor
 		if err := tx.Model(&User{}).Where("id = ?", preview.ReceiverId).Update("quota", gorm.Expr("quota + ?", preview.Quota)).Error; err != nil {
 			return err
 		}
-		if err := tx.Create(&ResellerOutboundEvent{UserId: senderId, Kind: "transfer", Amount: preview.Amount, Reference: publicId, CreatedAt: now}).Error; err != nil {
+		if err := tx.Create(&ResellerOutboundEvent{UserId: senderId, Kind: resellerOutboundKindTransfer, Amount: preview.Amount, Reference: publicId, CreatedAt: now}).Error; err != nil {
 			return err
 		}
 		if result := tx.Model(&ResellerTransferPreview{}).Where("id = ? AND consumed_at = 0", preview.Id).Update("consumed_at", now); result.Error != nil || result.RowsAffected != 1 {
@@ -235,10 +269,6 @@ func CommitResellerQuotaTransferForRecipient(senderId int, nonce string, passwor
 		refreshResellerQuotaCaches(senderId, transfer.ReceiverId)
 	}
 	return &transfer, err
-}
-
-func CommitResellerQuotaTransfer(senderId int, nonce string, password string, idempotencyKey string, now int64) (*ResellerQuotaTransfer, error) {
-	return CommitResellerQuotaTransferForRecipient(senderId, nonce, password, idempotencyKey, ResellerTransferCommitExpectation{}, now)
 }
 
 func convertResellerCommissionQuota(userId int, expectedQuota int64, requireAll bool, password string, idempotencyKey string, now int64) (string, int64, error) {
@@ -348,7 +378,7 @@ func IssueResellerVoucherBatch(issuerId int, count int, amount int, note string,
 		if existing != nil {
 			return tx.Where("public_id = ?", existing.ResultRef).First(&batch).Error
 		}
-		if err := ensureRollingOutboundLimitWithTx(tx, issuerId, totalAmount, now); err != nil {
+		if err := ensureVoucherRollingLimitWithTx(tx, issuerId, totalAmount, now); err != nil {
 			return err
 		}
 		publicId, err := resellerPublicId("rvb_")
@@ -389,7 +419,7 @@ func IssueResellerVoucherBatch(issuerId int, count int, amount int, note string,
 		if debit.Error != nil || debit.RowsAffected != 1 {
 			return ErrResellerQuotaInsufficient
 		}
-		if err := tx.Create(&ResellerOutboundEvent{UserId: issuerId, Kind: "voucher", Amount: totalAmount, Reference: publicId, CreatedAt: now}).Error; err != nil {
+		if err := tx.Create(&ResellerOutboundEvent{UserId: issuerId, Kind: resellerOutboundKindVoucher, Amount: totalAmount, Reference: publicId, CreatedAt: now}).Error; err != nil {
 			return err
 		}
 		return tx.Create(&ResellerIdempotencyRecord{UserId: issuerId, Operation: "voucher_issue", Key: idempotencyKey, RequestHash: requestHash, ResultRef: publicId}).Error

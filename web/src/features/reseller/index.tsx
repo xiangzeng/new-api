@@ -28,6 +28,7 @@ import {
   KeyRound,
   Loader2,
   LockKeyhole,
+  PencilLine,
   RefreshCw,
   RotateCcwKey,
   Settings2,
@@ -38,7 +39,6 @@ import {
   UserRoundCog,
   Users,
 } from 'lucide-react'
-import { QRCodeSVG } from 'qrcode.react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -79,6 +79,7 @@ import {
   ResellerActionDialog,
   type ResellerActionKind,
 } from './components/reseller-action-dialog'
+import { ResellerCustomerNoteDialog } from './components/reseller-customer-note-dialog'
 import { ResellerPricingDialog } from './components/reseller-pricing-dialog'
 import { ResellerRevealDialog } from './components/reseller-reveal-dialog'
 import type {
@@ -129,10 +130,13 @@ export function ResellerCenter() {
   const [enabling, setEnabling] = useState(false)
   const [error, setError] = useState('')
   const [action, setAction] = useState<ResellerActionKind | null>(null)
-  const [initialTransferRecipient, setInitialTransferRecipient] = useState('')
+  const [transferBindingId, setTransferBindingId] = useState(0)
   const [pricingOpen, setPricingOpen] = useState(false)
   const [pricingCustomer, setPricingCustomer] =
     useState<ResellerCustomer | null>(null)
+  const [noteCustomer, setNoteCustomer] = useState<ResellerCustomer | null>(
+    null
+  )
   const [reveal, setReveal] = useState<{
     publicId: string
     batch: boolean
@@ -204,15 +208,6 @@ export function ResellerCenter() {
     initialized.current = true
   }, [load])
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const receive = new URLSearchParams(window.location.search).get('receive')
-    if (receive && /^[A-Za-z0-9]{32}$/.test(receive)) {
-      setInitialTransferRecipient(receive)
-      setAction('transfer')
-    }
-  }, [])
-
   const enable = async () => {
     setEnabling(true)
     try {
@@ -232,6 +227,11 @@ export function ResellerCenter() {
   const openCustomerPricing = (customer: ResellerCustomer) => {
     setPricingCustomer(customer)
     setPricingOpen(true)
+  }
+
+  const openCustomerTransfer = (customer: ResellerCustomer) => {
+    setTransferBindingId(customer.binding_id)
+    setAction('transfer')
   }
 
   if (loading) return <ResellerLoading />
@@ -294,11 +294,7 @@ export function ResellerCenter() {
                 </Alert>
               )}
 
-              <SecurityPanel
-                security={security}
-                receivePublicId={status.receive_public_id || ''}
-                onAction={setAction}
-              />
+              <SecurityPanel security={security} onAction={setAction} />
               <SummaryBand status={status} />
 
               <Tabs defaultValue='overview' className='gap-3'>
@@ -308,9 +304,9 @@ export function ResellerCenter() {
                       <BadgeDollarSign />
                       {t('Overview')}
                     </TabsTrigger>
-                    <TabsTrigger value='pricing'>
+                    <TabsTrigger value='customers'>
                       <Users />
-                      {t('Customer Pricing')}
+                      {t('Customers')}
                     </TabsTrigger>
                     <TabsTrigger value='transfers'>
                       <ArrowRightLeft />
@@ -333,7 +329,7 @@ export function ResellerCenter() {
                     defaultPricing={defaultPricing}
                   />
                 </TabsContent>
-                <TabsContent value='pricing'>
+                <TabsContent value='customers'>
                   <PricingCustomersPanel
                     defaultPricing={defaultPricing}
                     onDefaultPricing={() => {
@@ -342,6 +338,8 @@ export function ResellerCenter() {
                     }}
                     page={customers}
                     onPricing={openCustomerPricing}
+                    onTransfer={openCustomerTransfer}
+                    onNote={setNoteCustomer}
                     onPageChange={(page) =>
                       setCustomers((current) => ({ ...current, page }))
                     }
@@ -350,7 +348,10 @@ export function ResellerCenter() {
                 <TabsContent value='transfers'>
                   <TransfersPanel
                     page={transfers}
-                    onTransfer={() => setAction('transfer')}
+                    onTransfer={() => {
+                      setTransferBindingId(0)
+                      setAction('transfer')
+                    }}
                     onPageChange={(page) =>
                       setTransfers((current) => ({ ...current, page }))
                     }
@@ -397,13 +398,15 @@ export function ResellerCenter() {
             kind={action}
             open
             onOpenChange={(open) => {
-              if (!open) setAction(null)
+              if (!open) {
+                setAction(null)
+                setTransferBindingId(0)
+              }
             }}
             onCompleted={() => load(true)}
             availableCommissionQuota={status?.available_commission_quota || 0}
-            initialRecipient={
-              action === 'transfer' ? initialTransferRecipient : undefined
-            }
+            walletQuota={status?.wallet_quota || 0}
+            initialBindingId={action === 'transfer' ? transferBindingId : 0}
           />
         )}
         <ResellerPricingDialog
@@ -419,6 +422,14 @@ export function ResellerCenter() {
               ? getCustomerPricing(pricingCustomer.binding_id)
               : getDefaultPricing()
           }
+          onCompleted={() => load(true)}
+        />
+        <ResellerCustomerNoteDialog
+          open={noteCustomer !== null}
+          onOpenChange={(open) => {
+            if (!open) setNoteCustomer(null)
+          }}
+          customer={noteCustomer}
           onCompleted={() => load(true)}
         />
         {reveal && (
@@ -608,10 +619,14 @@ function OverviewPanel({
 function CustomersPanel({
   page,
   onPricing,
+  onTransfer,
+  onNote,
   onPageChange,
 }: {
   page: ResellerPage<ResellerCustomer>
   onPricing: (customer: ResellerCustomer) => void
+  onTransfer: (customer: ResellerCustomer) => void
+  onNote: (customer: ResellerCustomer) => void
   onPageChange: (page: number) => void
 }) {
   const { t } = useTranslation()
@@ -630,6 +645,7 @@ function CustomersPanel({
         <TableHeader>
           <TableRow>
             <TableHead>{t('Customer')}</TableHead>
+            <TableHead>{t('Balance')}</TableHead>
             <TableHead>{t('Current price')}</TableHead>
             <TableHead>{t('Usage')}</TableHead>
             <TableHead>{t('Your earnings')}</TableHead>
@@ -641,7 +657,7 @@ function CustomersPanel({
             <TableRow key={customer.binding_id}>
               <TableCell>
                 <div className='font-medium'>
-                  {customer.display_name || customer.username}
+                  {customer.note || customer.display_name || customer.username}
                   {customer.status !== 1 ? (
                     <Badge variant='destructive' className='ml-2'>
                       {t('Disabled')}
@@ -650,6 +666,14 @@ function CustomersPanel({
                 </div>
                 <div className='text-muted-foreground text-xs'>
                   #{customer.customer_id} · {customer.username}
+                </div>
+              </TableCell>
+              <TableCell className='tabular-nums'>
+                <div>{formatQuota(customer.quota)}</div>
+                <div className='text-muted-foreground mt-1 text-xs'>
+                  {t('{{quota}} used', {
+                    quota: formatQuota(customer.used_quota),
+                  })}
                 </div>
               </TableCell>
               <TableCell className='tabular-nums'>
@@ -682,15 +706,34 @@ function CustomersPanel({
                 {formatQuota(customer.reseller_commission_quota)}
               </TableCell>
               <TableCell className='text-right'>
-                <Button
-                  variant='ghost'
-                  size='icon-sm'
-                  onClick={() => onPricing(customer)}
-                  aria-label={t('Edit customer pricing')}
-                  disabled={customer.status !== 1}
-                >
-                  <Settings2 />
-                </Button>
+                <div className='flex justify-end gap-1'>
+                  <Button
+                    variant='ghost'
+                    size='icon-sm'
+                    onClick={() => onTransfer(customer)}
+                    aria-label={t('Send quota to this customer')}
+                    disabled={customer.status !== 1}
+                  >
+                    <ArrowRightLeft />
+                  </Button>
+                  <Button
+                    variant='ghost'
+                    size='icon-sm'
+                    onClick={() => onNote(customer)}
+                    aria-label={t('Edit customer note')}
+                  >
+                    <PencilLine />
+                  </Button>
+                  <Button
+                    variant='ghost'
+                    size='icon-sm'
+                    onClick={() => onPricing(customer)}
+                    aria-label={t('Edit customer pricing')}
+                    disabled={customer.status !== 1}
+                  >
+                    <Settings2 />
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ))}
@@ -705,12 +748,16 @@ function PricingCustomersPanel({
   onDefaultPricing,
   page,
   onPricing,
+  onTransfer,
+  onNote,
   onPageChange,
 }: {
   defaultPricing: ResellerPricingResponse | null
   onDefaultPricing: () => void
   page: ResellerPage<ResellerCustomer>
   onPricing: (customer: ResellerCustomer) => void
+  onTransfer: (customer: ResellerCustomer) => void
+  onNote: (customer: ResellerCustomer) => void
   onPageChange: (page: number) => void
 }) {
   const { t } = useTranslation()
@@ -739,6 +786,8 @@ function PricingCustomersPanel({
       <CustomersPanel
         page={page}
         onPricing={onPricing}
+        onTransfer={onTransfer}
+        onNote={onNote}
         onPageChange={onPageChange}
       />
     </div>
@@ -899,7 +948,9 @@ function TransfersPanel({
               <TableCell>
                 {item.counterparty_name || `#${item.counterparty_user_id}`}
               </TableCell>
-              <TableCell>{item.amount}</TableCell>
+              <TableCell className='tabular-nums'>
+                {formatQuota(item.quota)}
+              </TableCell>
               <TableCell className='font-mono text-xs'>
                 {item.public_id}
               </TableCell>
@@ -1074,22 +1125,16 @@ function VouchersPanel({
 
 function SecurityPanel({
   security,
-  receivePublicId,
   onAction,
 }: {
   security: ResellerSecurityStatus | null
-  receivePublicId: string
   onAction: (action: ResellerActionKind) => void
 }) {
   const { t } = useTranslation()
-  const receiveLink =
-    typeof window === 'undefined' || !receivePublicId
-      ? ''
-      : `${window.location.origin}/reseller?receive=${receivePublicId}`
   return (
     <div className='divide-y rounded-md border'>
       <div className='px-4 py-3'>
-        <h3 className='font-semibold'>{t('Quota security and receiving')}</h3>
+        <h3 className='font-semibold'>{t('Quota security')}</h3>
       </div>
       {!security?.configured && (
         <Alert className='rounded-none border-0 border-b'>
@@ -1143,54 +1188,6 @@ function SecurityPanel({
           )}
         </div>
       </div>
-      {receivePublicId && receiveLink ? (
-        <div className='grid gap-4 p-4 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center'>
-          <div className='mx-auto bg-white p-3'>
-            <QRCodeSVG value={receiveLink} size={148} includeMargin />
-          </div>
-          <div className='min-w-0 space-y-3'>
-            <div className='min-w-0'>
-              <h3 className='font-medium'>{t('Quota receiving address')}</h3>
-              <div className='mt-1 flex items-center gap-2'>
-                <Input
-                  value={receivePublicId}
-                  readOnly
-                  className='min-w-0 font-mono text-xs'
-                />
-                <CopyButton
-                  value={receivePublicId}
-                  variant='outline'
-                  tooltip={t('Copy receive address')}
-                />
-              </div>
-            </div>
-            <div className='min-w-0'>
-              <h3 className='font-medium'>{t('Quota receiving link')}</h3>
-              <div className='mt-1 flex items-center gap-2'>
-                <Input
-                  value={receiveLink}
-                  readOnly
-                  className='min-w-0 font-mono text-xs'
-                />
-                <CopyButton
-                  value={receiveLink}
-                  variant='outline'
-                  tooltip={t('Copy receive link')}
-                />
-              </div>
-            </div>
-            <Button
-              variant='ghost'
-              size='sm'
-              onClick={() => onAction('rotate')}
-              disabled={!security?.configured}
-            >
-              <RefreshCw />
-              {t('Rotate receive code')}
-            </Button>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }
