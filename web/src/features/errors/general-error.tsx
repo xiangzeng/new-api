@@ -37,6 +37,22 @@ function getHttpStatus(error: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined
 }
 
+// A rejected dynamic import carries no HTTP response, so a chunk the server
+// refused (rate limit, deploy swap, flaky network) is indistinguishable from a
+// crash unless the module load is recognised on its own terms. Reloading
+// re-requests the chunk and is the only action that actually recovers.
+function isModuleLoadError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const { name, message } = error as { name?: unknown; message?: unknown }
+  if (name === 'ChunkLoadError') return true
+  if (typeof message !== 'string') return false
+  return (
+    message.includes('dynamically imported module') ||
+    message.includes('Loading chunk') ||
+    message.includes('Loading CSS chunk')
+  )
+}
+
 export function GeneralError({
   className,
   minimal = false,
@@ -47,20 +63,23 @@ export function GeneralError({
   const { history } = useRouter()
   const status = getHttpStatus(error)
   const isRateLimited = status === 429
-  const title = isRateLimited
-    ? t('Too many requests')
-    : `${t('Oops! Something went wrong')} ${`:')`}`
-  const description = isRateLimited
-    ? t('Please wait a moment before trying again.')
-    : t('Please try again later.')
+  const moduleLoadFailed = isModuleLoadError(error)
+  const title = moduleLoadFailed
+    ? t('Failed to load page resources')
+    : isRateLimited
+      ? t('Too many requests')
+      : `${t('Oops! Something went wrong')} ${`:')`}`
+  const description = moduleLoadFailed
+    ? t('Part of this page could not be downloaded. Please reload.')
+    : isRateLimited
+      ? t('Please wait a moment before trying again.')
+      : t('Please try again later.')
 
   return (
     <div className={cn('h-svh w-full', className)}>
       <div className='m-auto flex h-full w-full flex-col items-center justify-center gap-2'>
-        {!minimal && (
-          <h1 className='text-[7rem] leading-tight font-bold'>
-            {status ?? 500}
-          </h1>
+        {!minimal && status !== undefined && (
+          <h1 className='text-[7rem] leading-tight font-bold'>{status}</h1>
         )}
         <span className='font-medium'>{title}</span>
         <p className='text-muted-foreground text-center'>
@@ -73,9 +92,15 @@ export function GeneralError({
         )}
         {!minimal && (
           <div className='mt-6 flex flex-wrap justify-center gap-4'>
-            <Button variant='outline' onClick={() => history.go(-1)}>
-              {t('Go Back')}
-            </Button>
+            {moduleLoadFailed ? (
+              <Button onClick={() => window.location.reload()}>
+                {t('Reload')}
+              </Button>
+            ) : (
+              <Button variant='outline' onClick={() => history.go(-1)}>
+                {t('Go Back')}
+              </Button>
+            )}
             <Button
               variant='outline'
               render={

@@ -5341,6 +5341,9 @@
     "Admin binding": "Admin binding",
     "Legacy": "Legacy",
     "Bound the user to a reseller as a direct customer": "Bound the user to a reseller as a direct customer",
-    "Released the user from its reseller": "Released the user from its reseller"
+    "Released the user from its reseller": "Released the user from its reseller",
+    "Failed to load page resources": "Не удалось загрузить ресурсы страницы",
+    "Part of this page could not be downloaded. Please reload.": "Часть этой страницы не удалось загрузить. Пожалуйста, перезагрузите.",
+    "Reload": "Перезагрузить"
   }
 }

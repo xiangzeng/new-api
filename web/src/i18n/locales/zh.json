@@ -5341,6 +5341,9 @@
     "Admin binding": "管理员绑定",
     "Legacy": "历史数据",
     "Bound the user to a reseller as a direct customer": "将用户绑定为站长的直属客户",
-    "Released the user from its reseller": "解除了用户的站长归属"
+    "Released the user from its reseller": "解除了用户的站长归属",
+    "Failed to load page resources": "页面资源加载失败",
+    "Part of this page could not be downloaded. Please reload.": "页面的部分资源未能下载，请重新加载。",
+    "Reload": "重新加载"
   }
 }

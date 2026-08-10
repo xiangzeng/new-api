@@ -5341,6 +5341,9 @@
     "Admin binding": "Admin binding",
     "Legacy": "Legacy",
     "Bound the user to a reseller as a direct customer": "Bound the user to a reseller as a direct customer",
-    "Released the user from its reseller": "Released the user from its reseller"
+    "Released the user from its reseller": "Released the user from its reseller",
+    "Failed to load page resources": "Không tải được tài nguyên trang",
+    "Part of this page could not be downloaded. Please reload.": "Không thể tải một phần của trang này. Vui lòng tải lại.",
+    "Reload": "Tải lại"
   }
 }

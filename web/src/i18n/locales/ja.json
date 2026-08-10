@@ -5341,6 +5341,9 @@
     "Admin binding": "Admin binding",
     "Legacy": "Legacy",
     "Bound the user to a reseller as a direct customer": "Bound the user to a reseller as a direct customer",
-    "Released the user from its reseller": "Released the user from its reseller"
+    "Released the user from its reseller": "Released the user from its reseller",
+    "Failed to load page resources": "ページリソースの読み込みに失敗しました",
+    "Part of this page could not be downloaded. Please reload.": "このページの一部を読み込めませんでした。再読み込みしてください。",
+    "Reload": "再読み込み"
   }
 }
