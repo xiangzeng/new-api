@@ -246,6 +246,40 @@ const zhCN = {
   'Previous page': '上一页',
   'Next page': '下一页',
   'Page {{page}} of {{total}}': '第 {{page}} / {{total}} 页',
+
+  // Admin-side view of the reseller network (管理员 → 站长管理).
+  Resellers: '站长管理',
+  'All resellers': '全部站长',
+  Reseller: '站长',
+  Commission: '收益',
+  Opened: '开通时间',
+  Frozen: '冻结',
+  '{{quota}} pending': '待结算 {{quota}}',
+  'View customers': '查看客户',
+  'Nobody has opened a reseller center yet.': '还没有用户开通站长中心。',
+  'Search resellers': '搜索站长',
+  'Failed to load resellers': '加载站长列表失败',
+  'Failed to load customers': '加载客户列表失败',
+  'Customers of {{reseller}}': '{{reseller}} 的直属客户',
+  'This reseller owns nobody yet. Use "Add a direct customer" to move an existing account under it.':
+    '该站长名下暂无客户。用「添加直属客户」把已有账号移到它名下。',
+  Bound: '绑定时间',
+  'Add a direct customer': '添加直属客户',
+  'The account is moved under {{reseller}} immediately. A user already owned by another reseller must be released first.':
+    '账号会立即移到 {{reseller}} 名下。已属于其他站长的用户需要先解绑。',
+  'Search by username, display name or email': '按用户名、昵称或邮箱搜索',
+  'Type to search for an account.': '输入关键词搜索账号。',
+  'Searching...': '搜索中…',
+  'No matching account.': '没有匹配的账号。',
+  'Failed to search users': '搜索用户失败',
+  'Customer bound': '客户已绑定',
+  'Failed to bind the customer': '绑定客户失败',
+  Unbind: '解绑',
+  'Unbind this customer?': '确认解绑该客户？',
+  'The account keeps its balance and history but stops belonging to this reseller. Customer-level pricing set by the reseller is dropped.':
+    '账号的余额与历史都会保留，但不再属于该站长；站长为它单独设置的客户价会一并删除。',
+  'Customer unbound': '客户已解绑',
+  'Failed to unbind the customer': '解绑客户失败',
 } as const
 
 const en = Object.fromEntries(Object.keys(zhCN).map((key) => [key, key]))

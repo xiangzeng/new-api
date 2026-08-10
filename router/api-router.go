@@ -199,6 +199,16 @@ func SetApiRouter(router *gin.Engine) {
 			resellerRoute.POST("/vouchers/:id/reveal", middleware.CriticalRateLimit(), controller.RevealResellerVoucher)
 		}
 
+		// Operator-side view of the reseller network. Separate from resellerRoute
+		// because the caller here is an admin acting on someone else's center and
+		// needs no reseller profile of its own.
+		resellerAdminRoute := apiRouter.Group("/reseller/admin")
+		resellerAdminRoute.Use(middleware.AdminAuth(), middleware.DisableCache())
+		{
+			resellerAdminRoute.GET("/resellers", controller.AdminListResellers)
+			resellerAdminRoute.GET("/resellers/:id/customers", controller.AdminListResellerCustomers)
+		}
+
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")
 		subscriptionRoute.Use(middleware.UserAuth())

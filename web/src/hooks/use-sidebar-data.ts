@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   ListTodo,
   MessageSquare,
+  Network,
   Plug,
   Radio,
   ServerCog,
@@ -141,6 +142,11 @@ export function useSidebarData(): SidebarData {
             title: t('Users'),
             url: '/users',
             icon: Users,
+          },
+          {
+            title: t('Resellers'),
+            url: '/reseller-admin',
+            icon: Network,
           },
           {
             title: t('Custom Pricing'),
