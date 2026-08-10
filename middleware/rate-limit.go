@@ -106,6 +106,21 @@ func redisFixedWindowTake(ctx context.Context, key string, maxRequestNum int, du
 	return allowedValue == 1, count, ttlSeconds, nil
 }
 
+// abortForRateLimitCheckFailure ends a request whose rate limit verdict never
+// arrived. A cancelled request context means the client hung up mid-check:
+// nothing failed server-side and nobody is left to receive a response, so
+// answering 500 would only inflate the error rate and bury genuine Redis
+// outages in the logs. Real backend failures stay fail-closed.
+func abortForRateLimitCheckFailure(c *gin.Context, err error, subject string) {
+	if errors.Is(err, context.Canceled) {
+		c.Abort()
+		return
+	}
+	logger.LogError(c.Request.Context(), fmt.Sprintf("rate limit check failed (%s): %v", subject, err))
+	c.Status(http.StatusInternalServerError)
+	c.Abort()
+}
+
 func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
 	allowed, _, ttlSeconds, err := redisFixedWindowTake(
 		c.Request.Context(),
@@ -114,9 +129,7 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 		duration,
 	)
 	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("rate limit check failed (mark=%s): %v", mark, err))
-		c.Status(http.StatusInternalServerError)
-		c.Abort()
+		abortForRateLimitCheckFailure(c, err, "mark="+mark)
 		return
 	}
 	if !allowed {
@@ -223,9 +236,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
 	allowed, _, ttlSeconds, err := redisFixedWindowTake(c.Request.Context(), key, maxRequestNum, duration)
 	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("rate limit check failed (key=%s): %v", key, err))
-		c.Status(http.StatusInternalServerError)
-		c.Abort()
+		abortForRateLimitCheckFailure(c, err, "key="+key)
 		return
 	}
 	if !allowed {

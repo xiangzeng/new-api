@@ -223,3 +223,39 @@ func TestRedisFailurePolicies(t *testing.T) {
 	assert.Empty(t, userResponse.Body.String())
 	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/email", "192.0.2.62:12345").Code)
 }
+
+func TestRateLimitTreatsClientCancellationAsClientGone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	useRateLimitMiniRedis(t)
+
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	handlerReached := false
+	router.GET("/ip", rateLimitFactory(10, 30, "CANCEL-IP"), func(c *gin.Context) {
+		handlerReached = true
+		c.Status(http.StatusNoContent)
+	})
+	router.GET(
+		"/user",
+		func(c *gin.Context) { c.Set("id", 11) },
+		userRateLimitFactory(10, 30, "CANCEL-USER"),
+		func(c *gin.Context) {
+			handlerReached = true
+			c.Status(http.StatusNoContent)
+		},
+	)
+
+	for _, path := range []string{"/ip", "/user"} {
+		handlerReached = false
+		cancelledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil).WithContext(cancelledCtx)
+		request.RemoteAddr = "192.0.2.70:12345"
+		router.ServeHTTP(recorder, request)
+
+		assert.NotEqual(t, http.StatusInternalServerError, recorder.Code, "path %s", path)
+		assert.False(t, handlerReached, "path %s", path)
+	}
+}
