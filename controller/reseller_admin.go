@@ -8,7 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func adminResellerCustomerId(c *gin.Context) (int, bool) {
+// adminResellerPathUserId reads the :id segment, which addresses a customer on
+// the binding routes and a reseller on the roster routes. Both are plain user
+// ids; only the role the route assigns them differs.
+func adminResellerPathUserId(c *gin.Context) (int, bool) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
 		resellerBadRequest(c, "用户标识无效")
@@ -17,8 +20,48 @@ func adminResellerCustomerId(c *gin.Context) (int, bool) {
 	return id, true
 }
 
+// AdminListResellers answers "who runs a reseller center", which no other admin
+// screen can tell the operator: the role lives in reseller_profiles, not on the
+// user row, so before this endpoint it could only be discovered one user at a
+// time through the binding dialog.
+func AdminListResellers(c *gin.Context) {
+	page := common.GetPageQuery(c)
+	items, total, err := model.ListResellerRoster(c.Query("keyword"), page.GetStartIdx(), page.GetPageSize())
+	if err != nil {
+		resellerError(c, err)
+		return
+	}
+	page.SetItems(items)
+	page.SetTotal(int(total))
+	resellerSuccess(c, page)
+}
+
+// AdminListResellerCustomers is the operator's view of one reseller's customers.
+// It reuses the reseller-facing query with an explicit reseller id instead of
+// the caller's own, so both views stay identical as that projection evolves.
+// A target without a profile surfaces as RESELLER_NOT_ENABLED.
+func AdminListResellerCustomers(c *gin.Context) {
+	resellerId, ok := adminResellerPathUserId(c)
+	if !ok {
+		return
+	}
+	if _, err := model.GetResellerProfile(resellerId); err != nil {
+		resellerError(c, err)
+		return
+	}
+	page := common.GetPageQuery(c)
+	items, total, err := model.ListResellerCustomers(resellerId, page.GetStartIdx(), page.GetPageSize())
+	if err != nil {
+		resellerError(c, err)
+		return
+	}
+	page.SetItems(items)
+	page.SetTotal(int(total))
+	resellerSuccess(c, page)
+}
+
 func GetUserResellerBinding(c *gin.Context) {
-	customerId, ok := adminResellerCustomerId(c)
+	customerId, ok := adminResellerPathUserId(c)
 	if !ok {
 		return
 	}
@@ -36,7 +79,7 @@ type adminResellerBindRequest struct {
 }
 
 func BindUserToReseller(c *gin.Context) {
-	customerId, ok := adminResellerCustomerId(c)
+	customerId, ok := adminResellerPathUserId(c)
 	if !ok {
 		return
 	}
@@ -60,7 +103,7 @@ func BindUserToReseller(c *gin.Context) {
 }
 
 func UnbindUserFromReseller(c *gin.Context) {
-	customerId, ok := adminResellerCustomerId(c)
+	customerId, ok := adminResellerPathUserId(c)
 	if !ok {
 		return
 	}
