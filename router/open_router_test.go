@@ -29,13 +29,11 @@ func setupOpenBalanceApi(t *testing.T) (*gin.Engine, *gorm.DB) {
 
 	previousDB := model.DB
 	previousLogDB := model.LOG_DB
-	previousSecret := common.SessionSecret
 	previousType := common.MainDatabaseType()
 	previousRedis := common.RedisEnabled
 	previousSettings := *system_setting.GetOpenBalanceApiSettings()
 	previousDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
 
-	common.SessionSecret = "open-router-test-secret"
 	common.RedisEnabled = false
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 
@@ -54,7 +52,6 @@ func setupOpenBalanceApi(t *testing.T) (*gin.Engine, *gorm.DB) {
 	t.Cleanup(func() {
 		model.DB = previousDB
 		model.LOG_DB = previousLogDB
-		common.SessionSecret = previousSecret
 		common.RedisEnabled = previousRedis
 		common.SetMainDatabaseType(previousType)
 		*system_setting.GetOpenBalanceApiSettings() = previousSettings

@@ -56,11 +56,18 @@ func (OpenApp) TableName() string {
 }
 
 // openAppSigningKey is domain separated from every other HMAC in the project so
-// a digest from one table can never validate against another. It follows the
-// same SessionSecret derivation as reseller invitations, which are long lived
-// for the same reason these credentials are.
+// a digest from one table can never validate against another.
+//
+// The key deliberately carries no secret. What it digests is already
+// openAppSecretRandomBytes of crypto/rand output, so a secret key would buy
+// nothing against an attacker who cannot brute force that entropy in the first
+// place — while making the digest depend on process state. Deriving it from
+// common.SessionSecret, which is re-rolled on every boot unless SESSION_SECRET
+// is set, silently invalidated every stored secret on restart. A constant key is
+// what makes an issued secret outlive a redeploy; rotation stays an explicit
+// action through ResetOpenAppSecret.
 func openAppSigningKey() []byte {
-	return []byte("open-app-secret-v1:" + common.SessionSecret)
+	return []byte("open-app-secret-v1")
 }
 
 func openAppSecretHash(secret string) string {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -15,10 +16,8 @@ import (
 func setupOpenApiTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	previousDB := DB
-	previousSecret := common.SessionSecret
 	previousType := common.MainDatabaseType()
 	previousRedis := common.RedisEnabled
-	common.SessionSecret = "open-api-test-secret"
 	common.RedisEnabled = false
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
@@ -28,7 +27,6 @@ func setupOpenApiTestDB(t *testing.T) *gorm.DB {
 	DB = db
 	t.Cleanup(func() {
 		DB = previousDB
-		common.SessionSecret = previousSecret
 		common.RedisEnabled = previousRedis
 		common.SetMainDatabaseType(previousType)
 		sqlDB, _ := db.DB()
@@ -55,6 +53,29 @@ func createOpenApiTestUser(t *testing.T, db *gorm.DB, username string, password 
 	}
 	require.NoError(t, db.Create(&user).Error)
 	return user
+}
+
+// simulateProcessRestart reproduces what a redeploy does to a New API instance
+// that has no SESSION_SECRET configured: common.SessionSecret gets a brand new
+// random value. Anything the open API signs must be verifiable across it.
+func simulateProcessRestart(t *testing.T) {
+	t.Helper()
+	previous := common.SessionSecret
+	common.SessionSecret = uuid.New().String()
+	t.Cleanup(func() { common.SessionSecret = previous })
+}
+
+func TestOpenAppSecretSurvivesRestart(t *testing.T) {
+	setupOpenApiTestDB(t)
+
+	app, secret, err := CreateOpenApp("Partner Site", "", 0)
+	require.NoError(t, err)
+
+	simulateProcessRestart(t)
+
+	authenticated, err := ValidateOpenApp(app.AppId, secret, "203.0.113.7")
+	require.NoError(t, err)
+	assert.Equal(t, app.AppId, authenticated.AppId)
 }
 
 func TestValidateOpenAppRejectsWrongSecret(t *testing.T) {

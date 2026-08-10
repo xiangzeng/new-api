@@ -8,6 +8,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A credential is advertised to partners as long lived: it ends only when the
+// user changes their password, someone revokes it, or the app is disabled. A
+// redeploy is none of those, so it must not be able to end one either.
+func TestOpenCredentialSurvivesRestart(t *testing.T) {
+	db := setupOpenApiTestDB(t)
+
+	app, _, err := CreateOpenApp("Partner Site", "", 0)
+	require.NoError(t, err)
+	user := createOpenApiTestUser(t, db, "alice", "correct-horse", common.UserStatusEnabled)
+	token, _, err := IssueOpenCredential(user.Id, app.AppId, user.AuthVersion, "203.0.113.7", "")
+	require.NoError(t, err)
+
+	simulateProcessRestart(t)
+
+	credential, owner, err := ValidateOpenCredential(token)
+	require.NoError(t, err)
+	assert.Equal(t, user.Id, owner.Id)
+	assert.Equal(t, OpenScopeBalanceRead, credential.Scope)
+
+	// Revocation must still resolve the same row after the restart, otherwise a
+	// credential could survive the very actions meant to end it.
+	require.NoError(t, RevokeOpenCredentialByToken(token))
+	_, _, err = ValidateOpenCredential(token)
+	assert.ErrorIs(t, err, ErrOpenCredentialRevoked)
+}
+
 func TestIssueOpenCredentialReplacesPreviousGrant(t *testing.T) {
 	db := setupOpenApiTestDB(t)
 
