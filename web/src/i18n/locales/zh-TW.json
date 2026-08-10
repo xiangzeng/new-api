@@ -5341,6 +5341,9 @@
     "Admin binding": "Admin binding",
     "Legacy": "Legacy",
     "Bound the user to a reseller as a direct customer": "Bound the user to a reseller as a direct customer",
-    "Released the user from its reseller": "Released the user from its reseller"
+    "Released the user from its reseller": "Released the user from its reseller",
+    "Failed to load page resources": "頁面資源載入失敗",
+    "Part of this page could not be downloaded. Please reload.": "頁面的部分資源未能下載，請重新載入。",
+    "Reload": "重新載入"
   }
 }
