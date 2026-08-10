@@ -37,6 +37,8 @@ const BRAND_AND_LITERAL_KEYS = new Set([
   'API URL',
   'API2GPT',
   'AccessKey / SecretAccessKey',
+  'App ID',
+  'App Secret',
   'AZURE_OPENAI_ENDPOINT *',
   'Baidu V2',
   'CC Switch',
