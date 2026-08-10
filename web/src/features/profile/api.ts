@@ -27,6 +27,7 @@ import type {
   DeleteAccountRequest,
   CheckinStatusResponse,
   CheckinResponse,
+  OpenCredentialGrant,
 } from './types'
 
 // ============================================================================
@@ -222,5 +223,28 @@ export async function performCheckin(
     ? `/api/user/checkin?turnstile=${encodeURIComponent(turnstileToken)}`
     : '/api/user/checkin'
   const res = await api.post(url)
+  return res.data
+}
+
+// ============================================================================
+// Third-party balance authorizations
+// ============================================================================
+
+/**
+ * List the balance-read credentials this user granted to third-party sites.
+ */
+export async function getOpenCredentials(): Promise<
+  ApiResponse<OpenCredentialGrant[]>
+> {
+  const res = await api.get('/api/user/open-credentials')
+  return res.data
+}
+
+/**
+ * Revoke one granted credential. The partner must ask the user to authorize
+ * again before it can read the balance.
+ */
+export async function revokeOpenCredential(id: number): Promise<ApiResponse> {
+  const res = await api.delete(`/api/user/open-credentials/${id}`)
   return res.data
 }

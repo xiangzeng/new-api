@@ -232,3 +232,18 @@ export interface CheckinResponse {
   /** Quota awarded for this check-in */
   quota_awarded: number
 }
+
+/**
+ * One third-party balance authorization, as returned by
+ * `GET /api/user/open-credentials`. Carries no digest material — only what a
+ * person needs to recognize the grant and decide whether to revoke it.
+ */
+export interface OpenCredentialGrant {
+  id: number
+  app_id: string
+  app_name: string
+  token_hint: string
+  scope: string
+  created_time: number
+  last_used_time: number
+}
