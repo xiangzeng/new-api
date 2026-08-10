@@ -117,8 +117,11 @@ type OpenBalanceSnapshot struct {
 	RequestCount int    `gorm:"column:request_count"`
 }
 
+// openCredentialSigningKey is a constant for the reasons documented on
+// openAppSigningKey: the token it digests is already high-entropy random, and a
+// process-dependent key would revoke every outstanding credential on restart.
 func openCredentialSigningKey() []byte {
-	return []byte("open-credential-v1:" + common.SessionSecret)
+	return []byte("open-credential-v1")
 }
 
 func openCredentialHash(token string) string {
