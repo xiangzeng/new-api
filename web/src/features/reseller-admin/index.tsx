@@ -134,54 +134,65 @@ export function ResellerAdmin() {
   const customers = customersQuery.data ?? emptyPage<ResellerCustomer>()
 
   return (
-    <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Resellers')}</SectionPageLayout.Title>
-      <SectionPageLayout.Actions>
-        <Button
-          variant='outline'
-          size='sm'
-          onClick={refreshAll}
-          disabled={rosterQuery.isFetching}
-          aria-label={t('Refresh reseller data')}
-        >
-          <RefreshCw className={rosterQuery.isFetching ? 'animate-spin' : ''} />
-          <span className='hidden sm:inline'>{t('Refresh')}</span>
-        </Button>
-      </SectionPageLayout.Actions>
-
-      <div className='space-y-4'>
-        <ResellerRosterTable
-          page={roster}
-          selectedUserId={selected?.user_id ?? 0}
-          searchInput={
-            <Input
-              className='h-8 w-56'
-              value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
-              placeholder={t('Search resellers')}
-              aria-label={t('Search resellers')}
+    <>
+      <SectionPageLayout>
+        <SectionPageLayout.Title>{t('Resellers')}</SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={refreshAll}
+            disabled={rosterQuery.isFetching}
+            aria-label={t('Refresh reseller data')}
+          >
+            <RefreshCw
+              className={rosterQuery.isFetching ? 'animate-spin' : ''}
             />
-          }
-          onSelect={(reseller) => {
-            setSelected(reseller)
-            setCustomersPage(1)
-          }}
-          onPageChange={setRosterPage}
-        />
+            <span className='hidden sm:inline'>{t('Refresh')}</span>
+          </Button>
+        </SectionPageLayout.Actions>
 
-        {selected ? (
-          <ResellerCustomersPanel
-            reseller={selected}
-            page={customers}
-            onPageChange={setCustomersPage}
-            onAdd={() => setAddOpen(true)}
-            onUnbind={setUnbindTarget}
-            unbindingId={
-              unbindMutation.isPending ? (unbindTarget?.customer_id ?? 0) : 0
-            }
-          />
-        ) : null}
-      </div>
+        {/* SectionPageLayout renders named slots only; anything passed as a
+            bare child is dropped, so the body must live inside Content and the
+            dialogs must sit outside the layout entirely. */}
+        <SectionPageLayout.Content>
+          <div className='space-y-4'>
+            <ResellerRosterTable
+              page={roster}
+              selectedUserId={selected?.user_id ?? 0}
+              searchInput={
+                <Input
+                  className='h-8 w-56'
+                  value={keyword}
+                  onChange={(event) => setKeyword(event.target.value)}
+                  placeholder={t('Search resellers')}
+                  aria-label={t('Search resellers')}
+                />
+              }
+              onSelect={(reseller) => {
+                setSelected(reseller)
+                setCustomersPage(1)
+              }}
+              onPageChange={setRosterPage}
+            />
+
+            {selected ? (
+              <ResellerCustomersPanel
+                reseller={selected}
+                page={customers}
+                onPageChange={setCustomersPage}
+                onAdd={() => setAddOpen(true)}
+                onUnbind={setUnbindTarget}
+                unbindingId={
+                  unbindMutation.isPending
+                    ? (unbindTarget?.customer_id ?? 0)
+                    : 0
+                }
+              />
+            ) : null}
+          </div>
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
 
       <AddCustomerDialog
         reseller={selected}
@@ -218,6 +229,6 @@ export function ResellerAdmin() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </SectionPageLayout>
+    </>
   )
 }
