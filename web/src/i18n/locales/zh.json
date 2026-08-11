@@ -5383,6 +5383,10 @@
     "Balance key revoked": "余额密钥已撤销",
     "Failed to load balance keys": "加载余额密钥失败",
     "Failed to create balance key": "创建余额密钥失败",
-    "Failed to revoke balance key": "撤销余额密钥失败"
+    "Failed to revoke balance key": "撤销余额密钥失败",
+    "How to use": "如何使用",
+    "Copy command": "复制命令",
+    "Replace obk_YOUR_KEY with your own key. The response carries quota and used_quota in raw units, which never change with the site display setting, plus balance and used converted to the site currency.": "把 obk_YOUR_KEY 换成你自己的密钥。返回里的 quota / used_quota 是原始额度单位，不随站点展示设置变化；balance / used 是按站点货币换算后的金额。",
+    "This command already carries the key above, so it runs as is. The same example, with a placeholder, stays on the card after you close this dialog.": "这条命令已经带上了上面的密钥，可直接运行。关闭本弹窗后，卡片上会一直保留同样的示例（密钥处为占位符）。"
   }
 }

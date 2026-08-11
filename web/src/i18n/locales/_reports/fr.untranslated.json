@@ -17,5 +17,8 @@
   "Send it as an Authorization: Bearer header to GET /api/open/v1/balance.": "Send it as an Authorization: Bearer header to GET /api/open/v1/balance.",
   "Failed to load balance keys": "Failed to load balance keys",
   "Failed to create balance key": "Failed to create balance key",
-  "Failed to revoke balance key": "Failed to revoke balance key"
+  "Failed to revoke balance key": "Failed to revoke balance key",
+  "How to use": "How to use",
+  "Replace obk_YOUR_KEY with your own key. The response carries quota and used_quota in raw units, which never change with the site display setting, plus balance and used converted to the site currency.": "Replace obk_YOUR_KEY with your own key. The response carries quota and used_quota in raw units, which never change with the site display setting, plus balance and used converted to the site currency.",
+  "This command already carries the key above, so it runs as is. The same example, with a placeholder, stays on the card after you close this dialog.": "This command already carries the key above, so it runs as is. The same example, with a placeholder, stays on the card after you close this dialog."
 }
