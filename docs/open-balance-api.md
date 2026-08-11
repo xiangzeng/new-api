@@ -1,90 +1,43 @@
-# 余额开放接口（Balance Open API）
+# 余额查询接口（Balance API）
 
-供第三方站点集成：用户在合作方网站输入 **本站用户名 + 密码**，合作方后端换取一个**长期有效、只读余额**的凭证，之后凭该凭证查询余额。用户无需登录本站。
+供你在**自己的程序**里查询**自己账号**的余额：手机 App、桌面小组件、监控脚本、命令行工具都可以。
 
-- 基础路径：`https://<你的站点>/api/open/v1`
-- 认证：换凭证用 `X-App-Id` / `X-App-Secret`；查余额用 `Authorization: Bearer <credential>`
-- 默认关闭。站长需在后台「余额开放接口」页面开启后才可用。
-
----
-
-## 1. 安全须知（对接前必读）
-
-**这套接口要求用户把本站密码输入在你的网站上。** 请务必：
-
-1. **`X-App-Secret` 只能放在你的服务端**，绝不能出现在浏览器代码、App 包体或任何客户端可读的位置。
-2. **不要长期存储用户密码**。密码只用于换取一次凭证，用完即丢；后续所有查询都用返回的 `credential`。
-3. **凭证按用户隔离存储**，并按你自己站点的会话边界保护它。凭证虽然只读，但能持续读到该用户的余额。
-4. 用户在你的站点登出时，建议调用 `POST /auth/revoke` 主动吊销凭证。
-
-`app_id` / `app_secret` / `credential` **均无有效期**，本站升级、重启或重新部署都不会使其失效。以下是失效的**完整清单**，出现时接口返回 `CREDENTIAL_REVOKED`，需要引导用户重新授权：
-
-- 用户修改了本站密码
-- 用户账号被禁用或删除
-- 用户在本站「个人设置 → 第三方余额访问」中手动撤销
-- 站长重置了你的 `app_secret`，或禁用/删除了你的应用
-- 同一用户在你的站点再次换凭证（旧凭证作废，保证一个用户在一个站点只有一份有效授权）
-
-因此不必为凭证设计定期重新授权的逻辑；只需在收到 `CREDENTIAL_REVOKED` 时引导用户重新走一次 `auth/exchange`。
+- 基础路径：`https://<站点地址>/api/open/v1`
+- 认证：`Authorization: Bearer <余额密钥>`
+- 无需站长开通，无需联系任何人。登录站点，在「个人设置 → 余额查询密钥」自助生成即可。
 
 ---
 
-## 2. 获取应用凭证
+## 1. 为什么不用 API 密钥或访问令牌
 
-由本站站长在后台 **管理 → 余额开放接口** 中创建应用，创建后一次性展示：
+站点里有三种凭据，能力差别很大：
 
-| 字段 | 示例 | 说明 |
-|------|------|------|
-| `app_id` | `oapp_a1b2c3d4e5f6g7h8` | 应用标识，可长期保存 |
-| `app_secret` | `oas_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` | **仅展示一次**，服务端不存明文，丢失只能重置 |
+- **API 密钥（`sk-` 开头）**：能调用模型、能花钱。它查到的是**这把 key 自己的额度**，不是账户余额；无限额度的 key 查出来是 0，数字没有意义。
+- **系统访问令牌（个人设置 → Access Token）**：能做你登录后能做的**一切**——新建 API 密钥、充值、改账号资料、注销账号。放进任何程序都等于把账号交出去。
+- **余额密钥（`obk_` 开头，本文档）**：**只能读余额，别的什么都做不了**。泄露了，对方只能看到你还剩多少钱。
 
-站长还可为你的应用配置：
+所以要在自己的程序里查余额，用余额密钥。
 
-- **来源 IP 白名单**：填你后端服务器的出口 IP/CIDR，留空表示不限
-- **换凭证限流**：默认走全局限额，可单独调高
+## 2. 生成与管理
 
----
+登录站点 → **个人设置 → 余额查询密钥**：
+
+- **创建**：给密钥起个名字（建议写用它的程序名，如「手机小组件」），点创建。**密钥明文只显示这一次**，服务端只保存摘要，关掉弹窗就再也看不到了；丢了就撤销重建。
+- **查看**：列表显示名称、密钥尾部提示（如 `obk_…a1b2c3`）、创建时间、**最近使用时间**。想确认某个程序还在不在用，看这一列。
+- **撤销**：点「撤销」立即失效，仍在使用它的程序会立刻查不到余额。
+- **数量上限**：每个账号最多同时持有 **5 把**，撤销后名额即释放。
+
+密钥**没有有效期**。站点升级、重启、重新部署都不会让它失效。失效的完整清单只有三条：
+
+- 你自己在个人设置里撤销了它
+- 你的程序调用了 `POST /auth/revoke`
+- 账号被禁用或删除
+
+> 修改站点登录密码**不会**让余额密钥失效——它是你自己的东西，行为与 API 密钥一致。若怀疑密钥泄露，请到个人设置里撤销。
 
 ## 3. 接口
 
-### 3.1 换取凭证
-
-```http
-POST /api/open/v1/auth/exchange
-Content-Type: application/json
-X-App-Id: oapp_a1b2c3d4e5f6g7h8
-X-App-Secret: oas_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-{
-  "username": "alice",
-  "password": "用户在你站点输入的密码",
-  "end_user_ip": "198.51.100.4"
-}
-```
-
-| 字段 | 必填 | 说明 |
-|------|------|------|
-| `username` | 是 | 本站用户名**或**注册邮箱 |
-| `password` | 是 | 本站登录密码 |
-| `end_user_ip` | 否 | 终端用户真实 IP，仅写入审计日志，不参与鉴权 |
-
-成功响应：
-
-```json
-{
-  "success": true,
-  "message": "",
-  "data": {
-    "credential": "obk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "scope": "balance:read",
-    "user": { "id": 42, "username": "alice", "display_name": "Alice" }
-  }
-}
-```
-
-> `credential` **仅此一次返回**，服务端只保存其 HMAC 摘要，无法找回。请立即持久化。
-
-### 3.2 查询余额
+### 3.1 查询余额
 
 ```http
 GET /api/open/v1/balance
@@ -112,15 +65,17 @@ Authorization: Bearer obk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 | 字段 | 含义 |
 |------|------|
-| `quota` / `used_quota` | **原始额度单位**，不随站点展示设置变化。需要稳定数值时用这两个 |
-| `balance` / `used` | 按站点当前展示口径换算后的金额，与本站面板显示一致 |
-| `display_type` | `USD` / `CNY` / `TOKENS` / `CUSTOM`，站长可在后台修改 |
+| `quota` / `used_quota` | **账户维度的原始额度单位**，不随站点展示设置变化。需要稳定数值时用这两个 |
+| `balance` / `used` | 按站点当前展示口径换算后的金额，与站点面板显示一致 |
+| `display_type` | `USD` / `CNY` / `TOKENS` / `CUSTOM`，由站长设置 |
 | `currency_symbol` | 对应符号；`TOKENS` 时为空字符串 |
-| `request_count` | 该用户历史请求总次数 |
+| `request_count` | 该账号历史请求总次数 |
 
-> **注意**：`balance` 会随站长调整展示口径而变化。如果你的页面需要口径稳定，请基于 `quota` 自行换算，或与站长约定固定口径。
+> **注意**：`balance` 会随站长调整展示口径而变化。要口径稳定，请基于 `quota` 自行换算。
 
-### 3.3 吊销凭证
+### 3.2 吊销密钥
+
+程序自己注销手里的密钥，不需要知道它的 id：
 
 ```http
 POST /api/open/v1/auth/revoke
@@ -138,75 +93,65 @@ Authorization: Bearer obk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 失败响应统一为：
 
 ```json
-{ "success": false, "code": "INVALID_CREDENTIALS", "message": "Incorrect username or password." }
+{ "success": false, "code": "CREDENTIAL_INVALID", "message": "The credential is invalid." }
 ```
 
-`code` 是稳定契约，请基于它做分支判断；`message` 为固定英文，可能调整措辞，**不要用于逻辑判断**。
+`code` 是稳定契约，请基于它做分支判断；`message` 为固定英文，措辞可能调整，**不要用于逻辑判断**。
 
-| `code` | HTTP | 出现在 | 含义与处理建议 |
-|--------|------|--------|----------------|
-| `OPEN_API_DISABLED` | 503 | 全部 | 站点尚未开启该接口，联系站长 |
-| `APP_UNAUTHORIZED` | 401 | exchange | `app_id`/`app_secret` 缺失或不匹配 |
-| `APP_DISABLED` | 403 | exchange | 你的应用被站长禁用 |
-| `APP_IP_NOT_ALLOWED` | 403 | exchange | 请求来源 IP 不在白名单，联系站长补录服务器 IP |
-| `INVALID_PARAMS` | 400 | exchange | 请求体格式错误，或缺少 `username`/`password` |
-| `INVALID_CREDENTIALS` | 401 | exchange | 用户名或密码错误，提示用户重试 |
-| `USER_DISABLED` | 403 | exchange / balance | 账号已被禁用 |
-| `REQUIRE_2FA_UNSUPPORTED` | 403 | exchange | 该用户开启了两步验证，**不支持**通过本接口授权，请引导其到本站面板查看余额 |
-| `CREDENTIAL_INVALID` | 401 | balance / revoke | 凭证缺失或无效，需重新换凭证 |
-| `CREDENTIAL_REVOKED` | 401 | balance | 凭证已失效（原因见第 1 节），需引导用户重新授权 |
-| `RATE_LIMITED` | 429 | exchange / balance | 触发限流或失败锁定，按响应头 `Retry-After`（秒）退避后重试 |
-| `INTERNAL_ERROR` | 500 | 全部 | 服务端异常，可重试；持续出现请联系站长 |
+| `code` | HTTP | 含义与处理建议 |
+|--------|------|----------------|
+| `CREDENTIAL_INVALID` | 401 | 密钥缺失、拼错或从未存在，检查 `Authorization` 头 |
+| `CREDENTIAL_REVOKED` | 401 | 密钥已被撤销，去个人设置重新生成一把 |
+| `USER_DISABLED` | 403 | 账号已被禁用 |
+| `RATE_LIMITED` | 429 | 触发限流，按响应头 `Retry-After`（秒）退避后重试 |
+| `INTERNAL_ERROR` | 500 | 服务端异常，可重试；持续出现请联系站长 |
 
----
+## 5. 限流
 
-## 5. 限流与锁定
-
-限流**不按客户端 IP 计算**——你的所有用户都从你的后端发起请求，按 IP 限流会把整站用户当成一个客户端。实际维度：
-
-| 维度 | 默认值 | 说明 |
-|------|--------|------|
-| 每个应用换凭证 | 300 次/分钟 | 站长可为单个应用单独调整 |
-| 每个来源 IP 换凭证 | 600 次/分钟 | 鉴权前的兜底，防匿名洪水 |
-| 每个凭证查余额 | 120 次/分钟 | 建议在你侧对余额做短时缓存 |
-| 失败锁定 | 连续 5 次 → 锁 15 分钟 | 按「应用 + 用户名」计数；期间即使密码正确也返回 `RATE_LIMITED`；一次成功登录即清零 |
-
-以上默认值站长可在后台调整。
+按**密钥**计算，默认 **120 次/分钟**（站长可调）。余额不是高频变化的数据，建议在你的程序里缓存几十秒，不要空转轮询。
 
 ---
 
 ## 6. 完整示例
 
 ```bash
-APP_ID="oapp_a1b2c3d4e5f6g7h8"
-APP_SECRET="oas_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 BASE="https://your-site.example.com"
+BALANCE_KEY="obk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"   # 个人设置里生成
 
-# ① 换凭证（服务端调用）
-CREDENTIAL=$(curl -sS -X POST "$BASE/api/open/v1/auth/exchange" \
-  -H "Content-Type: application/json" \
-  -H "X-App-Id: $APP_ID" \
-  -H "X-App-Secret: $APP_SECRET" \
-  -d '{"username":"alice","password":"******"}' \
-  | jq -r '.data.credential')
-
-# ② 查余额（之后每次）
+# 查余额
 curl -sS "$BASE/api/open/v1/balance" \
-  -H "Authorization: Bearer $CREDENTIAL" | jq
+  -H "Authorization: Bearer $BALANCE_KEY" | jq
 
-# ③ 用户登出时吊销
+# 只取原始额度（口径不随站点设置漂移）
+curl -sS "$BASE/api/open/v1/balance" \
+  -H "Authorization: Bearer $BALANCE_KEY" | jq '.data.quota'
+
+# 程序退役时自己注销
 curl -sS -X POST "$BASE/api/open/v1/auth/revoke" \
-  -H "Authorization: Bearer $CREDENTIAL" | jq
+  -H "Authorization: Bearer $BALANCE_KEY" | jq
+```
+
+Python：
+
+```python
+import requests
+
+BASE = "https://your-site.example.com"
+KEY = "obk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+resp = requests.get(f"{BASE}/api/open/v1/balance",
+                    headers={"Authorization": f"Bearer {KEY}"}, timeout=10)
+body = resp.json()
+if not body.get("success"):
+    raise SystemExit(f"{body.get('code')}: {body.get('message')}")
+
+data = body["data"]
+print(f"余额 {data['balance']}{data['currency_symbol']}（原始额度 {data['quota']}）")
 ```
 
 ---
 
-## 7. 站长侧配置速查
+## 7. 站长侧
 
-| 位置 | 可配置项 |
-|------|----------|
-| 管理 → 余额开放接口 → 开放接口设置 | 总开关、四项限流参数、失败锁定阈值与时长 |
-| 管理 → 余额开放接口 → 应用列表 | 新建/编辑/禁用/删除应用、重置密钥、来源 IP 白名单、单应用换凭证限额 |
-| 个人设置 → 第三方余额访问 | **用户自己**查看已授权的站点并随时撤销 |
-
-审计：每次成功换凭证都会写入登录日志（`type=login`，`op.action=open_api_exchange`），可在日志页按用户查询，记录中包含应用名、应用 ID 与终端用户 IP。
+- **无总开关**：该能力对所有已登录用户默认开放，站长不需要也无法逐个批准。凭据由用户自己签发、自己撤销，风险由持有人承担。
+- **可调项**：每密钥每分钟的余额读取上限（系统设置中的 `open_balance_api.balance_rate_limit_per_minute`，默认 120）。

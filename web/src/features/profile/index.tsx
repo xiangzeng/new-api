@@ -24,10 +24,10 @@ import {
 import { useStatus } from '@/hooks/use-status'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { BalanceKeysCard } from './components/balance-keys-card'
 import { CheckinCalendarCard } from './components/checkin-calendar-card'
 import { LanguagePreferencesCard } from './components/language-preferences-card'
 import { LoginSessionsCard } from './components/login-sessions-card'
-import { OpenCredentialsCard } from './components/open-credentials-card'
 import { PasskeyCard } from './components/passkey-card'
 import { ProfileHeader } from './components/profile-header'
 import { ProfileSecurityCard } from './components/profile-security-card'
@@ -70,7 +70,7 @@ export function Profile() {
                 />
                 <ProfileSecurityCard profile={profile} loading={loading} />
                 <LoginSessionsCard />
-                <OpenCredentialsCard />
+                <BalanceKeysCard />
               </div>
 
               <div className='space-y-4 sm:space-y-6 xl:sticky xl:top-6'>
