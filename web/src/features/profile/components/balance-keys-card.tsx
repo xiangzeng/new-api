@@ -53,6 +53,20 @@ import type { BalanceKey } from '../types'
 
 const BALANCE_KEYS_QUERY_KEY = ['profile', 'balance-keys'] as const
 
+// Stands in for the real key in the always-visible example. The clear-text key
+// is never stored, so the card cannot fill in a key the user already created.
+const BALANCE_KEY_PLACEHOLDER = 'obk_YOUR_KEY'
+
+/**
+ * The exact command a user can paste into a terminal. The origin comes from the
+ * browser so a site behind a custom domain shows its own address rather than a
+ * documentation placeholder nobody remembers to replace.
+ */
+function balanceQueryCommand(key: string) {
+  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  return `curl -H "Authorization: Bearer ${key}" \\\n  ${origin}/api/open/v1/balance`
+}
+
 /**
  * Issues and manages read-only balance keys. A key reads this account's balance
  * and nothing else, so it is what a user puts in their own script or app instead
@@ -202,6 +216,28 @@ export function BalanceKeysCard() {
             <Plus className='h-4 w-4' aria-hidden='true' />
             {t('Create balance key')}
           </Button>
+
+          <div className='space-y-2 rounded-md border border-dashed p-3'>
+            <div className='flex items-center justify-between gap-2'>
+              <span className='text-sm font-medium'>{t('How to use')}</span>
+              <CopyButton
+                value={balanceQueryCommand(BALANCE_KEY_PLACEHOLDER)}
+                variant='ghost'
+                className='size-8'
+                iconClassName='size-4'
+                tooltip={t('Copy command')}
+                aria-label={t('Copy command')}
+              />
+            </div>
+            <pre className='text-muted-foreground overflow-x-auto font-mono text-xs'>
+              {balanceQueryCommand(BALANCE_KEY_PLACEHOLDER)}
+            </pre>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Replace obk_YOUR_KEY with your own key. The response carries quota and used_quota in raw units, which never change with the site display setting, plus balance and used converted to the site currency.'
+              )}
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -273,9 +309,23 @@ export function BalanceKeysCard() {
                   aria-label={t('Copy key')}
                 />
               </div>
+              <div className='flex items-center justify-between gap-2 pt-2'>
+                <span className='text-sm font-medium'>{t('How to use')}</span>
+                <CopyButton
+                  value={balanceQueryCommand(issuedKey)}
+                  variant='ghost'
+                  className='size-8'
+                  iconClassName='size-4'
+                  tooltip={t('Copy command')}
+                  aria-label={t('Copy command')}
+                />
+              </div>
+              <pre className='text-muted-foreground overflow-x-auto font-mono text-xs'>
+                {balanceQueryCommand(issuedKey)}
+              </pre>
               <p className='text-muted-foreground text-xs'>
                 {t(
-                  'Send it as an Authorization: Bearer header to GET /api/open/v1/balance.'
+                  'This command already carries the key above, so it runs as is. The same example, with a placeholder, stays on the card after you close this dialog.'
                 )}
               </p>
             </>
