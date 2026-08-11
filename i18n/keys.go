@@ -336,3 +336,9 @@ const (
 	MsgCustomOAuthBindingNotFound   = "custom_oauth.binding_not_found"
 	MsgCustomOAuthProviderIdInvalid = "custom_oauth.provider_id_field_invalid"
 )
+
+// Balance key (self-service balance query) related messages
+const (
+	MsgBalanceKeyNameTooLong  = "balance_key.name_too_long"
+	MsgBalanceKeyLimitReached = "balance_key.limit_reached"
+)

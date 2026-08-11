@@ -304,7 +304,6 @@ func migrateDB() error {
 		&ResellerQuotaTransfer{},
 		&ResellerVoucherBatch{},
 		&ResellerVoucher{},
-		&OpenApp{},
 		&OpenCredential{},
 		&CasbinRule{},
 		&AuthzRole{},
@@ -383,7 +382,6 @@ func migrateDBFast() error {
 		{&ResellerQuotaTransfer{}, "ResellerQuotaTransfer"},
 		{&ResellerVoucherBatch{}, "ResellerVoucherBatch"},
 		{&ResellerVoucher{}, "ResellerVoucher"},
-		{&OpenApp{}, "OpenApp"},
 		{&OpenCredential{}, "OpenCredential"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大

@@ -28,7 +28,6 @@ import {
   ListTodo,
   MessageSquare,
   Network,
-  Plug,
   Radio,
   ServerCog,
   Settings,
@@ -162,12 +161,6 @@ export function useSidebarData(): SidebarData {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,
-          },
-          {
-            title: t('Balance Open API'),
-            url: '/open-apps',
-            icon: Plug,
-            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('System Info'),

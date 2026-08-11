@@ -8,13 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SetOpenRouter registers the third-party balance query API.
+// SetOpenRouter registers the self-service balance query API: a user issues a
+// read-only balance key in their profile and reads their own balance with it
+// from their own program.
 //
-// The namespace deliberately skips GlobalAPIRateLimit: that limiter is keyed by
-// source IP, and every request here arrives from a partner's own backend, so it
-// would throttle all of that partner's users as one client. Rate limiting is
-// applied on the dimensions that actually isolate tenants — source IP as a
-// pre-auth backstop, then per application and per credential.
+// The namespace deliberately skips GlobalAPIRateLimit, which is keyed by source
+// IP and sized for browser traffic. Rate limiting here is per balance key, the
+// dimension that actually isolates one caller from another.
 func SetOpenRouter(router *gin.Engine) {
 	openRouter := router.Group("/api/open/v1")
 	openRouter.Use(middleware.RouteTag("open_api"))
@@ -22,22 +22,11 @@ func SetOpenRouter(router *gin.Engine) {
 	openRouter.Use(middleware.BodyStorageCleanup())
 	openRouter.Use(middleware.CORS())
 	openRouter.Use(middleware.DisableCache())
-	openRouter.Use(middleware.OpenApiEnabled())
 	{
-		authRoute := openRouter.Group("/auth")
-		{
-			authRoute.POST("/exchange",
-				middleware.OpenExchangeIpBackstop(),
-				middleware.AnonymousRequestBodyLimit(),
-				middleware.OpenAppAuth(),
-				middleware.OpenExchangeRateLimit(),
-				controller.OpenExchangeCredential,
-			)
-			authRoute.POST("/revoke",
-				middleware.OpenCredentialAuth(),
-				controller.OpenRevokeCredential,
-			)
-		}
+		openRouter.POST("/auth/revoke",
+			middleware.OpenCredentialAuth(),
+			controller.OpenRevokeCredential,
+		)
 		openRouter.GET("/balance",
 			middleware.OpenCredentialAuth(),
 			middleware.OpenBalanceRateLimit(),

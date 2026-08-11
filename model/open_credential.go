@@ -1,9 +1,12 @@
 package model
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
@@ -18,73 +21,45 @@ const (
 	// credentials or widening what the ones already in the wild can reach.
 	OpenScopeBalanceRead = "balance:read"
 
-	OpenCredentialPrefix           = "obk_"
-	openCredentialRandomBytes      = 24
-	openCredentialHintLength       = 6
-	openCredentialUserAppMaxIssues = 3
+	OpenCredentialPrefix      = "obk_"
+	openCredentialRandomBytes = 24
+	openCredentialHintLength  = 6
+	openCredentialMaxAttempts = 3
+
+	// OpenCredentialMaxPerUser bounds how many active keys one account can hold.
+	// Several are legitimate — one per program the user runs — but the ceiling
+	// keeps a scripted loop from filling the table.
+	OpenCredentialMaxPerUser = 5
+
+	openCredentialNameMaxLength = 50
+	openCredentialDefaultName   = "Balance key"
 )
 
 var (
-	ErrOpenCredentialInvalid = errors.New("open credential is invalid")
-	ErrOpenCredentialRevoked = errors.New("open credential has been revoked")
-	ErrOpenCredentialUserOff = errors.New("open credential owner is disabled")
+	ErrOpenCredentialInvalid      = errors.New("open credential is invalid")
+	ErrOpenCredentialRevoked      = errors.New("open credential has been revoked")
+	ErrOpenCredentialUserOff      = errors.New("open credential owner is disabled")
+	ErrOpenCredentialNameTooLong  = errors.New("open credential name is too long")
+	ErrOpenCredentialLimitReached = errors.New("open credential limit reached")
 )
 
-// AuthenticateOpenApiUser resolves a username-or-email plus password to a user
-// row for the balance open API.
+// OpenCredential is a long-lived, read-only balance key a user issued to
+// themselves. Only an HMAC digest is stored, so the clear-text value exists
+// exactly once, in the response that created it.
 //
-// It mirrors User.ValidateAndFill but reports a disabled account separately.
-// ValidateAndFill folds "banned" into "invalid credentials" so an anonymous
-// login form cannot probe account status; here the caller has already proved
-// knowledge of the password, so naming the real reason leaks nothing and saves
-// the partner from showing a misleading "wrong password" message.
-//
-// Like ValidateAndFill, a miss returns before any bcrypt work, so response
-// timing distinguishes existing from non-existing usernames. That oracle is
-// accepted rather than paid for with a dummy-hash comparison: a per-request
-// bcrypt on every miss would hand an authenticated partner a cheap CPU
-// amplification vector, and the unauthenticated /api/user/login endpoint
-// already exposes the same signal to everyone.
-func AuthenticateOpenApiUser(username string, password string) (*User, error) {
-	username = strings.TrimSpace(username)
-	if username == "" || password == "" {
-		return nil, ErrUserEmptyCredentials
-	}
-	var user User
-	if err := DB.Where("username = ? OR email = ?", username, username).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrInvalidCredentials
-		}
-		return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
-	}
-	if user.Password == "" || !common.ValidatePasswordAndHash(password, user.Password) {
-		return nil, ErrInvalidCredentials
-	}
-	if user.Status != common.UserStatusEnabled {
-		return nil, ErrOpenCredentialUserOff
-	}
-	return &user, nil
-}
-
-// OpenCredential is a long-lived, read-only bearer token a user granted to one
-// third-party app. Only an HMAC digest is stored, so the clear-text value
-// exists exactly once in the exchange response.
-//
-// AuthVersion pins the credential to the user's authentication generation.
-// New API bumps auth_version on password change, status change and deletion,
-// so those actions invalidate every outstanding credential with no extra
-// bookkeeping on this side.
+// The row is deliberately not pinned to the owner's auth_version: this is the
+// user's own artifact rather than a grant delegated to someone else, so it
+// follows relay API keys and survives a password change. Disabling or deleting
+// the account still invalidates it, because validation reads live user state.
 type OpenCredential struct {
 	Id           int64  `json:"id" gorm:"primaryKey"`
 	TokenHash    string `json:"-" gorm:"type:char(64);not null;uniqueIndex"`
 	TokenHint    string `json:"token_hint" gorm:"type:varchar(32)"`
-	UserId       int    `json:"user_id" gorm:"index:idx_open_credential_user_app"`
-	AppId        string `json:"app_id" gorm:"type:varchar(64);index:idx_open_credential_user_app"`
+	Name         string `json:"name" gorm:"type:varchar(64)"`
+	UserId       int    `json:"user_id" gorm:"index"`
 	Scope        string `json:"scope" gorm:"type:varchar(64)"`
 	Status       int    `json:"status" gorm:"index"`
-	AuthVersion  int64  `json:"-" gorm:"type:bigint"`
 	CreatedIp    string `json:"created_ip" gorm:"type:varchar(64)"`
-	EndUserIp    string `json:"end_user_ip" gorm:"type:varchar(64)"`
 	CreatedTime  int64  `json:"created_time"`
 	LastUsedTime int64  `json:"last_used_time"`
 	RevokedTime  int64  `json:"revoked_time"`
@@ -94,13 +69,12 @@ func (OpenCredential) TableName() string {
 	return "open_credentials"
 }
 
-// OpenCredentialListItem is the user-facing view of a granted authorization.
-// It deliberately carries no digest material, only what a person needs to
-// recognize the grant and decide whether to revoke it.
+// OpenCredentialListItem is the owner-facing view of a key. It deliberately
+// carries no digest material, only what a person needs to recognize the key and
+// decide whether to revoke it.
 type OpenCredentialListItem struct {
 	Id           int64  `json:"id"`
-	AppId        string `json:"app_id"`
-	AppName      string `json:"app_name"`
+	Name         string `json:"name"`
 	TokenHint    string `json:"token_hint"`
 	Scope        string `json:"scope"`
 	CreatedTime  int64  `json:"created_time"`
@@ -117,9 +91,9 @@ type OpenBalanceSnapshot struct {
 	RequestCount int    `gorm:"column:request_count"`
 }
 
-// openCredentialSigningKey is a constant for the reasons documented on
-// openAppSigningKey: the token it digests is already high-entropy random, and a
-// process-dependent key would revoke every outstanding credential on restart.
+// openCredentialSigningKey is a constant rather than a process-derived value:
+// the token it digests is already high-entropy random, and a key tied to the
+// process would revoke every outstanding credential on restart.
 func openCredentialSigningKey() []byte {
 	return []byte("open-credential-v1")
 }
@@ -135,18 +109,49 @@ func openCredentialHint(token string) string {
 	return OpenCredentialPrefix + "…" + token[len(token)-openCredentialHintLength:]
 }
 
-// IssueOpenCredential mints a credential for one (user, app) pair and revokes
-// the pair's previous credentials. Re-exchanging cannot return an existing
-// clear-text value — it is not stored — so without this the table would grow a
-// zombie row on every login the partner performs.
-func IssueOpenCredential(userId int, appId string, authVersion int64, createdIp string, endUserIp string) (string, *OpenCredential, error) {
-	if userId <= 0 || strings.TrimSpace(appId) == "" || authVersion <= 0 {
+func randomOpenToken(prefix string, randomBytes int) (string, error) {
+	buf := make([]byte, randomBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate open api token: %w", err)
+	}
+	return prefix + base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func normalizeOpenCredentialName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return openCredentialDefaultName, nil
+	}
+	if utf8.RuneCountInString(name) > openCredentialNameMaxLength {
+		return "", ErrOpenCredentialNameTooLong
+	}
+	return name, nil
+}
+
+// IssueOpenCredential mints a balance key for one user and returns its
+// clear-text value, which is never stored and cannot be retrieved again.
+//
+// The active-key count is checked before insert rather than enforced by a
+// constraint: the ceiling is a courtesy bound on the owner's own account, and
+// the only way to race it is to race yourself through a rate-limited endpoint.
+func IssueOpenCredential(userId int, name string, createdIp string) (string, *OpenCredential, error) {
+	if userId <= 0 {
 		return "", nil, ErrOpenCredentialInvalid
 	}
-	if _, err := RevokeOpenCredentialsByUserAndApp(userId, appId); err != nil {
+	name, err := normalizeOpenCredentialName(name)
+	if err != nil {
 		return "", nil, err
 	}
-	for range openCredentialUserAppMaxIssues {
+	var active int64
+	if err := DB.Model(&OpenCredential{}).
+		Where("user_id = ? AND status = ?", userId, OpenCredentialStatusActive).
+		Count(&active).Error; err != nil {
+		return "", nil, err
+	}
+	if active >= OpenCredentialMaxPerUser {
+		return "", nil, ErrOpenCredentialLimitReached
+	}
+	for range openCredentialMaxAttempts {
 		token, err := randomOpenToken(OpenCredentialPrefix, openCredentialRandomBytes)
 		if err != nil {
 			return "", nil, err
@@ -154,13 +159,11 @@ func IssueOpenCredential(userId int, appId string, authVersion int64, createdIp 
 		credential := &OpenCredential{
 			TokenHash:   openCredentialHash(token),
 			TokenHint:   openCredentialHint(token),
+			Name:        name,
 			UserId:      userId,
-			AppId:       appId,
 			Scope:       OpenScopeBalanceRead,
 			Status:      OpenCredentialStatusActive,
-			AuthVersion: authVersion,
 			CreatedIp:   createdIp,
-			EndUserIp:   endUserIp,
 			CreatedTime: common.GetTimestamp(),
 		}
 		if err := DB.Create(credential).Error; err == nil {
@@ -192,28 +195,12 @@ func ValidateOpenCredential(token string) (*OpenCredential, *UserBase, error) {
 		return nil, nil, ErrOpenCredentialInvalid
 	}
 
-	app, err := GetOpenAppByAppId(credential.AppId)
-	if err != nil {
-		if errors.Is(err, ErrOpenAppNotFound) {
-			return nil, nil, ErrOpenCredentialRevoked
-		}
-		return nil, nil, err
-	}
-	if app.Status != OpenAppStatusEnabled {
-		return nil, nil, ErrOpenCredentialRevoked
-	}
-
 	user, err := GetUserCache(credential.UserId)
 	if err != nil {
 		return nil, nil, err
 	}
 	if user.Status != common.UserStatusEnabled {
 		return nil, nil, ErrOpenCredentialUserOff
-	}
-	// A bumped auth_version means the password or account state changed after
-	// this credential was granted; the third party must ask for consent again.
-	if user.AuthVersion != credential.AuthVersion {
-		return nil, nil, ErrOpenCredentialRevoked
 	}
 	return &credential, user, nil
 }
@@ -245,23 +232,8 @@ func revokeOpenCredentialsWhere(query *gorm.DB) (int64, error) {
 	return result.RowsAffected, result.Error
 }
 
-func RevokeOpenCredentialsByUserAndApp(userId int, appId string) (int64, error) {
-	return revokeOpenCredentialsWhere(
-		DB.Model(&OpenCredential{}).Where("user_id = ? AND app_id = ?", userId, appId),
-	)
-}
-
-func RevokeOpenCredentialsByApp(appId string) (int64, error) {
-	if strings.TrimSpace(appId) == "" {
-		return 0, nil
-	}
-	return revokeOpenCredentialsWhere(
-		DB.Model(&OpenCredential{}).Where("app_id = ?", appId),
-	)
-}
-
-// RevokeOpenCredentialByToken lets a partner drop the credential when the end
-// user logs out of their site, without needing to know its row id.
+// RevokeOpenCredentialByToken lets the program holding a key retire it without
+// knowing its row id, so a script can clean up after itself.
 func RevokeOpenCredentialByToken(token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -280,7 +252,7 @@ func RevokeOpenCredentialByToken(token string) error {
 }
 
 // RevokeOpenCredentialByUser scopes the revoke to the owning user so one user
-// can never revoke another user's grant by guessing a row id.
+// can never revoke another user's key by guessing a row id.
 func RevokeOpenCredentialByUser(userId int, id int64) error {
 	if userId <= 0 || id <= 0 {
 		return ErrOpenCredentialInvalid
@@ -309,28 +281,10 @@ func ListOpenCredentialsByUser(userId int) ([]OpenCredentialListItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(credentials) == 0 {
-		return items, nil
-	}
-
-	appIds := make([]string, 0, len(credentials))
-	for _, credential := range credentials {
-		appIds = append(appIds, credential.AppId)
-	}
-	var apps []OpenApp
-	if err := DB.Select("app_id", "name").Where("app_id IN ?", appIds).Find(&apps).Error; err != nil {
-		return nil, err
-	}
-	namesByAppId := make(map[string]string, len(apps))
-	for _, app := range apps {
-		namesByAppId[app.AppId] = app.Name
-	}
-
 	for _, credential := range credentials {
 		items = append(items, OpenCredentialListItem{
 			Id:           credential.Id,
-			AppId:        credential.AppId,
-			AppName:      namesByAppId[credential.AppId],
+			Name:         credential.Name,
 			TokenHint:    credential.TokenHint,
 			Scope:        credential.Scope,
 			CreatedTime:  credential.CreatedTime,

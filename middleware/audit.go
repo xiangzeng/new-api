@@ -95,10 +95,6 @@ var auditRouteActions = map[string]string{
 	"POST /api/subscription/admin/bind":     "subscription.bind",
 
 	// 余额开放接口应用（root）
-	"POST /api/open-app/":                 "open_app.create",
-	"PUT /api/open-app/:id":               "open_app.update",
-	"POST /api/open-app/:id/reset-secret": "open_app.reset_secret",
-	"DELETE /api/open-app/:id":            "open_app.delete",
 
 	// 日志
 	"POST /api/system-task/log-cleanup": "log.cleanup_start",

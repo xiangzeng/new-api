@@ -27,7 +27,8 @@ import type {
   DeleteAccountRequest,
   CheckinStatusResponse,
   CheckinResponse,
-  OpenCredentialGrant,
+  BalanceKey,
+  BalanceKeyCreated,
 } from './types'
 
 // ============================================================================
@@ -227,24 +228,33 @@ export async function performCheckin(
 }
 
 // ============================================================================
-// Third-party balance authorizations
+// Balance keys
 // ============================================================================
 
 /**
- * List the balance-read credentials this user granted to third-party sites.
+ * List the read-only balance keys this user issued to their own programs.
  */
-export async function getOpenCredentials(): Promise<
-  ApiResponse<OpenCredentialGrant[]>
-> {
-  const res = await api.get('/api/user/open-credentials')
+export async function getBalanceKeys(): Promise<ApiResponse<BalanceKey[]>> {
+  const res = await api.get('/api/user/balance-keys')
   return res.data
 }
 
 /**
- * Revoke one granted credential. The partner must ask the user to authorize
- * again before it can read the balance.
+ * Issue a balance key. The clear-text value comes back exactly once — only its
+ * digest is stored, so it can be revoked but never read again.
  */
-export async function revokeOpenCredential(id: number): Promise<ApiResponse> {
-  const res = await api.delete(`/api/user/open-credentials/${id}`)
+export async function createBalanceKey(
+  name: string
+): Promise<ApiResponse<BalanceKeyCreated>> {
+  const res = await api.post('/api/user/balance-keys', { name })
+  return res.data
+}
+
+/**
+ * Revoke one balance key. Any program still using it stops reading the balance
+ * immediately.
+ */
+export async function revokeBalanceKey(id: number): Promise<ApiResponse> {
+  const res = await api.delete(`/api/user/balance-keys/${id}`)
   return res.data
 }

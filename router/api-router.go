@@ -128,9 +128,10 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/oauth/bindings", controller.GetUserOAuthBindings)
 				selfRoute.DELETE("/oauth/bindings/:provider_id", controller.UnbindCustomOAuth)
 
-				// Third-party balance query authorizations granted by this user
-				selfRoute.GET("/open-credentials", controller.GetSelfOpenCredentials)
-				selfRoute.DELETE("/open-credentials/:id", middleware.CriticalRateLimit(), controller.DeleteSelfOpenCredential)
+				// Read-only balance keys this user issued to their own programs
+				selfRoute.GET("/balance-keys", controller.GetSelfBalanceKeys)
+				selfRoute.POST("/balance-keys", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("balance-key"), middleware.DisableCache(), controller.CreateSelfBalanceKey)
+				selfRoute.DELETE("/balance-keys/:id", middleware.CriticalRateLimit(), controller.DeleteSelfBalanceKey)
 			}
 
 			adminRoute := userRoute.Group("/")
@@ -272,18 +273,6 @@ func SetApiRouter(router *gin.Engine) {
 			customOAuthRoute.POST("/", controller.CreateCustomOAuthProvider)
 			customOAuthRoute.PUT("/:id", controller.UpdateCustomOAuthProvider)
 			customOAuthRoute.DELETE("/:id", controller.DeleteCustomOAuthProvider)
-		}
-		// Partner applications allowed to use the balance open API. Root only:
-		// issuing one hands a third party the ability to accept our users'
-		// passwords, which is a site-level trust decision.
-		openAppRoute := apiRouter.Group("/open-app")
-		openAppRoute.Use(middleware.RootAuth(), middleware.DisableCache())
-		{
-			openAppRoute.GET("/", controller.GetAllOpenApps)
-			openAppRoute.POST("/", middleware.CriticalRateLimit(), controller.CreateOpenApp)
-			openAppRoute.PUT("/:id", middleware.CriticalRateLimit(), controller.UpdateOpenApp)
-			openAppRoute.POST("/:id/reset-secret", middleware.CriticalRateLimit(), controller.ResetOpenAppSecret)
-			openAppRoute.DELETE("/:id", middleware.CriticalRateLimit(), controller.DeleteOpenApp)
 		}
 
 		performanceRoute := apiRouter.Group("/performance")

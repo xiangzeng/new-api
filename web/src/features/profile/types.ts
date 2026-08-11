@@ -234,16 +234,27 @@ export interface CheckinResponse {
 }
 
 /**
- * One third-party balance authorization, as returned by
- * `GET /api/user/open-credentials`. Carries no digest material — only what a
- * person needs to recognize the grant and decide whether to revoke it.
+ * One read-only balance key, as returned by `GET /api/user/balance-keys`.
+ * Carries no digest material — only what a person needs to recognize the key
+ * and decide whether to revoke it.
  */
-export interface OpenCredentialGrant {
+export interface BalanceKey {
   id: number
-  app_id: string
-  app_name: string
+  name: string
   token_hint: string
   scope: string
   created_time: number
   last_used_time: number
+}
+
+/**
+ * A freshly issued balance key. `key` is the only time the clear-text value
+ * exists outside the caller's own storage.
+ */
+export interface BalanceKeyCreated {
+  id: number
+  name: string
+  key: string
+  scope: string
+  created_time: number
 }

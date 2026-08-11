@@ -41,13 +41,10 @@ func setupOpenBalanceApi(t *testing.T) (*gin.Engine, *gorm.DB) {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&model.User{}, &model.TwoFA{}, &model.OpenApp{}, &model.OpenCredential{}, &model.Log{},
+		&model.User{}, &model.OpenCredential{}, &model.Log{},
 	))
 	model.DB = db
 	model.LOG_DB = db
-
-	settings := system_setting.GetOpenBalanceApiSettings()
-	settings.Enabled = true
 
 	t.Cleanup(func() {
 		model.DB = previousDB
@@ -67,9 +64,9 @@ func setupOpenBalanceApi(t *testing.T) (*gin.Engine, *gorm.DB) {
 	return engine, db
 }
 
-func createOpenBalanceUser(t *testing.T, db *gorm.DB, username string, password string, status int) model.User {
+func createOpenBalanceUser(t *testing.T, db *gorm.DB, username string, status int) model.User {
 	t.Helper()
-	hash, err := common.Password2Hash(password)
+	hash, err := common.Password2Hash("correct-horse")
 	require.NoError(t, err)
 	user := model.User{
 		Username:     username,
@@ -84,6 +81,16 @@ func createOpenBalanceUser(t *testing.T, db *gorm.DB, username string, password 
 	}
 	require.NoError(t, db.Create(&user).Error)
 	return user
+}
+
+// issueBalanceKey mints a key the way the profile endpoint does, so these tests
+// exercise the public read path without standing up dashboard authentication.
+func issueBalanceKey(t *testing.T, userId int) map[string]string {
+	t.Helper()
+	key, _, err := model.IssueOpenCredential(userId, "laptop script", "203.0.113.7")
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(key, model.OpenCredentialPrefix))
+	return map[string]string{"Authorization": "Bearer " + key}
 }
 
 func callOpenApi(t *testing.T, engine *gin.Engine, method string, path string, headers map[string]string, body string) (int, map[string]any) {
@@ -109,34 +116,17 @@ func callOpenApi(t *testing.T, engine *gin.Engine, method string, path string, h
 	return recorder.Code, decoded
 }
 
-func exchangeHeaders(appId string, secret string) map[string]string {
-	return map[string]string{"X-App-Id": appId, "X-App-Secret": secret}
-}
-
-func loginBody(username string, password string) string {
-	return fmt.Sprintf(`{"username":%q,"password":%q,"end_user_ip":"198.51.100.4"}`, username, password)
-}
-
-func TestOpenExchangeIssuesCredentialAndBalanceReads(t *testing.T) {
+func TestOpenBalanceReturnsAccountWideNumbers(t *testing.T) {
 	engine, db := setupOpenBalanceApi(t)
-	app, secret, err := model.CreateOpenApp("Partner Site", "", 0)
-	require.NoError(t, err)
-	createOpenBalanceUser(t, db, "alice", "correct-horse", common.UserStatusEnabled)
+	user := createOpenBalanceUser(t, db, "alice", common.UserStatusEnabled)
+	authorization := issueBalanceKey(t, user.Id)
 
-	status, body := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-		exchangeHeaders(app.AppId, secret), loginBody("alice", "correct-horse"))
+	status, body := callOpenApi(t, engine, http.MethodGet, "/api/open/v1/balance", authorization, "")
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, true, body["success"])
 
-	data := body["data"].(map[string]any)
-	credential := data["credential"].(string)
-	assert.True(t, strings.HasPrefix(credential, model.OpenCredentialPrefix))
-	assert.Equal(t, model.OpenScopeBalanceRead, data["scope"])
-	assert.Equal(t, "alice", data["user"].(map[string]any)["username"])
-
-	status, body = callOpenApi(t, engine, http.MethodGet, "/api/open/v1/balance",
-		map[string]string{"Authorization": "Bearer " + credential}, "")
-	require.Equal(t, http.StatusOK, status)
+	// The whole point of this endpoint is the account wallet, not the quota of
+	// whichever key happened to be presented.
 	balance := body["data"].(map[string]any)
 	assert.Equal(t, "alice", balance["username"])
 	assert.Equal(t, "Alice Example", balance["display_name"])
@@ -152,14 +142,8 @@ func TestOpenExchangeIssuesCredentialAndBalanceReads(t *testing.T) {
 
 func TestOpenBalanceFollowsSiteQuotaDisplayType(t *testing.T) {
 	engine, db := setupOpenBalanceApi(t)
-	app, secret, err := model.CreateOpenApp("Partner Site", "", 0)
-	require.NoError(t, err)
-	createOpenBalanceUser(t, db, "alice", "correct-horse", common.UserStatusEnabled)
-
-	_, body := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-		exchangeHeaders(app.AppId, secret), loginBody("alice", "correct-horse"))
-	credential := body["data"].(map[string]any)["credential"].(string)
-	authorization := map[string]string{"Authorization": "Bearer " + credential}
+	user := createOpenBalanceUser(t, db, "alice", common.UserStatusEnabled)
+	authorization := issueBalanceKey(t, user.Id)
 
 	cases := []struct {
 		displayType string
@@ -179,143 +163,17 @@ func TestOpenBalanceFollowsSiteQuotaDisplayType(t *testing.T) {
 			assert.InDelta(t, testCase.balance, balance["balance"].(float64), 1e-9)
 			assert.Equal(t, testCase.displayType, balance["display_type"])
 			assert.Equal(t, testCase.symbol, balance["currency_symbol"])
-			// The raw quota is always returned unconverted so a partner can
-			// pin a stable number regardless of the site's display setting.
+			// The raw quota is always returned unconverted so a caller can pin a
+			// stable number regardless of the site's display setting.
 			assert.Equal(t, float64(500000), balance["quota"])
 		})
 	}
 }
 
-func TestOpenExchangeRejectionContract(t *testing.T) {
-	engine, db := setupOpenBalanceApi(t)
-	app, secret, err := model.CreateOpenApp("Partner Site", "", 0)
-	require.NoError(t, err)
-	restricted, restrictedSecret, err := model.CreateOpenApp("Restricted Site", "203.0.113.0/24", 0)
-	require.NoError(t, err)
-	disabled, disabledSecret, err := model.CreateOpenApp("Disabled Site", "", 0)
-	require.NoError(t, err)
-	_, err = model.UpdateOpenApp(disabled.Id, "Disabled Site", "", model.OpenAppStatusDisabled, 0)
-	require.NoError(t, err)
-
-	createOpenBalanceUser(t, db, "alice", "correct-horse", common.UserStatusEnabled)
-	createOpenBalanceUser(t, db, "carol", "tr0ub4dor", common.UserStatusDisabled)
-
-	cases := []struct {
-		name    string
-		headers map[string]string
-		body    string
-		status  int
-		code    string
-	}{
-		{"missing app headers", nil, loginBody("alice", "correct-horse"),
-			http.StatusUnauthorized, "APP_UNAUTHORIZED"},
-		{"wrong app secret", exchangeHeaders(app.AppId, secret+"x"), loginBody("alice", "correct-horse"),
-			http.StatusUnauthorized, "APP_UNAUTHORIZED"},
-		{"unknown app id", exchangeHeaders("oapp_nope", secret), loginBody("alice", "correct-horse"),
-			http.StatusUnauthorized, "APP_UNAUTHORIZED"},
-		{"disabled app", exchangeHeaders(disabled.AppId, disabledSecret), loginBody("alice", "correct-horse"),
-			http.StatusForbidden, "APP_DISABLED"},
-		{"source ip not allowed", exchangeHeaders(restricted.AppId, restrictedSecret), loginBody("alice", "correct-horse"),
-			http.StatusForbidden, "APP_IP_NOT_ALLOWED"},
-		{"malformed body", exchangeHeaders(app.AppId, secret), `{"username":`,
-			http.StatusBadRequest, "INVALID_PARAMS"},
-		{"missing password", exchangeHeaders(app.AppId, secret), `{"username":"alice"}`,
-			http.StatusBadRequest, "INVALID_PARAMS"},
-		{"wrong password", exchangeHeaders(app.AppId, secret), loginBody("alice", "nope"),
-			http.StatusUnauthorized, "INVALID_CREDENTIALS"},
-		{"unknown user", exchangeHeaders(app.AppId, secret), loginBody("nobody", "correct-horse"),
-			http.StatusUnauthorized, "INVALID_CREDENTIALS"},
-		{"disabled user", exchangeHeaders(app.AppId, secret), loginBody("carol", "tr0ub4dor"),
-			http.StatusForbidden, "USER_DISABLED"},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			status, body := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-				testCase.headers, testCase.body)
-			assert.Equal(t, testCase.status, status)
-			assert.Equal(t, false, body["success"])
-			assert.Equal(t, testCase.code, body["code"])
-		})
-	}
-}
-
-func TestOpenExchangeRejectsTwoFactorAccounts(t *testing.T) {
-	engine, db := setupOpenBalanceApi(t)
-	app, secret, err := model.CreateOpenApp("Partner Site", "", 0)
-	require.NoError(t, err)
-	user := createOpenBalanceUser(t, db, "alice", "correct-horse", common.UserStatusEnabled)
-	require.NoError(t, db.Create(&model.TwoFA{UserId: user.Id, Secret: "TOTPSECRET", IsEnabled: true}).Error)
-
-	// A password alone is not the factor set this account chose; accepting it
-	// would silently downgrade the user's own security decision.
-	status, body := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-		exchangeHeaders(app.AppId, secret), loginBody("alice", "correct-horse"))
-	assert.Equal(t, http.StatusForbidden, status)
-	assert.Equal(t, "REQUIRE_2FA_UNSUPPORTED", body["code"])
-}
-
-func TestOpenExchangeLocksOutRepeatedPasswordFailures(t *testing.T) {
-	engine, db := setupOpenBalanceApi(t)
-	settings := system_setting.GetOpenBalanceApiSettings()
-	settings.FailureLockThreshold = 2
-	settings.FailureLockMinutes = 15
-
-	app, secret, err := model.CreateOpenApp("Partner Site", "", 0)
-	require.NoError(t, err)
-	createOpenBalanceUser(t, db, "alice", "correct-horse", common.UserStatusEnabled)
-	headers := exchangeHeaders(app.AppId, secret)
-
-	for range settings.FailureLockThreshold {
-		status, body := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-			headers, loginBody("alice", "nope"))
-		require.Equal(t, http.StatusUnauthorized, status)
-		require.Equal(t, "INVALID_CREDENTIALS", body["code"])
-	}
-
-	// Once locked, even the correct password is refused for the window.
-	status, body := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-		headers, loginBody("alice", "correct-horse"))
-	assert.Equal(t, http.StatusTooManyRequests, status)
-	assert.Equal(t, "RATE_LIMITED", body["code"])
-}
-
-func TestOpenExchangeClearsLockoutAfterSuccess(t *testing.T) {
-	engine, db := setupOpenBalanceApi(t)
-	settings := system_setting.GetOpenBalanceApiSettings()
-	settings.FailureLockThreshold = 3
-
-	app, secret, err := model.CreateOpenApp("Partner Site", "", 0)
-	require.NoError(t, err)
-	createOpenBalanceUser(t, db, "alice", "correct-horse", common.UserStatusEnabled)
-	headers := exchangeHeaders(app.AppId, secret)
-
-	status, _ := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-		headers, loginBody("alice", "nope"))
-	require.Equal(t, http.StatusUnauthorized, status)
-
-	status, _ = callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-		headers, loginBody("alice", "correct-horse"))
-	require.Equal(t, http.StatusOK, status)
-
-	// A user who mistypes and then gets it right must start from a clean slate.
-	for range settings.FailureLockThreshold - 1 {
-		status, body := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-			headers, loginBody("alice", "nope"))
-		require.Equal(t, http.StatusUnauthorized, status)
-		require.Equal(t, "INVALID_CREDENTIALS", body["code"])
-	}
-}
-
 func TestOpenBalanceRejectsRevokedAndUnknownCredentials(t *testing.T) {
 	engine, db := setupOpenBalanceApi(t)
-	app, secret, err := model.CreateOpenApp("Partner Site", "", 0)
-	require.NoError(t, err)
-	createOpenBalanceUser(t, db, "alice", "correct-horse", common.UserStatusEnabled)
-
-	_, body := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-		exchangeHeaders(app.AppId, secret), loginBody("alice", "correct-horse"))
-	credential := body["data"].(map[string]any)["credential"].(string)
-	authorization := map[string]string{"Authorization": "Bearer " + credential}
+	user := createOpenBalanceUser(t, db, "alice", common.UserStatusEnabled)
+	authorization := issueBalanceKey(t, user.Id)
 
 	status, response := callOpenApi(t, engine, http.MethodGet, "/api/open/v1/balance", nil, "")
 	assert.Equal(t, http.StatusUnauthorized, status)
@@ -335,25 +193,20 @@ func TestOpenBalanceRejectsRevokedAndUnknownCredentials(t *testing.T) {
 	assert.Equal(t, "CREDENTIAL_REVOKED", response["code"])
 }
 
-func TestOpenApiStaysDarkWhenDisabled(t *testing.T) {
+func TestOpenBalanceRejectsDisabledOwner(t *testing.T) {
 	engine, db := setupOpenBalanceApi(t)
-	app, secret, err := model.CreateOpenApp("Partner Site", "", 0)
-	require.NoError(t, err)
-	createOpenBalanceUser(t, db, "alice", "correct-horse", common.UserStatusEnabled)
-	system_setting.GetOpenBalanceApiSettings().Enabled = false
+	user := createOpenBalanceUser(t, db, "alice", common.UserStatusEnabled)
+	authorization := issueBalanceKey(t, user.Id)
 
-	status, body := callOpenApi(t, engine, http.MethodPost, "/api/open/v1/auth/exchange",
-		exchangeHeaders(app.AppId, secret), loginBody("alice", "correct-horse"))
-	assert.Equal(t, http.StatusServiceUnavailable, status)
-	assert.Equal(t, "OPEN_API_DISABLED", body["code"])
+	require.NoError(t, db.Model(&model.User{}).Where("id = ?", user.Id).
+		Update("status", common.UserStatusDisabled).Error)
 
-	status, body = callOpenApi(t, engine, http.MethodGet, "/api/open/v1/balance",
-		map[string]string{"Authorization": "Bearer obk_whatever"}, "")
-	assert.Equal(t, http.StatusServiceUnavailable, status)
-	assert.Equal(t, "OPEN_API_DISABLED", body["code"])
+	status, response := callOpenApi(t, engine, http.MethodGet, "/api/open/v1/balance", authorization, "")
+	assert.Equal(t, http.StatusForbidden, status)
+	assert.Equal(t, "USER_DISABLED", response["code"])
 }
 
-func TestOpenRouterDoesNotConflictWithApiRoutes(t *testing.T) {
+func TestOpenRouterExposesSelfServiceSurfaceOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	// Both groups live under /api; registering them together proves the radix
@@ -368,14 +221,24 @@ func TestOpenRouterDoesNotConflictWithApiRoutes(t *testing.T) {
 		routes[route.Method+" "+route.Path] = struct{}{}
 	}
 	for _, expected := range []string{
-		http.MethodPost + " /api/open/v1/auth/exchange",
 		http.MethodPost + " /api/open/v1/auth/revoke",
 		http.MethodGet + " /api/open/v1/balance",
-		http.MethodGet + " /api/user/open-credentials",
-		http.MethodDelete + " /api/user/open-credentials/:id",
-		http.MethodPost + " /api/open-app/:id/reset-secret",
+		http.MethodGet + " /api/user/balance-keys",
+		http.MethodPost + " /api/user/balance-keys",
+		http.MethodDelete + " /api/user/balance-keys/:id",
 	} {
 		_, ok := routes[expected]
 		assert.True(t, ok, "missing route %s", expected)
+	}
+	// Balance keys are issued by their owner from a signed-in session. Nothing
+	// may trade a password for one, and no operator-managed application layer
+	// stands between the user and their own balance.
+	for _, forbidden := range []string{
+		http.MethodPost + " /api/open/v1/auth/exchange",
+		http.MethodGet + " /api/open-app/",
+		http.MethodPost + " /api/open-app/:id/reset-secret",
+	} {
+		_, ok := routes[forbidden]
+		assert.False(t, ok, "route %s must not exist", forbidden)
 	}
 }
