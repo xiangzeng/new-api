@@ -1,6 +1,6 @@
 # 任务档案：站长中心与代理返佣系统
 
-> 状态：已完成｜分支：`feature/reseller-center`｜创建：2026-08-04｜更新：2026-08-04
+> 状态：已完成（2026-08-11 有一次范围外增补，见会话 11）｜分支：`feature/reseller-center`｜创建：2026-08-04｜更新：2026-08-11
 
 ## 0. 新会话启动指令（AI 必读）
 
@@ -50,6 +50,21 @@
 - 技术决策：旧 `aff_quota`/`aff_history` 不自动并入新账本，避免双重记账。
 
 ## 4. 进度台账（每次会话末追加，倒序）
+
+### 2026-08-11（会话 11 · 范围外增补，非对标项）
+
+- 需求：站长中心上线前已有一批用户通过旧邀请注册，要求他们重新走直属邀请链接注册新号体验太差；管理员需要能看到「谁开了站长中心」「某站长名下有哪些客户」，并把已有账号直接挪到某个站长名下。**这是 RelayTeam 自用需求，目标站没有对应界面，不属于 1:1 对标范围。**
+- 已存在（无需开发）：`controller/reseller_admin.go` + `PUT/DELETE /api/user/:id/reseller-binding`（`router/api-router.go:158-160`）与用户列表行操作里的 `user-reseller-binding-dialog.tsx` 已能完成「指定某用户为某站长的直属客户」。该能力来自已合入的 `feature/reseller-admin-binding` 分支。
+- 真实缺口：站长身份存在 `reseller_profiles` 而非用户行上，此前**没有任何接口能列出站长**，管理员只能逐个点开用户看 `is_reseller`；`GET /api/reseller/customers` 挂 `UserAuth()` 只能读自己的，管理员无法代看。
+- 实现：新增 `GET /api/reseller/admin/resellers`（名册：客户数、佣金余额、开通时间，支持按用户名/昵称搜索）与 `GET /api/reseller/admin/resellers/:id/customers`（复用 `model.ListResellerCustomers`，站长自看与管理员代看共用同一投影），均走 `AdminAuth()`，管理员无需自己开通站长中心；前端新增管理员「站长管理」页，支持下钻查看客户、解绑、搜索账号并指定为直属客户。
+- commit：`f8c19af0` feat(reseller) → `9e3ded9d` merge 到 main；修复 `b2cf94ea` → `ca55417d` merge 到 main。
+- 事故与修复：首版上线后页面白屏。根因是 `SectionPageLayout`（`web/src/components/layout/components/section-page-layout.tsx:67-77`）为插槽式组件，**只渲染 `Title` / `Actions` / `Content` / `Breadcrumb` 四个具名插槽，其余直接子节点静默丢弃**；页面主体与两个弹窗当时都是裸子节点。`children: ReactNode` 什么都收，typecheck 与 build 均不报错，只有真打开页面才看得见。修复为主体放入 `SectionPageLayout.Content`、弹窗移到布局组件之外（与 `open-apps/index.tsx:224` 一致）。
+- 验证：`go build ./...`、`go vet`、`go test ./model/ ./controller/ ./router/` 全绿；新增三条 roster 模型测试（只有开了站长中心的用户进名册、零客户的站长也要在列表里、keyword 同时匹配用户名与昵称、软删用户不出现）；`bun run typecheck` / `oxlint` / `bun run build` 通过。
+- 部署：build `31449967730` ✅ → deploy `31450208085` ✅；生产容器 2026-08-11T01:44:33Z 重启并 healthy。
+- 遗留/坑：
+  - 只有 SELECT，无 schema 变更、无迁移，三库无差异
+  - `bun run format` 会格式化整个 `web/`，顺带改到 channels、keys、redemption-codes、users/api.ts 等无关文件（main 上本就存在格式漂移）。每次提交前需把这些还原，否则 diff 会被污染
+  - 「后续系统会提醒相关用户修改价格」这条需求尚未实现，属于绑定之后的通知链路，需单独立项
 
 ### 2026-08-04（会话 10）
 
