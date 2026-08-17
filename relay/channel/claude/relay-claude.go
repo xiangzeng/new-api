@@ -206,6 +206,14 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 			sr.Stop(err)
 		}
 	})
+	// Claude 协议保证正常流以 message_delta(stop_reason)/message_stop 收尾（claudeInfo.Done），
+	// EOF 结束但 Done 为假 = 上游中途断流，级联据此计入渠道故障
+	if info.StreamStatus != nil {
+		info.StreamStatus.EnableCompletionTracking()
+		if claudeInfo.Done {
+			info.StreamStatus.MarkCompletion()
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

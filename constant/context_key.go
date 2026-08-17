@@ -74,4 +74,8 @@ const (
 	// fallback in authHelper (finishAdminAudit) skips its record to avoid
 	// duplicate entries.
 	ContextKeyAuditLogged ContextKey = "audit_logged"
+
+	// ContextKeyCascadeRetryHint marks that the failing channel has been isolated
+	// by the cascade breaker, so a client retry will be routed to another channel.
+	ContextKeyCascadeRetryHint ContextKey = "cascade_retry_hint"
 )

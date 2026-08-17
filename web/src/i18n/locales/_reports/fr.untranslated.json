@@ -20,5 +20,13 @@
   "Failed to revoke balance key": "Failed to revoke balance key",
   "How to use": "How to use",
   "Replace obk_YOUR_KEY with your own key. The response carries quota and used_quota in raw units, which never change with the site display setting, plus balance and used converted to the site currency.": "Replace obk_YOUR_KEY with your own key. The response carries quota and used_quota in raw units, which never change with the site display setting, plus balance and used converted to the site currency.",
-  "This command already carries the key above, so it runs as is. The same example, with a placeholder, stays on the card after you close this dialog.": "This command already carries the key above, so it runs as is. The same example, with a placeholder, stays on the card after you close this dialog."
+  "This command already carries the key above, so it runs as is. The same example, with a placeholder, stays on the card after you close this dialog.": "This command already carries the key above, so it runs as is. The same example, with a placeholder, stays on the card after you close this dialog.",
+  "0 = try every channel in the group": "0 = try every channel in the group",
+  "Consecutive successes required to restore": "Consecutive successes required to restore",
+  "Fault errors (429/401/403/5xx/network) trip the channel and spill traffic to the next one; 400-class errors are returned to the client as-is.": "Fault errors (429/401/403/5xx/network) trip the channel and spill traffic to the next one; 400-class errors are returned to the client as-is.",
+  "One per line; matching errors never trip the channel (highest precedence)": "One per line; matching errors never trip the channel (highest precedence)",
+  "Only the root user can modify these settings": "Only the root user can modify these settings",
+  "The group name will be removed from {{count}} channels and their abilities rebuilt. This cannot be undone.": "The group name will be removed from {{count}} channels and their abilities rebuilt. This cannot be undone.",
+  "This group is no longer in the group ratio settings, so users cannot select it. It still shows here because the channels below still carry the group name.": "This group is no longer in the group ratio settings, so users cannot select it. It still shows here because the channels below still carry the group name.",
+  "Traffic flows left to right within each group. When a channel returns a fault error, the request spills to the next one and the channel is temporarily marked unavailable; tripped channels are probed periodically and restored after consecutive successes. Drag cards to reorder, then save.": "Traffic flows left to right within each group. When a channel returns a fault error, the request spills to the next one and the channel is temporarily marked unavailable; tripped channels are probed periodically and restored after consecutive successes. Drag cards to reorder, then save."
 }

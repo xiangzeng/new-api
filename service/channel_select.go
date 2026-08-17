@@ -98,6 +98,12 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
 
+	// 级联模式：按编排顺序依次遍历、排除已试与熔断渠道，
+	// 取代「重试次数→优先级档位」映射。详见 docs/channel/cascade-failover.md
+	if CascadeEnabled() {
+		return cacheGetCascadeChannel(param, userGroup)
+	}
+
 	if param.TokenGroup == "auto" {
 		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
 		if len(autoGroups) == 0 {
@@ -171,6 +177,59 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+// cacheGetCascadeChannel 级联模式的渠道选择。
+// 非 auto 分组：组内按编排顺序遍历（排除已试/熔断渠道）。
+// auto 分组：分组顺序即级联外层，组内耗尽或无候选时切换到下一个分组。
+func cacheGetCascadeChannel(param *RetryParam, userGroup string) (*model.Channel, string, error) {
+	tried := GetTriedChannelIds(param.Ctx, param.ExcludeChannelIDs)
+
+	if param.TokenGroup != "auto" {
+		channel, err := model.GetCascadeSatisfiedChannel(param.TokenGroup, param.ModelName, param.RequestPath, tried)
+		if err != nil {
+			return nil, param.TokenGroup, err
+		}
+		return channel, param.TokenGroup, nil
+	}
+
+	autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+	if len(autoGroups) == 0 {
+		return nil, param.TokenGroup, errors.New("auto groups is not enabled")
+	}
+	crossGroupRetry := common.GetContextKeyBool(param.Ctx, constant.ContextKeyTokenCrossGroupRetry)
+
+	startGroupIndex := 0
+	if lastGroupIndex, exists := common.GetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex); exists {
+		if idx, ok := lastGroupIndex.(int); ok {
+			startGroupIndex = idx
+		}
+	}
+
+	selectGroup := param.TokenGroup
+	for i := startGroupIndex; i < len(autoGroups); i++ {
+		autoGroup := autoGroups[i]
+		channel, err := model.GetCascadeSatisfiedChannel(autoGroup, param.ModelName, param.RequestPath, tried)
+		if err != nil {
+			return nil, autoGroup, err
+		}
+		if channel == nil {
+			// 组内无候选（模型不支持）时总是切下一组；
+			// 组内候选已耗尽时仅在允许跨组重试的情况下切下一组
+			groupEmpty := model.CountCascadeCandidates(autoGroup, param.ModelName, param.RequestPath) == 0
+			if !groupEmpty && !crossGroupRetry {
+				return nil, autoGroup, nil
+			}
+			logger.LogDebug(param.Ctx, "cascade: no available channel in group %s for model %s, trying next group", autoGroup, param.ModelName)
+			common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i+1)
+			continue
+		}
+		common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroup, autoGroup)
+		common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i)
+		selectGroup = autoGroup
+		return channel, selectGroup, nil
+	}
+	return nil, selectGroup, nil
 }
 
 // BuildChannelSelectionDetail 汇总渠道选择失败时的诊断信息（候选渠道及不可用原因），

@@ -604,6 +604,7 @@ func (channel *Channel) Delete() error {
 	if err != nil {
 		return err
 	}
+	ResetChannelHealth(channel.Id)
 	err = channel.DeleteAbilities()
 	return err
 }
@@ -710,6 +711,9 @@ func hasEnabledMultiKey(keys []string, statusList map[int]int) bool {
 }
 
 func UpdateChannelStatus(channelId int, usingKey string, status int, reason string) bool {
+	// 渠道状态被显式变更（手动或自动禁用/启用）时，清除级联运行时健康标记，
+	// 避免旧的熔断标记在状态变更后残留
+	ResetChannelHealth(channelId)
 	if common.MemoryCacheEnabled {
 		channelStatusLock.Lock()
 		defer channelStatusLock.Unlock()

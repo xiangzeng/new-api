@@ -506,14 +506,20 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+	// 级联探活复用渠道测试通道，日志侧单独标记，便于把探活流量从模型测试/真实用量里剔除
+	testLogName := "模型测试"
+	if isCascadeProbe(ctx) {
+		testLogName = CascadeProbeTokenName
+		other["cascade_probe"] = true
+	}
 	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,
 		ModelName:        info.OriginModelName,
-		TokenName:        "模型测试",
+		TokenName:        testLogName,
 		Quota:            quota,
-		Content:          "模型测试",
+		Content:          testLogName,
 		UseTimeSeconds:   int(consumedTime),
 		IsStream:         info.IsStream,
 		Group:            info.UsingGroup,

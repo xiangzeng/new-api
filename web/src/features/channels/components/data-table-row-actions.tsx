@@ -78,9 +78,16 @@ interface DataTableRowActionsProps {
 }
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
+  return <ChannelRowActions channel={row.original} />
+}
+
+interface ChannelRowActionsProps {
+  channel: Channel
+}
+
+export function ChannelRowActions({ channel }: ChannelRowActionsProps) {
   const { t } = useTranslation()
   const layout = useContext(ChannelRowActionsLayoutContext)
-  const channel = row.original
   const { setOpen, setCurrentRow, upstream } = useChannels()
   const queryClient = useQueryClient()
   const currentUser = useAuthStore((s) => s.auth.user)

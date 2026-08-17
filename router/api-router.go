@@ -378,6 +378,16 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			groupRoute.GET("/", controller.GetGroups)
 		}
+		// 渠道编排（级联溢出 + 熔断恢复），详见 docs/channel/cascade-failover.md
+		cascadeRoute := apiRouter.Group("/cascade")
+		cascadeRoute.Use(middleware.AdminAuth())
+		{
+			cascadeRoute.GET("/overview", controller.GetCascadeOverview)
+			cascadeRoute.GET("/health_events", controller.GetCascadeChannelHealthEvents)
+			cascadeRoute.POST("/order", controller.UpdateCascadeOrder)
+			cascadeRoute.POST("/reset_health", controller.ResetCascadeChannelHealth)
+			cascadeRoute.POST("/purge_group", controller.PurgeCascadeGroup)
+		}
 
 		prefillGroupRoute := apiRouter.Group("/prefill_group")
 		prefillGroupRoute.Use(middleware.AdminAuth())

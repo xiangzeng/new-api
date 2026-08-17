@@ -109,7 +109,9 @@ func Distribute() func(c *gin.Context) {
 					affinityUsable := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
+						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) &&
+						// 级联模式：粘住的渠道熔断中则亲和让位，走级联选择
+						(!service.CascadeEnabled() || model.IsChannelHealthAvailable(preferred.Id)) {
 						if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetRequestAutoGroups(c, userGroup)

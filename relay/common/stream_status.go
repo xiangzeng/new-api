@@ -36,10 +36,57 @@ type StreamStatus struct {
 	mu         sync.Mutex
 	Errors     []StreamErrorEntry
 	ErrorCount int
+
+	// 协议级完成标记跟踪（级联「安静断流」判定用）：
+	// 支持的渠道适配器在流结束后调用 EnableCompletionTracking，并在收到协议完成标记
+	//（如 Claude 的 message_delta stop_reason / message_stop）时调用 MarkCompletion。
+	// EOF 结束但未收到完成标记 = 上游中途断流。
+	tracksCompletion bool
+	completionSeen   bool
 }
 
 func NewStreamStatus() *StreamStatus {
 	return &StreamStatus{}
+}
+
+// EnableCompletionTracking 声明当前流的适配器支持完成标记跟踪
+func (s *StreamStatus) EnableCompletionTracking() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tracksCompletion = true
+}
+
+// MarkCompletion 记录已收到协议级完成标记
+func (s *StreamStatus) MarkCompletion() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.completionSeen = true
+}
+
+// TracksCompletion 当前流是否支持完成标记跟踪
+func (s *StreamStatus) TracksCompletion() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tracksCompletion
+}
+
+// HasCompletion 是否已收到协议级完成标记
+func (s *StreamStatus) HasCompletion() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.completionSeen
 }
 
 func (s *StreamStatus) SetEndReason(reason StreamEndReason, err error) {

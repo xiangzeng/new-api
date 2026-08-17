@@ -77,6 +77,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	var (
 		newAPIError *types.NewAPIError
 		ws          *websocket.Conn
+		relayInfo   *relaycommon.RelayInfo
 	)
 
 	if relayFormat == types.RelayFormatOpenAIRealtime {
@@ -91,6 +92,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			// 已向客户端吐过内容时无法透明切换，但故障线路已被级联隔离，
+			// 补一句提示说明重试即可换线路（流已写出时只随错误日志留痕）
+			if relayInfo != nil && relayInfo.HasSendResponse() &&
+				common.GetContextKeyBool(c, constant.ContextKeyCascadeRetryHint) {
+				newAPIError.SetMessage(newAPIError.Error() + "（该线路已临时隔离，直接重试即可自动切换其他线路 | Faulty upstream isolated, just retry to be routed elsewhere）")
+			}
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			// 流式响应已开始写出时禁止再写 JSON 错误体，避免污染已发送的响应
 			if c.Writer.Written() {
@@ -124,7 +131,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
-	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
+	relayInfo, err = relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
@@ -195,8 +202,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	// 级联模式下重试上限 = 候选渠道数，而非全局最大重试次数
+	maxRetryTimes := common.RetryTimes
+	if service.CascadeEnabled() {
+		maxRetryTimes = service.GetCascadeMaxRetryTimes(c, relayInfo.TokenGroup, relayInfo.OriginModelName, c.Request.URL.Path)
+	}
+
+	for ; retryParam.GetRetry() <= maxRetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
+		// 渠道指标按 attempt 级计耗时：重试后不把前序失败渠道消耗的时间算到成功渠道头上
+		attemptStart := time.Now()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
@@ -234,6 +249,37 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
+			if service.CascadeEnabled() {
+				// 流式请求可能「表面成功」但实际异常断流（超时/读错误/未收到完成标记），
+				// 这类失败无法透明切换（已向客户端吐字），但要计入熔断，让重发绕开坏渠道
+				outcome, faultReason := service.ClassifyStreamEnd(relayInfo.StreamStatus)
+				switch outcome {
+				case service.StreamOutcomeFault:
+					logger.LogWarn(c, fmt.Sprintf("级联：渠道 #%d（%s）流异常结束计入故障：%s", channel.Id, channel.Name, faultReason))
+					model.RecordChannelAttempt(channel.Id, model.ChannelAttemptFault, 0, 0, false)
+					if model.MarkChannelHealthFailure(channel.Id, faultReason) {
+						model.RecordChannelTrip(channel.Id)
+						model.AppendChannelHealthEvent(channel.Id, model.ChannelHealthEventTrip, faultReason)
+						logger.LogWarn(c, fmt.Sprintf("级联：渠道 #%d（%s）触发熔断，进入冷却", channel.Id, channel.Name))
+					}
+					service.ClearCurrentChannelAffinityCache(c)
+				case service.StreamOutcomeSuccess:
+					latencyMs := time.Since(attemptStart).Milliseconds()
+					hasTtft := relayInfo.IsStream && relayInfo.HasSendResponse()
+					ttftMs := int64(0)
+					if hasTtft {
+						ttftMs = relayInfo.FirstResponseTime.Sub(attemptStart).Milliseconds()
+					}
+					model.RecordChannelAttempt(channel.Id, model.ChannelAttemptSuccess, latencyMs, ttftMs, hasTtft)
+					if model.MarkChannelHealthSuccess(channel.Id) {
+						model.RecordChannelRestore(channel.Id)
+						model.AppendChannelHealthEvent(channel.Id, model.ChannelHealthEventRestore, "连续成功恢复（真实流量）")
+						logger.LogInfo(c, fmt.Sprintf("级联：渠道 #%d（%s）连续成功达标，恢复健康", channel.Id, channel.Name))
+					}
+				case service.StreamOutcomeNeutral:
+					model.RecordChannelAttempt(channel.Id, model.ChannelAttemptOther, 0, 0, false)
+				}
+			}
 			return
 		}
 
@@ -250,7 +296,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		if !shouldRetry(c, relayInfo, newAPIError, maxRetryTimes-retryParam.GetRetry()) {
 			break
 		}
 	}
@@ -342,9 +388,12 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	return channel, nil
 }
 
-func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
+func shouldRetry(c *gin.Context, info *relaycommon.RelayInfo, openaiErr *types.NewAPIError, retryTimes int) bool {
 	if openaiErr == nil {
 		return false
+	}
+	if service.CascadeEnabled() {
+		return cascadeShouldRetry(c, info, openaiErr, retryTimes)
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
@@ -374,8 +423,50 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
+// cascadeShouldRetry 级联模式的切换判定：只有「渠道故障类」错误才切换到下一个渠道，
+// 其余错误（如 400 格式错误）原样返回用户。渠道亲和的 skip-retry 不阻断级联切换。
+// 详见 docs/channel/cascade-failover.md
+func cascadeShouldRetry(c *gin.Context, info *relaycommon.RelayInfo, openaiErr *types.NewAPIError, retryTimes int) bool {
+	// 已向客户端发过内容后不能切换重试（会二次输出），交由熔断标记 + 客户端重试兜底
+	if info != nil && info.HasSendResponse() {
+		return false
+	}
+	if types.IsSkipRetryError(openaiErr) {
+		return false
+	}
+	if retryTimes <= 0 {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	if code := openaiErr.StatusCode; code >= 200 && code < 300 {
+		return false
+	}
+	return service.IsChannelFaultError(openaiErr)
+}
+
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
+	// 级联模式：故障类错误记入健康注册表（可能触发熔断），并解除当前会话的渠道亲和，
+	// 让级联选择器接管后续切换；成功后由现有逻辑自动重绑到新渠道。
+	if service.CascadeEnabled() {
+		if service.IsChannelFaultError(err) {
+			model.RecordChannelAttempt(channelError.ChannelId, model.ChannelAttemptFault, 0, 0, false)
+			if model.MarkChannelHealthFailure(channelError.ChannelId, err.ErrorWithStatusCode()) {
+				model.RecordChannelTrip(channelError.ChannelId)
+				model.AppendChannelHealthEvent(channelError.ChannelId, model.ChannelHealthEventTrip, err.ErrorWithStatusCode())
+				logger.LogWarn(c, fmt.Sprintf("级联：渠道 #%d（%s）触发熔断，进入冷却", channelError.ChannelId, channelError.ChannelName))
+			}
+			if !model.IsChannelHealthAvailable(channelError.ChannelId) {
+				common.SetContextKey(c, constant.ContextKeyCascadeRetryHint, true)
+			}
+			service.ClearCurrentChannelAffinityCache(c)
+		} else {
+			// 非故障类错误（如 400）：计 attempt 不计 fault，错误率反映的是渠道质量
+			model.RecordChannelAttempt(channelError.ChannelId, model.ChannelAttemptOther, 0, 0, false)
+		}
+	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	if service.ShouldDisableChannel(err) && channelError.AutoBan {

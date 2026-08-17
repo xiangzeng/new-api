@@ -114,6 +114,9 @@ func main() {
 	// 数据看板
 	go model.UpdateQuotaData()
 
+	// 级联熔断渠道探活恢复循环（总开关关闭时空转，不产生任何上游请求）
+	go controller.StartCascadeHealthProbeLoop()
+
 	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
 		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
 		if err != nil {
