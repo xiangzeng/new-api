@@ -1,6 +1,6 @@
 # 任务档案：使用日志仅错误筛选 + 渠道用量可视 + RPM 水位线
 
-> 状态：进行中（阶段1~5 已完成，待阶段6 发布验证）｜分支：`main`（本仓惯例直接 main）｜创建：2026-08-18｜更新：2026-08-18
+> 状态：**已完成**（六个阶段全部落地，已推 main 并部署生产，历史回填已执行）｜分支：`main`（本仓惯例直接 main）｜创建：2026-08-18｜更新：2026-08-18
 
 ## 0. 新会话启动指令（AI 必读）
 
@@ -37,7 +37,7 @@
 - [x] **阶段3 渠道列表 Tooltip**：共享 hook + BalanceCell 受控 Tooltip｜依赖：阶段2（2026-08-18 完成，未 commit；直接落对标最终态）
 - [x] **阶段4 RPM 水位线**：RPM 计数 + 三轮选路 + 水位线配置/API + 编排页卡片与设置区｜无依赖（2026-08-18 完成，未 commit）
 - [x] **阶段5 编排页分组顺序 + 卡片已用量行**：对标 `b67d96392` + `1952b75db` + `22dc378f4` 三连最终态｜依赖：阶段3（共享 hook）、阶段4（卡片布局）（2026-08-18 完成，未 commit）
-- [ ] **阶段6 发布验证**：全量构建 + 本地冒烟 + commit（先出信息给用户审核）→ 推 main → 部署
+- [x] **阶段6 发布验证**：全量构建 + 本地冒烟 + commit → 推 main → 部署 → 生产回填（2026-08-18 完成）
 
 ## 3. 架构与上下文
 
@@ -149,6 +149,26 @@
 ## 4. 进度台账（每次会话末追加，倒序）
 
 ### 2026-08-18（会话2）
+
+- 做了：**阶段6 发布验证 + 上线**。全量 `go build ./...`（含 `relaykit` 独立构建）、`go test ./...`
+  零失败；前端 typecheck/build/oxlint(改动 19 文件)/format:check/copyright:check 全过
+  （`cascade/lib/format.ts` 缺 AGPL 头已补，注意本仓 copyright 脚本要求头与正文之间无空行）；
+  本地 SQLite 冒烟四项验收全绿（仅错误筛选取到真实失败日志、近 3 天分日昨天/前天非零、
+  水位线打满即溢出、分组顺序重启后仍生效）
+- commit：`f642cb54` feat（51 文件 +2635/-303）、`009ea689` docs(tasks)；已推 origin/main
+- 部署：Build and Push Docker Image ✅ 3m50s → Deploy new-api to Hong Kong ✅ 33s，
+  容器 03:04:20Z 重启，healthy，`/api/status` 200
+- **生产回填已执行**：`POST /api/channel/daily_usage/backfill {"days":30}` →
+  `2026-07-20 ~ 2026-08-18` 共 134 行，耗时 2.0s（先用 days=1 预演，45ms/8 行）。
+  交叉核对渠道 28 昨天：日用量表 quota=2783390750 / 请求数=24766，与 logs 按
+  **Asia/Shanghai 自然日**聚合逐字相等
+- 上线后状态核查：`cascade_setting.watermark_enabled` 与 `cascade_watermark.channel_rpm`
+  在 options 里无记录 ⇒ 走默认（关闭 + 空）＝ 水位线只统计不选路，选路行为与上线前一致；
+  周期落库已在跑（`保存渠道日用量数据成功`）；overview 已返回 `rpm`/`rpm_watermark`
+- 阶段6 坑记：**核对回填别用 PG 默认会话时区**——PG 是 `Etc/UTC`、应用容器是 `Asia/Shanghai`，
+  用 UTC 切天核对会凭空差出一截（渠道 28 昨天差 4.3 亿额度 / 2814 次请求），
+  换成 `(now() at time zone 'Asia/Shanghai')` 口径后完全对上
+- 后续可选：需要用水位线时，在编排页给渠道逐个设上限并打开总开关；上线首日不建议直接开
 
 - 做了：**阶段5 落地，一步到位落三连最终态**。后端：`cascade_order.go` 加 `GroupSequence`
   + `GetCascadeGroupSequence(Positions)`；`controller/cascade.go` 抽 `sortCascadeGroups`
