@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setCascadeGroupOrdersForTest(t *testing.T, orders map[string][]int) {
@@ -128,4 +130,147 @@ func TestPickCascadeChannelStrictOrder(t *testing.T) {
 	if got := pickCascadeChannel(candidates, map[int]bool{1: true, 2: true, 3: true}, false); got != nil {
 		t.Fatalf("pick = %v, want nil", got)
 	}
+}
+
+// setCascadeWatermarkForTest 打开水位线总开关并设置渠道水位线（测试结束还原）
+func setCascadeWatermarkForTest(t *testing.T, enabled bool, watermarks map[int]int) {
+	t.Helper()
+	cascade := operation_setting.GetCascadeSetting()
+	origEnabled := cascade.WatermarkEnabled
+	cascade.WatermarkEnabled = enabled
+
+	watermarkSetting := operation_setting.GetCascadeWatermarkSetting()
+	origWatermarks := watermarkSetting.ChannelRpm
+	watermarkSetting.ChannelRpm = watermarks
+
+	t.Cleanup(func() {
+		cascade.WatermarkEnabled = origEnabled
+		watermarkSetting.ChannelRpm = origWatermarks
+	})
+}
+
+// fillChannelRpmForTest 把渠道的当前 RPM 灌到指定值
+func fillChannelRpmForTest(channelId int, count int) {
+	for i := 0; i < count; i++ {
+		RecordChannelRequest(channelId)
+	}
+}
+
+func TestSelectCascadeChannelOverflowsOnWatermark(t *testing.T) {
+	resetCascadeHealthForTest(t)
+	resetChannelRpmRegistryForTest(t)
+	setCascadeWatermarkForTest(t, true, map[int]int{1: 10, 2: 10})
+
+	candidates := []*Channel{
+		makeCascadeChannel(1, 10),
+		makeCascadeChannel(2, 5),
+		makeCascadeChannel(3, 1),
+	}
+
+	fillChannelRpmForTest(1, 9)
+	picked := selectCascadeChannel(candidates, map[int]bool{})
+	require.NotNil(t, picked)
+	assert.Equal(t, 1, picked.Id, "未达水位线应仍取顺序第一个")
+
+	// 再来一次记账正好压到水位线：自然溢出到下一个渠道
+	fillChannelRpmForTest(1, 1)
+	picked = selectCascadeChannel(candidates, map[int]bool{})
+	require.NotNil(t, picked)
+	assert.Equal(t, 2, picked.Id, "渠道 1 压满应溢出到渠道 2")
+
+	// 渠道 2 也压满：溢出到未配置水位线（= 不限流）的渠道 3
+	fillChannelRpmForTest(2, 10)
+	picked = selectCascadeChannel(candidates, map[int]bool{})
+	require.NotNil(t, picked)
+	assert.Equal(t, 3, picked.Id, "不限流渠道应兜住溢出")
+}
+
+func TestSelectCascadeChannelDisabledWatermarkKeepsLegacyOrder(t *testing.T) {
+	resetCascadeHealthForTest(t)
+	resetChannelRpmRegistryForTest(t)
+	// 总开关关闭：水位线配置存在也不参与选路
+	setCascadeWatermarkForTest(t, false, map[int]int{1: 10})
+
+	candidates := []*Channel{
+		makeCascadeChannel(1, 10),
+		makeCascadeChannel(2, 5),
+	}
+	fillChannelRpmForTest(1, 100)
+
+	picked := selectCascadeChannel(candidates, map[int]bool{})
+	require.NotNil(t, picked)
+	assert.Equal(t, 1, picked.Id, "开关关闭时行为应与旧版一致")
+}
+
+func TestSelectCascadeChannelAllFullPicksLeastLoaded(t *testing.T) {
+	resetCascadeHealthForTest(t)
+	resetChannelRpmRegistryForTest(t)
+	setCascadeWatermarkForTest(t, true, map[int]int{1: 10, 2: 100, 3: 50})
+
+	candidates := []*Channel{
+		makeCascadeChannel(1, 10),
+		makeCascadeChannel(2, 5),
+		makeCascadeChannel(3, 1),
+	}
+	// 全员打满，但负载率不同：1 → 2.0，2 → 1.0，3 → 1.2
+	fillChannelRpmForTest(1, 20)
+	fillChannelRpmForTest(2, 100)
+	fillChannelRpmForTest(3, 60)
+
+	picked := selectCascadeChannel(candidates, map[int]bool{})
+	require.NotNil(t, picked)
+	assert.Equal(t, 2, picked.Id, "负载率最低者应接住溢出")
+
+	// 负载率最低者已试过：交给次低的渠道 3，而不是退回顺序第一个
+	picked = selectCascadeChannel(candidates, map[int]bool{2: true})
+	require.NotNil(t, picked)
+	assert.Equal(t, 3, picked.Id)
+}
+
+func TestSelectCascadeChannelAllTrippedIgnoresWatermark(t *testing.T) {
+	resetCascadeHealthForTest(t)
+	resetChannelRpmRegistryForTest(t)
+	setCascadeWatermarkForTest(t, true, map[int]int{1: 10, 2: 10})
+
+	candidates := []*Channel{
+		makeCascadeChannel(1, 10),
+		makeCascadeChannel(2, 5),
+	}
+	fillChannelRpmForTest(1, 50)
+	fillChannelRpmForTest(2, 50)
+	MarkChannelHealthFailure(1, "boom")
+	MarkChannelHealthFailure(2, "boom")
+
+	// 全部熔断 + 全部压满：兜底轮忽略两者，按编排顺序取首个
+	picked := selectCascadeChannel(candidates, map[int]bool{})
+	require.NotNil(t, picked)
+	assert.Equal(t, 1, picked.Id, "兜底轮应忽略健康标记与水位线")
+}
+
+func TestSelectCascadeChannelPrefersHealthyFullOverTripped(t *testing.T) {
+	resetCascadeHealthForTest(t)
+	resetChannelRpmRegistryForTest(t)
+	setCascadeWatermarkForTest(t, true, map[int]int{1: 10})
+
+	candidates := []*Channel{
+		makeCascadeChannel(1, 10), // 健康但压满
+		makeCascadeChannel(2, 5),  // 熔断中
+	}
+	fillChannelRpmForTest(1, 30)
+	MarkChannelHealthFailure(2, "boom")
+
+	picked := selectCascadeChannel(candidates, map[int]bool{})
+	require.NotNil(t, picked)
+	assert.Equal(t, 1, picked.Id, "健康压满应优先于熔断")
+}
+
+func TestIsChannelOverWatermarkZeroMeansUnlimited(t *testing.T) {
+	resetChannelRpmRegistryForTest(t)
+	setCascadeWatermarkForTest(t, true, map[int]int{1: 0, 2: 5})
+
+	fillChannelRpmForTest(1, 1000)
+	fillChannelRpmForTest(2, 5)
+
+	assert.False(t, IsChannelOverWatermark(1), "水位线为 0 应视为不限流")
+	assert.True(t, IsChannelOverWatermark(2), "渠道 2 已达水位线应判定为打满")
 }

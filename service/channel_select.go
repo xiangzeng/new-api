@@ -93,6 +93,17 @@ func (p *RetryParam) ResetRetryNextTry() {
 //	Retry=3: GroupB, priority1 (startRetryIndex=2, priorityRetry=1)
 //	         分组B, 优先级1
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
+	channel, selectGroup, err := selectSatisfiedChannel(param)
+	// 选中即记账：RPM 滚动窗口在渠道被选中的瞬间 +1，并发突发时下一次选择立刻看到新计数，
+	// 水位线判定才不会滞后。探活与渠道测试不走这里，天然不计入。
+	if channel != nil {
+		model.RecordChannelRequest(channel.Id)
+	}
+	return channel, selectGroup, err
+}
+
+// selectSatisfiedChannel 渠道选择本体（不含 RPM 记账），供 CacheGetRandomSatisfiedChannel 调用
+func selectSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 	var channel *model.Channel
 	var err error
 	selectGroup := param.TokenGroup

@@ -40,6 +40,7 @@ import { TableId } from '@/components/table-id'
 import { TruncatedText } from '@/components/truncated-text'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
@@ -73,6 +74,7 @@ import {
   handleUpdateChannelBalance,
   createChannelFieldUpdateScheduler,
   isTagAggregateRow,
+  useChannelRecentUsageQuery,
   type TagRow,
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
@@ -334,6 +336,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const balance = channel.balance || 0
   const usedQuota = channel.used_quota || 0
   const [isUpdating, setIsUpdating] = useState(false)
+  const [usedTooltipOpen, setUsedTooltipOpen] = useState(false)
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
@@ -349,15 +352,21 @@ function BalanceCell({ channel }: { channel: Channel }) {
     abbreviate: false,
     showSymbol: layout !== 'card',
   } as const
+  const canLoadRecentUsage = sensitiveVisible && !isTagRow
+  const recentUsageQuery = useChannelRecentUsageQuery(channel.id, {
+    enabled: usedTooltipOpen && canLoadRecentUsage,
+  })
+  const formatUsageAmount = (value: number) =>
+    withSuffix(
+      formatQuotaWithCurrency(value, {
+        digitsLarge: 2,
+        digitsSmall: 4,
+        abbreviate: true,
+        showSymbol: layout !== 'card',
+      })
+    )
   // Precise values are kept for the tooltip; long values are shown compactly inline.
-  const usedFull = withSuffix(
-    formatQuotaWithCurrency(usedQuota, {
-      digitsLarge: 2,
-      digitsSmall: 4,
-      abbreviate: true,
-      showSymbol: layout !== 'card',
-    })
-  )
+  const usedFull = formatUsageAmount(usedQuota)
   const remainingFull = withSuffix(
     formatCurrencyFromUSD(balance, balanceFormatOptions)
   )
@@ -463,11 +472,44 @@ function BalanceCell({ channel }: { channel: Channel }) {
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
   }
+  let recentUsageError = t('Failed to load recent usage')
+  if (recentUsageQuery.error instanceof Error) {
+    recentUsageError = recentUsageQuery.error.message
+  }
+  let recentUsageContent: React.ReactNode = (
+    <div className='space-y-1'>
+      {(recentUsageQuery.data ?? []).map((item) => (
+        <div
+          key={item.date}
+          className='flex items-center justify-between gap-4 text-xs'
+        >
+          <span className='text-background/70 flex items-center gap-1'>
+            <span>{t(item.labelKey)}</span>
+            <span className='font-mono'>{item.date}</span>
+          </span>
+          <span className='font-medium'>
+            {formatUsageAmount(item.quota_used)}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+  if (recentUsageQuery.isLoading) {
+    recentUsageContent = (
+      <div className='flex items-center justify-center py-2'>
+        <Spinner className='text-background size-4' />
+      </div>
+    )
+  } else if (recentUsageQuery.isError) {
+    recentUsageContent = (
+      <p className='text-background/70 py-1 text-xs'>{recentUsageError}</p>
+    )
+  }
 
   return (
     <TooltipProvider>
       <div className='-ml-1.5 flex items-center gap-1'>
-        <Tooltip>
+        <Tooltip open={usedTooltipOpen} onOpenChange={setUsedTooltipOpen}>
           <TooltipTrigger
             render={
               <StatusBadge
@@ -480,8 +522,20 @@ function BalanceCell({ channel }: { channel: Channel }) {
               />
             }
           />
-          <TooltipContent>
-            <p>{sensitiveVisible ? usedLabel : maskedUsedLabel}</p>
+          <TooltipContent className='min-w-56 items-stretch'>
+            {!sensitiveVisible ? (
+              <p>{maskedUsedLabel}</p>
+            ) : (
+              <div className='w-full space-y-2'>
+                <p className='font-medium'>{usedLabel}</p>
+                <div className='border-background/20 space-y-1 border-t pt-2'>
+                  <p className='text-background/70 text-[11px] font-medium'>
+                    {t('Recent 3 days usage')}
+                  </p>
+                  {recentUsageContent}
+                </div>
+              </div>
+            )}
           </TooltipContent>
         </Tooltip>
         <Tooltip>

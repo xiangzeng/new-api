@@ -96,6 +96,9 @@ var auditRouteActions = map[string]string{
 
 	// 余额开放接口应用（root）
 
+	// 渠道
+	"POST /api/channel/daily_usage/backfill": "channel.daily_usage_backfill",
+
 	// 日志
 	"POST /api/system-task/log-cleanup": "log.cleanup_start",
 	"DELETE /api/log/errors":            "log.delete_errors",

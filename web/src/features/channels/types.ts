@@ -199,6 +199,22 @@ export interface ChannelBalanceResponse {
   currency?: string
 }
 
+export interface ChannelDailyUsage {
+  id?: number
+  channel_id?: number
+  date: string
+  quota_used: number
+  request_count: number
+  token_used: number
+  updated_at?: number
+}
+
+export interface ChannelDailyUsageResponse {
+  success: boolean
+  message?: string
+  data?: ChannelDailyUsage[]
+}
+
 export interface FetchModelsResponse {
   success: boolean
   message?: string

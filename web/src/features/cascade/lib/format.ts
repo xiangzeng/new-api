@@ -16,16 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-// Re-export all library functions
-export * from './channel-actions'
-export * from './channel-field-update'
-export * from './advanced-custom'
-export * from './channel-form-errors'
-export * from './channel-form'
-export * from './channel-recent-usage'
-export * from './use-channel-recent-usage'
-export * from './channel-type-config'
-export * from './channel-utils'
-export * from './multi-key-utils'
-export * from './model-mapping-validation'
-export * from './model-categories'
+/** 毫秒口径的耗时展示：≥1s 转秒并保留一位小数 */
+export function formatMs(ms: number): string {
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`
+  return `${ms}ms`
+}

@@ -68,6 +68,9 @@ export const LOG_TYPE_ENUM = {
  */
 export const LOG_TYPE_ALL_VALUE = '0' as const
 
+/** Filter value for failed request logs (backend LogTypeError = 5). */
+export const LOG_TYPE_ERROR_VALUE = String(LOG_TYPE_ENUM.ERROR)
+
 // ============================================================================
 // Time Range Presets
 // ============================================================================

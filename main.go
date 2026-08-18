@@ -114,6 +114,12 @@ func main() {
 	// 数据看板
 	go model.UpdateQuotaData()
 
+	// 渠道日用量统计（内存累计 → 周期落库，供渠道「最近 N 天消耗」读取）
+	go model.UpdateChannelDailyUsage()
+
+	// 渠道日用量清理任务（保留 30 天，仅主节点执行）
+	model.StartChannelDataCleanupTask()
+
 	// 级联熔断渠道探活恢复循环（总开关关闭时空转，不产生任何上游请求）
 	go controller.StartCascadeHealthProbeLoop()
 
@@ -238,6 +244,8 @@ func main() {
 	if common.DataExportEnabled {
 		model.SaveQuotaDataCache()
 	}
+	// 渠道日用量内存增量落库，同样避免重启丢数
+	model.SaveChannelDailyUsageCache()
 	common.SysLog("server exited")
 }
 

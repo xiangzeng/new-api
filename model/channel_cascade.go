@@ -9,9 +9,10 @@ import (
 )
 
 // 级联选择器：按分组「编排顺序」（cascade_order.group_orders，与渠道优先级解耦）
-// 严格依次遍历候选渠道，跳过已试过与熔断中的渠道；未配置顺序的分组、未入列的
-// 渠道按优先级降序、id 升序兜底（与旧版行为一致）。
-// 全部熔断时兜底：忽略健康标记仍按顺序选择，保证服务可用性优先于标记。
+// 严格依次遍历候选渠道，跳过已试过、熔断中、以及 RPM 已达水位线的渠道；未配置顺序的
+// 分组、未入列的渠道按优先级降序、id 升序兜底（与旧版行为一致）。
+// 三轮兜底：正常轮（健康且未打满）→ 打满轮（健康渠道全达水位线时交负载率最低者接住）
+// → 熔断兜底轮（全部熔断时忽略健康标记与水位线按顺序选），保证服务可用性优先于标记。
 // 详见 docs/channel/cascade-failover.md
 
 // GetCascadeSatisfiedChannel 级联模式下的渠道选择。
@@ -26,15 +27,22 @@ func GetCascadeSatisfiedChannel(group string, model string, requestPath string, 
 		return nil, nil
 	}
 
-	// 第一轮：只考虑健康且未试过的渠道
+	return selectCascadeChannel(candidates, excludeIds), nil
+}
+
+// selectCascadeChannel 在已按编排顺序排好的候选里三轮兜底选取渠道
+func selectCascadeChannel(candidates []*Channel, excludeIds map[int]bool) *Channel {
+	// 正常轮：健康、未试过、且 RPM 未达水位线
 	if channel := pickCascadeChannel(candidates, excludeIds, true); channel != nil {
-		return channel, nil
+		return channel
 	}
-	// 兜底轮：全部熔断时忽略健康标记，仍按顺序选一个未试过的渠道
-	if channel := pickCascadeChannel(candidates, excludeIds, false); channel != nil {
-		return channel, nil
+	// 打满轮：健康渠道全部达到水位线，交给负载率最低的那个接住溢出
+	// （退回顺序第一个等于把溢出全砸在最满的渠道上）
+	if channel := pickLeastLoadedCascadeChannel(candidates, excludeIds); channel != nil {
+		return channel
 	}
-	return nil, nil
+	// 熔断兜底轮：全部熔断时忽略健康标记与水位线，仍按顺序选一个未试过的渠道
+	return pickCascadeChannel(candidates, excludeIds, false)
 }
 
 // CountCascadeCandidates 返回分组下候选渠道数量（级联模式的重试上限依据）
@@ -47,18 +55,45 @@ func CountCascadeCandidates(group string, model string, requestPath string) int 
 }
 
 // pickCascadeChannel 按候选列表顺序（已按编排顺序排好）返回第一个可用渠道。
-// checkHealth 为 false 时忽略健康标记（兜底轮）。
-func pickCascadeChannel(candidates []*Channel, excludeIds map[int]bool, checkHealth bool) *Channel {
+// checkAvailable 为 false 时忽略健康标记与水位线（熔断兜底轮）。
+func pickCascadeChannel(candidates []*Channel, excludeIds map[int]bool, checkAvailable bool) *Channel {
 	for _, channel := range candidates {
 		if excludeIds[channel.Id] {
 			continue
 		}
-		if checkHealth && !IsChannelHealthAvailable(channel.Id) {
-			continue
+		if checkAvailable {
+			if !IsChannelHealthAvailable(channel.Id) {
+				continue
+			}
+			if IsChannelOverWatermark(channel.Id) {
+				continue
+			}
 		}
 		return channel
 	}
 	return nil
+}
+
+// pickLeastLoadedCascadeChannel 打满轮：在健康、未试过的渠道里挑负载率
+// （当前 RPM / 水位线）最低的一个接住溢出流量；同负载率时保持编排顺序在前者优先。
+// 无健康候选（全部熔断/已试过）时返回 nil，交给熔断兜底轮。
+func pickLeastLoadedCascadeChannel(candidates []*Channel, excludeIds map[int]bool) *Channel {
+	var picked *Channel
+	lowest := 0.0
+	for _, channel := range candidates {
+		if excludeIds[channel.Id] {
+			continue
+		}
+		if !IsChannelHealthAvailable(channel.Id) {
+			continue
+		}
+		ratio := channelRpmLoadRatio(channel.Id)
+		if picked == nil || ratio < lowest {
+			picked = channel
+			lowest = ratio
+		}
+	}
+	return picked
 }
 
 // CascadeOrderPositions 返回分组编排顺序的 id→位置表（位置从 1 起，

@@ -110,8 +110,9 @@ func Distribute() func(c *gin.Context) {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
 						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) &&
-						// 级联模式：粘住的渠道熔断中则亲和让位，走级联选择
-						(!service.CascadeEnabled() || model.IsChannelHealthAvailable(preferred.Id)) {
+						// 级联模式：粘住的渠道熔断中、或 RPM 已达水位线，则亲和让位走级联选择
+						(!service.CascadeEnabled() ||
+							(model.IsChannelHealthAvailable(preferred.Id) && !model.IsChannelOverWatermark(preferred.Id))) {
 						if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetRequestAutoGroups(c, userGroup)
@@ -134,6 +135,11 @@ func Distribute() func(c *gin.Context) {
 					}
 					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
 						service.ClearCurrentChannelAffinityCache(c)
+					}
+					if affinityUsable && channel != nil {
+						// 亲和命中绕开了级联选择器，须在此单独记账，
+						// 否则粘住的渠道 RPM 恒为 0、水位线形同虚设
+						model.RecordChannelRequest(channel.Id)
 					}
 				}
 

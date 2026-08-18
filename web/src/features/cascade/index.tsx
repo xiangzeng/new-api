@@ -33,8 +33,9 @@ import type { Channel } from '@/features/channels/types'
 
 import { getCascadeOverview, saveCascadeOrder } from './api'
 import { CascadeLane } from './components/cascade-lane'
+import { GroupOrderCard } from './components/group-order-card'
 import { CascadeSettingsCard } from './components/settings-card'
-import type { CascadeOverviewResponse } from './types'
+import type { CascadeGroup, CascadeOverviewResponse } from './types'
 
 // 卡片操作弹窗需要全量渠道字段，编排 overview 只带瘦数据，这里一次拉全
 const CASCADE_CHANNELS_PAGE_SIZE = 1000
@@ -48,6 +49,28 @@ function mergeOrder(serverIds: number[], localOrder?: number[]): number[] {
     ...localOrder.filter((id) => serverSet.has(id)),
     ...serverIds.filter((id) => !known.has(id)),
   ]
+}
+
+// 按分组名列表重排泳道：入列的按列表位置，未入列的保持服务端顺序垫底。
+// 失效（孤儿）分组由后端强制沉底，这里不参与排序。
+function sortGroupsBySequence(
+  groups: CascadeGroup[],
+  sequence: string[]
+): CascadeGroup[] {
+  const pos = new Map(sequence.map((name, index) => [name, index]))
+  const sortable = groups.filter((group) => !group.orphan)
+  const orphans = groups.filter((group) => group.orphan)
+  const ordered = sortable
+    .map((group, index) => ({ group, index }))
+    .sort((a, b) => {
+      const pa = pos.get(a.group.name)
+      const pb = pos.get(b.group.name)
+      if (pa !== undefined && pb !== undefined) return pa - pb
+      if (pa !== undefined || pb !== undefined) return pa !== undefined ? -1 : 1
+      return a.index - b.index
+    })
+    .map((item) => item.group)
+  return [...ordered, ...orphans]
 }
 
 export function Cascade() {
@@ -98,10 +121,17 @@ function CascadeContent() {
 
   // groupName -> 未保存的本地顺序；空对象 = 全部跟随服务端
   const [localOrders, setLocalOrders] = useState<Record<string, number[]>>({})
+  // 未保存的分组泳道展示顺序；null = 跟随服务端
+  const [localGroupSequence, setLocalGroupSequence] = useState<string[] | null>(
+    null
+  )
 
   const overview = data?.data
   const setting = overview?.setting
-  const groups = overview?.groups ?? []
+  const serverGroups = overview?.groups ?? []
+  const groups = localGroupSequence
+    ? sortGroupsBySequence(serverGroups, localGroupSequence)
+    : serverGroups
 
   const idsByGroup = new Map<string, number[]>()
   const dirtyGroups: string[] = []
@@ -113,11 +143,20 @@ function CascadeContent() {
       dirtyGroups.push(group.name)
     }
   }
-  const dirty = dirtyGroups.length > 0
+
+  // 分组顺序只提交在役分组，失效分组由后端沉底
+  const sortableGroups = groups.filter((group) => !group.orphan)
+  const groupSequence = sortableGroups.map((group) => group.name)
+  const serverGroupSequence = serverGroups
+    .filter((group) => !group.orphan)
+    .map((group) => group.name)
+  const groupSequenceDirty =
+    groupSequence.join('\u0000') !== serverGroupSequence.join('\u0000')
+  const dirty = dirtyGroups.length > 0 || groupSequenceDirty
 
   const saveMutation = useMutation({
     mutationFn: saveCascadeOrder,
-    onSuccess: async (res, orders) => {
+    onSuccess: async (res, payload) => {
       if (!res.success) {
         toast.error(res.message || t('Save failed'))
         return
@@ -128,40 +167,45 @@ function CascadeContent() {
       // 未入列渠道与后端同规则垫底（优先级降序、id 升序）
       await queryClient.cancelQueries({ queryKey: ['cascade', 'overview'] })
       const orderByGroup = new Map(
-        orders.map((order) => [order.group, order.channel_ids])
+        (payload.orders ?? []).map((order) => [order.group, order.channel_ids])
       )
+      const savedSequence = payload.group_sequence
       queryClient.setQueryData<CascadeOverviewResponse>(
         ['cascade', 'overview'],
         (prev) => {
           if (!prev?.data) return prev
+          const nextGroups = prev.data.groups.map((group) => {
+            const saved = orderByGroup.get(group.name)
+            if (!saved) return group
+            const pos = new Map(saved.map((id, index) => [id, index]))
+            return {
+              ...group,
+              channels: [...group.channels].sort((a, b) => {
+                const pa = pos.get(a.id)
+                const pb = pos.get(b.id)
+                if (pa !== undefined && pb !== undefined) return pa - pb
+                if (pa !== undefined || pb !== undefined) {
+                  return pa !== undefined ? -1 : 1
+                }
+                return a.priority !== b.priority
+                  ? b.priority - a.priority
+                  : a.id - b.id
+              }),
+            }
+          })
           return {
             ...prev,
             data: {
               ...prev.data,
-              groups: prev.data.groups.map((group) => {
-                const saved = orderByGroup.get(group.name)
-                if (!saved) return group
-                const pos = new Map(saved.map((id, index) => [id, index]))
-                return {
-                  ...group,
-                  channels: [...group.channels].sort((a, b) => {
-                    const pa = pos.get(a.id)
-                    const pb = pos.get(b.id)
-                    if (pa !== undefined && pb !== undefined) return pa - pb
-                    if (pa !== undefined || pb !== undefined) {
-                      return pa !== undefined ? -1 : 1
-                    }
-                    return a.priority !== b.priority
-                      ? b.priority - a.priority
-                      : a.id - b.id
-                  }),
-                }
-              }),
+              groups: savedSequence
+                ? sortGroupsBySequence(nextGroups, savedSequence)
+                : nextGroups,
             },
           }
         }
       )
       setLocalOrders({})
+      setLocalGroupSequence(null)
       queryClient.invalidateQueries({ queryKey: ['cascade', 'overview'] })
     },
     onError: (error) => {
@@ -169,14 +213,16 @@ function CascadeContent() {
     },
   })
 
-  // 编排顺序按分组独立存储，只提交有改动的泳道，跨组互不影响
+  // 编排顺序按分组独立存储，只提交有改动的泳道，跨组互不影响；
+  // 分组展示顺序有改动时随同一次请求提交
   const handleSaveAll = () => {
-    saveMutation.mutate(
-      dirtyGroups.map((name) => ({
+    saveMutation.mutate({
+      orders: dirtyGroups.map((name) => ({
         group: name,
         channel_ids: idsByGroup.get(name) ?? [],
-      }))
-    )
+      })),
+      ...(groupSequenceDirty ? { group_sequence: groupSequence } : {}),
+    })
   }
 
   return (
@@ -208,7 +254,10 @@ function CascadeContent() {
                 <Button
                   variant='outline'
                   size='sm'
-                  onClick={() => setLocalOrders({})}
+                  onClick={() => {
+                    setLocalOrders({})
+                    setLocalGroupSequence(null)
+                  }}
                   disabled={saveMutation.isPending}
                 >
                   {t('Cancel')}
@@ -254,6 +303,14 @@ function CascadeContent() {
           ))}
 
           {setting && <CascadeSettingsCard setting={setting} />}
+
+          {!isLoading && !error && (
+            <GroupOrderCard
+              groups={sortableGroups}
+              hasOrphan={groups.length > sortableGroups.length}
+              onReorder={setLocalGroupSequence}
+            />
+          )}
         </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>

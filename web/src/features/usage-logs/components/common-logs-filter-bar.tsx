@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import type { Table } from '@tanstack/react-table'
-import { Eye, EyeOff } from 'lucide-react'
+import { AlertTriangle, Eye, EyeOff } from 'lucide-react'
 import { useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -37,8 +37,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 
-import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
+import {
+  LOG_TYPE_ALL_VALUE,
+  LOG_TYPE_ERROR_VALUE,
+  LOG_TYPE_FILTERS,
+} from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
@@ -186,20 +191,38 @@ export function CommonLogsFilterBar<TData>(
     [searchState]
   )
 
+  const applyWithType = useCallback(
+    (nextLogType: LogTypeValue) => {
+      const filterParams = buildSearchParams(filters, 'common')
+      setDraft({
+        sourceKey: searchState.sourceKey,
+        filters,
+        logType: nextLogType,
+      })
+      navigate({
+        to: '/usage-logs/$section',
+        params: { section: 'common' },
+        search: {
+          ...filterParams,
+          type: [nextLogType],
+          page: 1,
+        },
+      })
+      queryClient.invalidateQueries({ queryKey: ['logs'] })
+      queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
+    },
+    [filters, navigate, queryClient, searchState.sourceKey]
+  )
+
   const handleApply = useCallback(() => {
-    const filterParams = buildSearchParams(filters, 'common')
-    navigate({
-      to: '/usage-logs/$section',
-      params: { section: 'common' },
-      search: {
-        ...filterParams,
-        type: [logType],
-        page: 1,
-      },
-    })
-    queryClient.invalidateQueries({ queryKey: ['logs'] })
-    queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
-  }, [filters, logType, navigate, queryClient])
+    applyWithType(logType)
+  }, [applyWithType, logType])
+
+  const isErrorOnly = logType === LOG_TYPE_ERROR_VALUE
+
+  const handleToggleErrorsOnly = useCallback(() => {
+    applyWithType(isErrorOnly ? LOG_TYPE_ALL_VALUE : LOG_TYPE_ERROR_VALUE)
+  }, [applyWithType, isErrorOnly])
 
   const handleReset = useCallback(() => {
     const { start, end } = getDefaultTimeRange()
@@ -330,39 +353,59 @@ export function CommonLogsFilterBar<TData>(
     </LogsFilterField>
   )
   const typeFilter = (
-    <LogsFilterField>
-      <Select
-        items={logTypeItems}
-        value={logType}
-        onValueChange={(value) => {
-          const nextLogType =
-            value !== null && isLogTypeValue(value) ? value : LOG_TYPE_ALL_VALUE
-          setDraft((current) => {
-            const base =
-              current.sourceKey === searchState.sourceKey
-                ? current
-                : searchState
-            return {
-              sourceKey: searchState.sourceKey,
-              filters: base.filters,
-              logType: nextLogType,
-            }
-          })
-        }}
-      >
-        <SelectTrigger>
-          <SelectValue>{logTypeLabel}</SelectValue>
-        </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false}>
-          <SelectGroup>
-            {LOG_TYPE_FILTERS.map((type) => (
-              <SelectItem key={type.value} value={type.value}>
-                {t(type.label)}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
+    <LogsFilterField wide className='sm:min-w-[16rem]'>
+      <div className='flex min-w-0 items-center gap-1.5'>
+        <Select
+          items={logTypeItems}
+          value={logType}
+          onValueChange={(value) => {
+            const nextLogType =
+              value !== null && isLogTypeValue(value)
+                ? value
+                : LOG_TYPE_ALL_VALUE
+            setDraft((current) => {
+              const base =
+                current.sourceKey === searchState.sourceKey
+                  ? current
+                  : searchState
+              return {
+                sourceKey: searchState.sourceKey,
+                filters: base.filters,
+                logType: nextLogType,
+              }
+            })
+          }}
+        >
+          <SelectTrigger className='min-w-0 flex-1'>
+            <SelectValue>{logTypeLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {LOG_TYPE_FILTERS.map((type) => (
+                <SelectItem key={type.value} value={type.value}>
+                  {t(type.label)}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Button
+          type='button'
+          size='sm'
+          variant={isErrorOnly ? 'destructive' : 'outline'}
+          className={cn(
+            'h-8 shrink-0 gap-1 px-2.5 text-xs',
+            !isErrorOnly &&
+              'border-rose-500/40 text-rose-600 hover:bg-rose-500/10 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300'
+          )}
+          aria-pressed={isErrorOnly}
+          onClick={handleToggleErrorsOnly}
+          title={t('Show failed request logs only')}
+        >
+          <AlertTriangle className='size-3.5' />
+          {t('Errors only')}
+        </Button>
+      </div>
     </LogsFilterField>
   )
   const advancedFilters = (

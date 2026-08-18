@@ -53,6 +53,10 @@ export type CascadeChannel = {
   weight: number
   health?: CascadeChannelHealth
   metrics?: CascadeChannelMetrics
+  /** 近 60 秒被选中的次数（滚动窗口，选中即记账） */
+  rpm: number
+  /** RPM 水位线，0 = 不限流 */
+  rpm_watermark: number
 }
 
 export type CascadeGroup = {
@@ -70,6 +74,7 @@ export type CascadeSetting = {
   probe_interval_seconds: number
   recovery_success_count: number
   max_attempts_per_request: number
+  watermark_enabled: boolean
   incomplete_stream_as_fault: boolean
   extra_fault_status_codes: number[]
   extra_fault_keywords: string[]

@@ -385,6 +385,7 @@ func SetApiRouter(router *gin.Engine) {
 			cascadeRoute.GET("/overview", controller.GetCascadeOverview)
 			cascadeRoute.GET("/health_events", controller.GetCascadeChannelHealthEvents)
 			cascadeRoute.POST("/order", controller.UpdateCascadeOrder)
+			cascadeRoute.POST("/watermark", controller.UpdateCascadeWatermark)
 			cascadeRoute.POST("/reset_health", controller.ResetCascadeChannelHealth)
 			cascadeRoute.POST("/purge_group", controller.PurgeCascadeGroup)
 		}

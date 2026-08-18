@@ -31,7 +31,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 
 import { getCascadeHealthEvents } from '../api'
-import type { CascadeHealthEventType } from '../types'
+import type { CascadeChannelMetrics, CascadeHealthEventType } from '../types'
+import { MetricsDetailLine } from './metrics-detail'
 
 const EVENT_STYLES: Record<
   CascadeHealthEventType,
@@ -51,6 +52,8 @@ function formatEventTime(ts: number): string {
 type HealthEventsDialogProps = {
   channelId: number
   channelName: string
+  /** 近 1h/24h 指标快照，卡片上只留摘要，明细在这里看 */
+  metrics?: CascadeChannelMetrics
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -59,6 +62,7 @@ type HealthEventsDialogProps = {
 export function HealthEventsDialog({
   channelId,
   channelName,
+  metrics,
   open,
   onOpenChange,
 }: HealthEventsDialogProps) {
@@ -133,6 +137,12 @@ export function HealthEventsDialog({
             {t('Health Timeline')} · #{channelId} {channelName}
           </DialogTitle>
         </DialogHeader>
+        {metrics && (
+          <div className='bg-muted/50 space-y-1 rounded-lg p-3 text-xs'>
+            <MetricsDetailLine label={t('Last 1h')} window={metrics['1h']} />
+            <MetricsDetailLine label={t('Last 24h')} window={metrics['24h']} />
+          </div>
+        )}
         <div className='text-muted-foreground flex items-center justify-between gap-2 text-xs'>
           <span>
             {t('{{count}} trips in last 24h', {

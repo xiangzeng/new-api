@@ -25,6 +25,7 @@ import type {
   BatchSetTagParams,
   Channel,
   ChannelBalanceResponse,
+  ChannelDailyUsageResponse,
   ChannelOpsResponse,
   ChannelTestResponse,
   CopyChannelParams,
@@ -230,6 +231,17 @@ export async function updateChannelBalance(
   const res = await api.get(
     `/api/channel/update_balance/${id}`,
     channelActionConfig()
+  )
+  return res.data
+}
+
+export async function getChannelDailyUsage(
+  id: number,
+  params: { start_date: string; end_date: string }
+): Promise<ChannelDailyUsageResponse> {
+  const res = await api.get(
+    `/api/channel/${id}/daily_usage`,
+    channelActionConfig({ params, disableDuplicate: true })
   )
   return res.data
 }

@@ -30,11 +30,25 @@ export async function getCascadeOverview() {
   return res.data
 }
 
-export async function saveCascadeOrder(
-  orders: { group: string; channel_ids: number[] }[]
+// 保存编排顺序：orders = 各分组内渠道的溢出顺序（影响路由），
+// group_sequence = 分组泳道在编排页的展示顺序（纯展示）。两者可单独提交。
+export async function saveCascadeOrder(payload: {
+  orders?: { group: string; channel_ids: number[] }[]
+  group_sequence?: string[]
+}) {
+  const res = await api.post<CascadeActionResponse>(
+    '/api/cascade/order',
+    payload
+  )
+  return res.data
+}
+
+// 保存渠道 RPM 水位线：rpm <= 0 表示清除（= 不限流），未提交的渠道保持原值
+export async function saveCascadeWatermark(
+  watermarks: { channel_id: number; rpm: number }[]
 ) {
-  const res = await api.post<CascadeActionResponse>('/api/cascade/order', {
-    orders,
+  const res = await api.post<CascadeActionResponse>('/api/cascade/watermark', {
+    watermarks,
   })
   return res.data
 }

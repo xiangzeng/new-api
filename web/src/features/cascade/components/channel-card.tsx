@@ -16,15 +16,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { GripVertical, History, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ChannelRowActionsLayoutContext } from '@/features/channels/components/channel-row-actions-context'
@@ -32,19 +42,13 @@ import { ChannelRowActions } from '@/features/channels/components/data-table-row
 import type { Channel } from '@/features/channels/types'
 import { cn } from '@/lib/utils'
 
-import type {
-  CascadeChannel,
-  CascadeChannelMetrics,
-  CascadeChannelMetricsWindow,
-} from '../types'
+import { saveCascadeWatermark } from '../api'
+import { formatMs } from '../lib/format'
+import type { CascadeChannel, CascadeChannelMetrics } from '../types'
 import { HealthEventsDialog } from './health-events-dialog'
+import { UsedQuotaRow } from './used-quota-row'
 
 const CHANNEL_STATUS_ENABLED = 1
-
-function formatMs(ms: number): string {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`
-  return `${ms}ms`
-}
 
 function formatErrorRate(rate: number): string {
   return `${(rate * 100).toFixed(rate >= 0.1 ? 0 : 1)}%`
@@ -56,61 +60,165 @@ function errorRateClass(rate: number): string {
   return ''
 }
 
-function MetricsDetailLine({
-  label,
-  window,
-}: {
-  label: string
-  window: CascadeChannelMetricsWindow
-}) {
-  const { t } = useTranslation()
-  return (
-    <div>
-      <span className='font-medium'>{label}</span>
-      {': '}
-      {t('Attempts')} {window.attempts} · {t('Faults')} {window.faults} ·{' '}
-      {t('Trips')} {window.trips} · {t('Restores')} {window.restores}
-      {window.avg_latency_ms > 0 &&
-        ` · ${t('Avg latency')} ${formatMs(window.avg_latency_ms)}`}
-      {window.avg_ttft_ms > 0 &&
-        ` · ${t('Avg TTFT')} ${formatMs(window.avg_ttft_ms)}`}
-    </div>
-  )
-}
-
-// 近 1h 紧凑指标行；hover 出 1h/24h 全量明细。无任何指标数据时不渲染。
+// 近 1h 紧凑指标行；1h/24h 全量明细在「健康时间线」弹窗里看，
+// 这里不再挂 tooltip——卡片本就窄，悬停弹窗会糊住上半张卡。无指标数据时不渲染。
 function MetricsRow({ metrics }: { metrics?: CascadeChannelMetrics }) {
   const { t } = useTranslation()
   if (!metrics) return null
   const hour = metrics['1h']
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<div className='text-muted-foreground mt-1 text-xs' />}
-      >
-        {hour.attempts === 0 && hour.trips === 0 && hour.restores === 0 ? (
-          <span>{t('No traffic in last hour')}</span>
-        ) : (
-          <span>
-            {t('Err')}{' '}
-            <span className={errorRateClass(hour.error_rate)}>
-              {formatErrorRate(hour.error_rate)}
-            </span>
-            {hour.trips > 0 && ` · ${t('Trips')} ${hour.trips}`}
-            {hour.avg_ttft_ms > 0 &&
-              ` · ${t('TTFT')} ${formatMs(hour.avg_ttft_ms)}`}
-            {hour.avg_ttft_ms === 0 &&
-              hour.avg_latency_ms > 0 &&
-              ` · ${t('Latency')} ${formatMs(hour.avg_latency_ms)}`}
+    <div className='text-muted-foreground mt-1.5 text-xs'>
+      {hour.attempts === 0 && hour.trips === 0 && hour.restores === 0 ? (
+        <span>{t('No traffic in last hour')}</span>
+      ) : (
+        <span>
+          {t('Err')}{' '}
+          <span className={errorRateClass(hour.error_rate)}>
+            {formatErrorRate(hour.error_rate)}
           </span>
-        )}
-      </TooltipTrigger>
-      <TooltipContent className='max-w-sm space-y-1'>
-        <MetricsDetailLine label={t('Last 1h')} window={metrics['1h']} />
-        <MetricsDetailLine label={t('Last 24h')} window={metrics['24h']} />
-      </TooltipContent>
-    </Tooltip>
+          {hour.trips > 0 && ` · ${t('Trips')} ${hour.trips}`}
+          {hour.avg_ttft_ms > 0 &&
+            ` · ${t('TTFT')} ${formatMs(hour.avg_ttft_ms)}`}
+          {hour.avg_ttft_ms === 0 &&
+            hour.avg_latency_ms > 0 &&
+            ` · ${t('Latency')} ${formatMs(hour.avg_latency_ms)}`}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// 负载条配色：接近水位线转黄，打满转红
+function watermarkBarClass(ratio: number): string {
+  if (ratio >= 1) return 'bg-red-500'
+  if (ratio >= 0.7) return 'bg-amber-500'
+  return 'bg-emerald-500'
+}
+
+// RPM 水位线行：近 60 秒请求数 / 水位线 + 负载条，点开可就地改水位线。
+// 达到水位线的渠道会被级联选择器跳过，流量自然溢出到下一个渠道。
+function WatermarkRow({ channel }: { channel: CascadeChannel }) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  const rpm = channel.rpm ?? 0
+  const watermark = channel.rpm_watermark ?? 0
+  const ratio = watermark > 0 ? rpm / watermark : 0
+  const full = watermark > 0 && rpm >= watermark
+
+  const saveMutation = useMutation({
+    mutationFn: async (value: number) => {
+      const res = await saveCascadeWatermark([
+        { channel_id: channel.id, rpm: value },
+      ])
+      if (!res.success) throw new Error(res.message || t('Save failed'))
+    },
+    onSuccess: () => {
+      toast.success(t('Watermark saved'))
+      queryClient.invalidateQueries({ queryKey: ['cascade', 'overview'] })
+      setOpen(false)
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : t('Save failed'))
+    },
+  })
+
+  const submit = () => {
+    const parsed = Number.parseInt(draft.trim(), 10)
+    saveMutation.mutate(Number.isInteger(parsed) && parsed > 0 ? parsed : 0)
+  }
+
+  return (
+    // 操作区屏蔽拖拽，避免点开水位线编辑时误触发卡片排序
+    <span
+      draggable
+      onDragStart={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+      className='mt-2 block cursor-default'
+    >
+      <Popover
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (next) setDraft(watermark > 0 ? String(watermark) : '')
+        }}
+      >
+        <PopoverTrigger
+          render={
+            <button
+              type='button'
+              className='hover:bg-accent/50 -mx-1 block w-[calc(100%+0.5rem)] cursor-pointer rounded px-1 py-0.5 text-left'
+            />
+          }
+        >
+          <span
+            className={cn(
+              'text-xs',
+              full ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'
+            )}
+          >
+            {t('RPM')}{' '}
+            <span className='font-medium'>
+              {rpm}/{watermark > 0 ? watermark : '∞'}
+            </span>
+          </span>
+          {watermark > 0 && (
+            <span className='bg-muted mt-1 block h-1 w-full overflow-hidden rounded-full'>
+              <span
+                className={cn(
+                  'block h-full rounded-full transition-all',
+                  watermarkBarClass(ratio)
+                )}
+                style={{ width: `${Math.min(100, ratio * 100)}%` }}
+              />
+            </span>
+          )}
+        </PopoverTrigger>
+        <PopoverContent align='start' className='w-64'>
+          <Label htmlFor={`cascade-watermark-${channel.id}`}>
+            {t('RPM watermark')}
+          </Label>
+          <Input
+            id={`cascade-watermark-${channel.id}`}
+            inputMode='numeric'
+            autoFocus
+            value={draft}
+            placeholder='0'
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submit()
+            }}
+          />
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Requests in the last 60s; once the watermark is reached traffic spills to the next channel. 0 = unlimited.'
+            )}
+          </p>
+          <div className='flex justify-end gap-2'>
+            <Button
+              variant='ghost'
+              size='sm'
+              disabled={saveMutation.isPending}
+              onClick={() => saveMutation.mutate(0)}
+            >
+              {t('Clear')}
+            </Button>
+            <Button
+              size='sm'
+              disabled={saveMutation.isPending}
+              onClick={submit}
+            >
+              {t('Save')}
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </span>
   )
 }
 
@@ -195,118 +303,126 @@ export function ChannelCard({
     channel.health?.state === 'cooling' || channel.health?.state === 'probing'
 
   return (
-    <div
-      draggable
-      onDragStart={onDragStart}
-      onDragEnter={onDragEnter}
-      onDragOver={(e) => e.preventDefault()}
-      onDragEnd={onDragEnd}
-      className={cn(
-        'bg-card w-56 shrink-0 cursor-grab rounded-lg border p-3 transition-opacity',
-        isDragging && 'opacity-40',
-        tripped && 'border-red-500/40',
-        channel.status !== CHANNEL_STATUS_ENABLED && 'opacity-60'
-      )}
-    >
-      <div className='flex items-center gap-2'>
-        <span className='bg-primary text-primary-foreground flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold'>
-          {index + 1}
-        </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className='min-w-0 flex-1 truncate text-sm font-medium' />
-            }
-          >
-            {channel.name}
-          </TooltipTrigger>
-          <TooltipContent>
-            #{channel.id} {channel.name}
-          </TooltipContent>
-        </Tooltip>
-        <GripVertical className='text-muted-foreground size-4 shrink-0' />
-      </div>
-      {/* 编排顺序已与渠道优先级解耦，卡片只显示序号圆标与渠道号 */}
-      <div className='text-muted-foreground mt-2 flex items-center gap-2 text-xs'>
-        <span>#{channel.id}</span>
-      </div>
-      <div className='mt-2 flex items-center justify-between gap-2'>
-        <HealthBadge channel={channel} recoveryTarget={recoveryTarget} />
-        <div className='flex shrink-0 items-center'>
-          {tripped && (
-            <Button
-              variant='ghost'
-              size='sm'
-              className='h-6 px-2 text-xs'
-              disabled={restorePending}
-              onClick={() => onRestore(channel.id)}
-            >
-              <RotateCcw className='size-3' />
-              {t('Restore Now')}
-            </Button>
-          )}
+    // 卡片内的 tooltip 统一走 delay 0（Base UI 默认 600ms，悬停要空等半秒），
+    // 与渠道列表的手感对齐；Provider 不渲染任何 DOM，不影响泳道布局
+    <TooltipProvider>
+      <div
+        draggable
+        onDragStart={onDragStart}
+        onDragEnter={onDragEnter}
+        onDragOver={(e) => e.preventDefault()}
+        onDragEnd={onDragEnd}
+        className={cn(
+          'bg-card w-64 shrink-0 cursor-grab rounded-lg border p-3.5 transition-opacity',
+          isDragging && 'opacity-40',
+          tripped && 'border-red-500/40',
+          channel.status !== CHANNEL_STATUS_ENABLED && 'opacity-60'
+        )}
+      >
+        <div className='flex items-center gap-2'>
+          <span className='bg-primary text-primary-foreground flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold'>
+            {index + 1}
+          </span>
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button
-                  variant='ghost'
-                  size='sm'
-                  className='size-6 p-0'
-                  onClick={() => setEventsOpen(true)}
-                />
+                <span className='min-w-0 flex-1 truncate text-sm font-medium' />
               }
             >
-              <History className='size-3' />
+              {channel.name}
             </TooltipTrigger>
-            <TooltipContent>{t('Health Timeline')}</TooltipContent>
+            <TooltipContent>
+              #{channel.id} {channel.name}
+            </TooltipContent>
           </Tooltip>
+          <GripVertical className='text-muted-foreground size-4 shrink-0' />
         </div>
-      </div>
-      <MetricsRow metrics={channel.metrics} />
-      {eventsOpen && (
-        <HealthEventsDialog
-          channelId={channel.id}
-          channelName={channel.name}
-          open={eventsOpen}
-          onOpenChange={setEventsOpen}
-        />
-      )}
-      {/* 操作区屏蔽拖拽，避免误触发卡片排序 */}
-      <span
-        draggable
-        onDragStart={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-        }}
-        className='mt-1 block cursor-default'
-      >
-        {fullChannel ? (
-          <ChannelRowActionsLayoutContext.Provider value='card'>
-            <ChannelRowActions channel={fullChannel} />
-          </ChannelRowActionsLayoutContext.Provider>
-        ) : (
-          <span className='block h-8' />
+        {/* 编排顺序已与渠道优先级解耦，卡片只显示序号圆标与渠道号；
+            已使用量与渠道号同行右对齐，省一行高度 */}
+        <div className='text-muted-foreground mt-2 flex items-center justify-between gap-2 text-xs'>
+          <span>#{channel.id}</span>
+          <UsedQuotaRow fullChannel={fullChannel} />
+        </div>
+        <div className='mt-2 flex items-center justify-between gap-2'>
+          <HealthBadge channel={channel} recoveryTarget={recoveryTarget} />
+          <div className='flex shrink-0 items-center'>
+            {tripped && (
+              <Button
+                variant='ghost'
+                size='sm'
+                className='h-6 px-2 text-xs'
+                disabled={restorePending}
+                onClick={() => onRestore(channel.id)}
+              >
+                <RotateCcw className='size-3' />
+                {t('Restore Now')}
+              </Button>
+            )}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    className='size-6 p-0'
+                    onClick={() => setEventsOpen(true)}
+                  />
+                }
+              >
+                <History className='size-3' />
+              </TooltipTrigger>
+              <TooltipContent>{t('Health Timeline')}</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+        <WatermarkRow channel={channel} />
+        <MetricsRow metrics={channel.metrics} />
+        {eventsOpen && (
+          <HealthEventsDialog
+            channelId={channel.id}
+            channelName={channel.name}
+            metrics={channel.metrics}
+            open={eventsOpen}
+            onOpenChange={setEventsOpen}
+          />
         )}
-      </span>
-      {(channel.health?.consecutive_failures ?? 0) > 0 && (
-        <div className='text-muted-foreground mt-1 text-xs'>
-          {t('Consecutive failures')}: {channel.health?.consecutive_failures}
-        </div>
-      )}
-      {channel.health?.last_error && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <div className='text-muted-foreground mt-1 truncate text-xs' />
-            }
-          >
-            {channel.health.last_error}
-          </TooltipTrigger>
-          <TooltipContent className='max-w-sm break-all'>
-            {channel.health.last_error}
-          </TooltipContent>
-        </Tooltip>
-      )}
-    </div>
+        {/* 操作区屏蔽拖拽，避免误触发卡片排序 */}
+        <span
+          draggable
+          onDragStart={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+          }}
+          className='mt-2 block cursor-default'
+        >
+          {fullChannel ? (
+            <ChannelRowActionsLayoutContext.Provider value='card'>
+              <ChannelRowActions channel={fullChannel} />
+            </ChannelRowActionsLayoutContext.Provider>
+          ) : (
+            <span className='block h-8' />
+          )}
+        </span>
+        {(channel.health?.consecutive_failures ?? 0) > 0 && (
+          <div className='text-muted-foreground mt-1 text-xs'>
+            {t('Consecutive failures')}: {channel.health?.consecutive_failures}
+          </div>
+        )}
+        {channel.health?.last_error && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div className='text-muted-foreground mt-1 truncate text-xs' />
+              }
+            >
+              {channel.health.last_error}
+            </TooltipTrigger>
+            <TooltipContent className='max-w-sm break-all'>
+              {channel.health.last_error}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    </TooltipProvider>
   )
 }

@@ -42,6 +42,7 @@ import type { CascadeSetting } from '../types'
 type SettingsForm = {
   enabled: boolean
   probe_enabled: boolean
+  watermark_enabled: boolean
   incomplete_stream_as_fault: boolean
   failure_threshold: string
   cooldown_seconds: string
@@ -57,6 +58,7 @@ function toForm(setting: CascadeSetting): SettingsForm {
   return {
     enabled: setting.enabled,
     probe_enabled: setting.probe_enabled,
+    watermark_enabled: setting.watermark_enabled,
     incomplete_stream_as_fault: setting.incomplete_stream_as_fault,
     failure_threshold: String(setting.failure_threshold),
     cooldown_seconds: String(setting.cooldown_seconds),
@@ -98,6 +100,7 @@ export function CascadeSettingsCard({ setting }: { setting: CascadeSetting }) {
       const updates: { key: string; value: string | boolean | number }[] = [
         { key: 'enabled', value: form.enabled },
         { key: 'probe_enabled', value: form.probe_enabled },
+        { key: 'watermark_enabled', value: form.watermark_enabled },
         {
           key: 'incomplete_stream_as_fault',
           value: form.incomplete_stream_as_fault,
@@ -206,6 +209,18 @@ export function CascadeSettingsCard({ setting }: { setting: CascadeSetting }) {
               }
             />
             <Label htmlFor='cascade-probe'>{t('Probe tripped channels')}</Label>
+          </div>
+          <div className='flex items-center gap-2'>
+            <Switch
+              id='cascade-watermark'
+              checked={form.watermark_enabled}
+              onCheckedChange={(checked) =>
+                setForm((prev) => ({ ...prev, watermark_enabled: checked }))
+              }
+            />
+            <Label htmlFor='cascade-watermark'>
+              {t('Enable RPM watermark')}
+            </Label>
           </div>
           <div className='flex items-center gap-2'>
             <Switch

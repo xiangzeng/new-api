@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 
 	"gorm.io/gorm"
@@ -402,6 +403,10 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			NodeName:  common.NodeName,
 		})
 	}
+	// 渠道日用量：给渠道列表/编排页的「最近 N 天消耗」攒数，只写内存，周期性落库
+	gopool.Go(func() {
+		LogChannelDailyUsage(params.ChannelId, params.Quota, params.PromptTokens+params.CompletionTokens)
+	})
 }
 
 type RecordTaskBillingLogParams struct {
@@ -462,6 +467,12 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			TokenID:   params.TokenId,
 			ChannelID: params.ChannelId,
 			NodeName:  nodeName,
+		})
+	}
+	// 任务计费同样计入渠道日用量，口径与回填保持一致：只算消费日志
+	if params.LogType == LogTypeConsume {
+		gopool.Go(func() {
+			LogChannelDailyUsage(params.ChannelId, params.Quota, 0)
 		})
 	}
 }
