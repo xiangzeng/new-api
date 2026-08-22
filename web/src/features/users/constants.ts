@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Shield, User, Users } from 'lucide-react'
 
+import type { UserUsageDimension } from './lib/user-usage'
 import type { User as UserType } from './types'
 
 // ============================================================================
@@ -137,3 +138,18 @@ export const SUCCESS_MESSAGES = {
   USER_CREATED: 'User created successfully',
   USER_UPDATED: 'User updated successfully',
 } as const
+
+// ============================================================================
+// Usage Detail Dimensions (i18n keys: render with t(meta.labelKey))
+// ============================================================================
+
+export const USER_USAGE_DIMENSION_META: Record<
+  UserUsageDimension,
+  { labelKey: string; allLabelKey: string }
+> = {
+  group: { labelKey: 'Group', allLabelKey: 'All groups' },
+  model: { labelKey: 'Model', allLabelKey: 'All models' },
+  channel: { labelKey: 'Channel', allLabelKey: 'All channels' },
+  token: { labelKey: 'Token', allLabelKey: 'All tokens' },
+  node: { labelKey: 'Node', allLabelKey: 'All nodes' },
+}

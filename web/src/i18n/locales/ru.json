@@ -5462,6 +5462,24 @@
     "{{count}} channels": "{{count}} channels",
     "{{count}} channels will be skipped because this is their only group: {{names}}": "{{count}} channels will be skipped because this is their only group: {{names}}",
     "{{count}} trips in last 24h": "{{count}} trips in last 24h",
-    "{{count}} trips in last 7d": "{{count}} trips in last 7d"
+    "{{count}} trips in last 7d": "{{count}} trips in last 7d",
+    "All groups": "Все группы",
+    "All models": "Все модели",
+    "All channels": "Все каналы",
+    "All tokens": "Все токены",
+    "Custom range": "Произвольный период",
+    "Select month": "Выберите месяц",
+    "Filter results": "Фильтр результатов",
+    "Reset filters": "Сбросить фильтры",
+    "No usage data in the selected period": "Нет данных о потреблении за выбранный период",
+    "Usage details": "Детали потребления",
+    "Back to users": "Назад к пользователям",
+    "View user logs": "Журнал этого пользователя",
+    "Quota used in range": "Потрачено за период",
+    "Requests in range": "Запросов за период",
+    "Tokens in range": "Токенов за период",
+    "Failed to load usage data": "Не удалось загрузить данные о потреблении",
+    "View full usage": "Показать полное потребление",
+    "Counted from grouped usage records aggregated hourly, so requests without a group are excluded and the last few minutes may be missing.": "Учитываются записи потребления с группой, агрегированные по часам: запросы без группы не включаются, а данные за последние минуты могут отсутствовать."
   }
 }

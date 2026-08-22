@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Loader2 } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { ArrowRight, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -31,6 +32,8 @@ import {
   type FlowGroupUsageSummary,
 } from '@/features/dashboard/lib'
 import { formatQuota, formatCompactNumber } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getUserInfo } from '../../api'
 import type { UserInfo } from '../../types'
@@ -50,9 +53,14 @@ function UserInfoBody(props: {
   userInfo: UserInfo
   usageSummary: FlowGroupUsageSummary
   usageLoading: boolean
+  usageRange: { start: number; end: number } | null
+  onNavigate: () => void
 }) {
   const { t } = useTranslation()
   const userInfo = props.userInfo
+  const isAdmin = useAuthStore(
+    (state) => (state.auth.user?.role ?? ROLE.USER) >= ROLE.ADMIN
+  )
 
   return (
     <div className='space-y-5 py-2'>
@@ -112,6 +120,19 @@ function UserInfoBody(props: {
         loading={props.usageLoading}
       />
 
+      {isAdmin && props.usageRange && (
+        <Link
+          to='/users/$userId'
+          params={{ userId: String(userInfo.id) }}
+          search={{ start: props.usageRange.start, end: props.usageRange.end }}
+          onClick={props.onNavigate}
+          className='text-primary inline-flex items-center gap-1 text-sm hover:underline'
+        >
+          {t('View full usage')}
+          <ArrowRight className='size-3.5' aria-hidden='true' />
+        </Link>
+      )}
+
       {(userInfo.aff_code ||
         userInfo.aff_count !== undefined ||
         (userInfo.aff_quota !== undefined && userInfo.aff_quota > 0)) && (
@@ -164,6 +185,10 @@ export function UserInfoDialog({
   )
   const [isLoading, setIsLoading] = useState(false)
   const [usageLoading, setUsageLoading] = useState(false)
+  const [usageRange, setUsageRange] = useState<{
+    start: number
+    end: number
+  } | null>(null)
 
   const fetchUserInfo = useCallback(
     async (id: number) => {
@@ -171,6 +196,7 @@ export function UserInfoDialog({
       setUsageLoading(true)
       setUserInfo(null)
       setUsageSummary(EMPTY_FLOW_GROUP_USAGE)
+      setUsageRange(null)
       try {
         const userResult = await getUserInfo(id)
         if (userResult.success) {
@@ -190,6 +216,7 @@ export function UserInfoDialog({
 
         const end = Math.floor(Date.now() / 1000)
         const start = end - RECENT_USAGE_LOOKBACK_SECONDS
+        setUsageRange({ start, end })
         try {
           const flowResult = await getFlowQuotaDates(
             {
@@ -225,6 +252,7 @@ export function UserInfoDialog({
     } else if (!open) {
       setUserInfo(null)
       setUsageSummary(EMPTY_FLOW_GROUP_USAGE)
+      setUsageRange(null)
     }
   }, [open, userId, fetchUserInfo])
 
@@ -245,6 +273,8 @@ export function UserInfoDialog({
         userInfo={userInfo}
         usageSummary={usageSummary}
         usageLoading={usageLoading}
+        usageRange={usageRange}
+        onNavigate={() => onOpenChange(false)}
       />
     )
   }

@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Link } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 
@@ -94,9 +95,16 @@ export function useUsersColumns(): ColumnDef<User>[] {
         return (
           <div className='flex min-w-[160px] flex-col gap-1'>
             <div className='flex items-center gap-2'>
-              <LongText className='max-w-[140px] font-medium'>
-                {username}
-              </LongText>
+              <Link
+                to='/users/$userId'
+                params={{ userId: String(row.original.id) }}
+                title={t('Usage details')}
+                className='hover:text-primary min-w-0 transition-colors hover:underline'
+              >
+                <LongText className='max-w-[140px] font-medium'>
+                  {username}
+                </LongText>
+              </Link>
               {remark && (
                 <Tooltip>
                   <TooltipTrigger

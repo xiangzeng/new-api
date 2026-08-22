@@ -5462,6 +5462,24 @@
     "{{count}} channels": "{{count}} channels",
     "{{count}} channels will be skipped because this is their only group: {{names}}": "{{count}} channels will be skipped because this is their only group: {{names}}",
     "{{count}} trips in last 24h": "{{count}} trips in last 24h",
-    "{{count}} trips in last 7d": "{{count}} trips in last 7d"
+    "{{count}} trips in last 7d": "{{count}} trips in last 7d",
+    "All groups": "すべてのグループ",
+    "All models": "すべてのモデル",
+    "All channels": "すべてのチャネル",
+    "All tokens": "すべてのトークン",
+    "Custom range": "カスタム期間",
+    "Select month": "月を選択",
+    "Filter results": "結果を絞り込む",
+    "Reset filters": "フィルターをリセット",
+    "No usage data in the selected period": "選択した期間の利用データはありません",
+    "Usage details": "利用詳細",
+    "Back to users": "ユーザー一覧に戻る",
+    "View user logs": "このユーザーの利用履歴を表示",
+    "Quota used in range": "期間内の使用クォータ",
+    "Requests in range": "期間内のリクエスト",
+    "Tokens in range": "期間内のトークン",
+    "Failed to load usage data": "利用データの取得に失敗しました",
+    "View full usage": "利用状況の詳細を表示",
+    "Counted from grouped usage records aggregated hourly, so requests without a group are excluded and the last few minutes may be missing.": "1 時間単位で集計されたグループ付き利用記録に基づきます。グループのないリクエストは含まれず、直近数分の消費は反映されていない場合があります。"
   }
 }

@@ -5462,6 +5462,24 @@
     "{{count}} channels": "{{count}} channels",
     "{{count}} channels will be skipped because this is their only group: {{names}}": "{{count}} channels will be skipped because this is their only group: {{names}}",
     "{{count}} trips in last 24h": "{{count}} trips in last 24h",
-    "{{count}} trips in last 7d": "{{count}} trips in last 7d"
+    "{{count}} trips in last 7d": "{{count}} trips in last 7d",
+    "All groups": "Tous les groupes",
+    "All models": "Tous les modèles",
+    "All channels": "Tous les canaux",
+    "All tokens": "Tous les jetons",
+    "Custom range": "Plage personnalisée",
+    "Select month": "Sélectionner le mois",
+    "Filter results": "Filtrer les résultats",
+    "Reset filters": "Réinitialiser les filtres",
+    "No usage data in the selected period": "Aucune donnée d'utilisation sur la période sélectionnée",
+    "Usage details": "Détails d'utilisation",
+    "Back to users": "Retour aux utilisateurs",
+    "View user logs": "Voir les journaux de l'utilisateur",
+    "Quota used in range": "Quota consommé sur la période",
+    "Requests in range": "Requêtes sur la période",
+    "Tokens in range": "Jetons sur la période",
+    "Failed to load usage data": "Échec du chargement des données d'utilisation",
+    "View full usage": "Voir l'utilisation complète",
+    "Counted from grouped usage records aggregated hourly, so requests without a group are excluded and the last few minutes may be missing.": "Calculé à partir des enregistrements d'utilisation groupés agrégés par heure : les requêtes sans groupe sont exclues et les dernières minutes peuvent manquer."
   }
 }

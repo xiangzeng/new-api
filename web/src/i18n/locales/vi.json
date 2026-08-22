@@ -5462,6 +5462,24 @@
     "{{count}} channels": "{{count}} channels",
     "{{count}} channels will be skipped because this is their only group: {{names}}": "{{count}} channels will be skipped because this is their only group: {{names}}",
     "{{count}} trips in last 24h": "{{count}} trips in last 24h",
-    "{{count}} trips in last 7d": "{{count}} trips in last 7d"
+    "{{count}} trips in last 7d": "{{count}} trips in last 7d",
+    "All groups": "Tất cả nhóm",
+    "All models": "Tất cả mô hình",
+    "All channels": "Tất cả kênh",
+    "All tokens": "Tất cả mã thông báo",
+    "Custom range": "Khoảng tùy chỉnh",
+    "Select month": "Chọn tháng",
+    "Filter results": "Lọc kết quả",
+    "Reset filters": "Đặt lại bộ lọc",
+    "No usage data in the selected period": "Không có dữ liệu sử dụng trong khoảng đã chọn",
+    "Usage details": "Chi tiết sử dụng",
+    "Back to users": "Quay lại danh sách người dùng",
+    "View user logs": "Xem nhật ký của người dùng",
+    "Quota used in range": "Hạn mức đã dùng trong khoảng",
+    "Requests in range": "Yêu cầu trong khoảng",
+    "Tokens in range": "Mã thông báo trong khoảng",
+    "Failed to load usage data": "Không tải được dữ liệu sử dụng",
+    "View full usage": "Xem toàn bộ mức sử dụng",
+    "Counted from grouped usage records aggregated hourly, so requests without a group are excluded and the last few minutes may be missing.": "Được tính từ bản ghi sử dụng có nhóm, tổng hợp theo giờ: các yêu cầu không có nhóm bị loại trừ và vài phút gần nhất có thể chưa được ghi nhận."
   }
 }

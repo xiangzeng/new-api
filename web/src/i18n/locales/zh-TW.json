@@ -5462,6 +5462,24 @@
     "{{count}} channels": "{{count}} 個渠道",
     "{{count}} channels will be skipped because this is their only group: {{names}}": "{{count}} 個管道會被跳過（這是它們唯一的分組）：{{names}}",
     "{{count}} trips in last 24h": "近 24h 熔斷 {{count}} 次",
-    "{{count}} trips in last 7d": "近 7d 熔斷 {{count}} 次"
+    "{{count}} trips in last 7d": "近 7d 熔斷 {{count}} 次",
+    "All groups": "全部分組",
+    "All models": "全部模型",
+    "All channels": "全部渠道",
+    "All tokens": "全部令牌",
+    "Custom range": "自訂區間",
+    "Select month": "選擇月份",
+    "Filter results": "過濾結果",
+    "Reset filters": "重置篩選",
+    "No usage data in the selected period": "所選區間內暫無消耗資料",
+    "Usage details": "用量詳情",
+    "Back to users": "返回用戶列表",
+    "View user logs": "查看該用戶日誌",
+    "Quota used in range": "區間消耗額度",
+    "Requests in range": "區間請求數",
+    "Tokens in range": "區間 Token",
+    "Failed to load usage data": "載入用量資料失敗",
+    "View full usage": "查看完整用量",
+    "Counted from grouped usage records aggregated hourly, so requests without a group are excluded and the last few minutes may be missing.": "統計口徑為按小時彙總的帶分組用量記錄：未記錄分組的請求不計入，最近幾分鐘的消耗可能尚未入庫。"
   }
 }
