@@ -93,6 +93,43 @@ func TestRedisUserRateLimiterUsesSharedFixedWindow(t *testing.T) {
 	assert.Equal(t, 23*time.Second, redisServer.TTL(key))
 }
 
+func TestTokenUsageRateLimitIsScopedToTokenNotClientIP(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	redisServer, _ := useRateLimitMiniRedis(t)
+
+	previousNum := common.TokenUsageRateLimitNum
+	previousDuration := common.TokenUsageRateLimitDuration
+	common.TokenUsageRateLimitNum = 1
+	common.TokenUsageRateLimitDuration = 29
+	t.Cleanup(func() {
+		common.TokenUsageRateLimitNum = previousNum
+		common.TokenUsageRateLimitDuration = previousDuration
+	})
+
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	usageLimit := TokenUsageRateLimit()
+	noContent := func(c *gin.Context) { c.Status(http.StatusNoContent) }
+	router.GET("/usage/first", func(c *gin.Context) { c.Set("token_id", 7) }, usageLimit, noContent)
+	router.GET("/usage/second", func(c *gin.Context) { c.Set("token_id", 8) }, usageLimit, noContent)
+	router.GET("/usage/anonymous", usageLimit, noContent)
+
+	const pollerAddr = "192.0.2.40:12345"
+	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/usage/first", pollerAddr).Code)
+	// A second address cannot buy the same token more budget.
+	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/usage/first", "198.51.100.40:12345").Code)
+	// A different token polling from the exhausted address still gets through,
+	// which is what keeps one caller's balance polling off everyone else.
+	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/usage/second", pollerAddr).Code)
+	// Without TokenAuthReadOnly ahead of it there is nothing to meter.
+	assert.Equal(t, http.StatusUnauthorized, performRateLimitRequest(router, "/usage/anonymous", pollerAddr).Code)
+
+	key := redisTokenRateLimitKey("TU", 7)
+	assert.True(t, redisServer.Exists(key))
+	assert.Equal(t, 29*time.Second, redisServer.TTL(key))
+	assert.False(t, redisServer.Exists(redisIPRateLimitKey("TU", "192.0.2.40")), "usage polling must not consume a per-IP bucket")
+}
+
 func TestRedisEmailVerificationRateLimiterPreservesResponseAndTTL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	redisServer, _ := useRateLimitMiniRedis(t)

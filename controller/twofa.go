@@ -504,6 +504,7 @@ func Verify2FALogin(c *gin.Context) {
 	}
 
 	if !isValidTOTP && !isValidBackup {
+		middleware.MarkLoginCredentialFailure(c)
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "验证码或备用码错误，请重试",

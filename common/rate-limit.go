@@ -41,6 +41,46 @@ func (l *InMemoryRateLimiter) clearExpiredItems() {
 	}
 }
 
+// Allowed reports whether key is still under its limit without recording an
+// event. Limiters that only meter failures need to check the verdict before
+// the handler runs and record long after it, which Request cannot express
+// because it always consumes budget.
+func (l *InMemoryRateLimiter) Allowed(key string, maxRequestNum int, duration int64) bool {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	queue, ok := l.store[key]
+	if !ok || len(*queue) < maxRequestNum {
+		return true
+	}
+	return time.Now().Unix()-(*queue)[0] >= duration
+}
+
+// Record appends one event to key's window, dropping entries that already fell
+// out of it so an idle key cannot stay full forever. Parameter duration's unit
+// is seconds.
+func (l *InMemoryRateLimiter) Record(key string, maxRequestNum int, duration int64) {
+	if maxRequestNum <= 0 {
+		return
+	}
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	now := time.Now().Unix()
+	queue, ok := l.store[key]
+	if !ok {
+		s := make([]int64, 0, maxRequestNum)
+		s = append(s, now)
+		l.store[key] = &s
+		return
+	}
+	for len(*queue) > 0 && now-(*queue)[0] >= duration {
+		*queue = (*queue)[1:]
+	}
+	if len(*queue) >= maxRequestNum {
+		*queue = (*queue)[len(*queue)-maxRequestNum+1:]
+	}
+	*queue = append(*queue, now)
+}
+
 // Request parameter duration's unit is seconds
 func (l *InMemoryRateLimiter) Request(key string, maxRequestNum int, duration int64) bool {
 	l.mutex.Lock()

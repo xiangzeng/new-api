@@ -255,6 +255,59 @@ func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key
 	}
 }
 
+// redisTokenRateLimitKey scopes a counter to one API token instead of one
+// client address.
+func redisTokenRateLimitKey(mark string, tokenID int) string {
+	return fmt.Sprintf("%s:token:%s:%d", redisRateLimitNamespace, mark, tokenID)
+}
+
+// tokenRateLimitFactory creates a rate limiter keyed by the authenticated API
+// token instead of client IP. Must be used AFTER TokenAuthReadOnly/TokenAuth.
+func tokenRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
+	inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
+	return func(c *gin.Context) {
+		tokenID := c.GetInt("token_id")
+		if tokenID == 0 {
+			c.Status(http.StatusUnauthorized)
+			c.Abort()
+			return
+		}
+		if common.RedisEnabled {
+			userRedisRateLimiter(c, maxRequestNum, duration, redisTokenRateLimitKey(mark, tokenID))
+			return
+		}
+		key := fmt.Sprintf("%s:token:%d", mark, tokenID)
+		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
+			writeRateLimited(c, duration)
+		}
+	}
+}
+
+// TokenUsageRateLimit meters the read-only usage/balance query per API token.
+// The endpoint used to share CriticalRateLimit's per-IP bucket with
+// /api/user/login, so a balance-polling bot exhausted the same 20-per-20-minute
+// budget that its operator needed to sign in, and the dashboard could only
+// report the rejection as a bare 429. Token scoping keeps one caller's polling
+// off every other caller's budget, including the login path; the per-IP
+// GlobalAPIRateLimit on /api still backstops unauthenticated floods.
+func TokenUsageRateLimit() func(c *gin.Context) {
+	if !common.TokenUsageRateLimitEnable {
+		return defNext
+	}
+	return tokenRateLimitFactory(common.TokenUsageRateLimitNum, common.TokenUsageRateLimitDuration, "TU")
+}
+
+// RefreshAuthRateLimit meters session refreshes on their own per-IP counter.
+// Refresh used to share CriticalRateLimit's bucket with /api/user/login, so a
+// dashboard whose refresh token had expired spent the login budget on retries
+// and was then refused the sign-in that would have fixed it.
+func RefreshAuthRateLimit() func(c *gin.Context) {
+	if !common.RefreshAuthRateLimitEnable {
+		return defNext
+	}
+	return rateLimitFactory(common.RefreshAuthRateLimitNum, common.RefreshAuthRateLimitDuration, "RF")
+}
+
 // SearchRateLimit returns a per-user rate limiter for search endpoints.
 // Configurable via SEARCH_RATE_LIMIT_ENABLE / SEARCH_RATE_LIMIT / SEARCH_RATE_LIMIT_DURATION.
 func SearchRateLimit() func(c *gin.Context) {

@@ -218,6 +218,16 @@ var (
 	SearchRateLimitEnable         = true
 	SearchRateLimitNum            = 10
 	SearchRateLimitDuration int64 = 60
+
+	// Per-IP rate limit for session refresh, kept off the critical bucket
+	RefreshAuthRateLimitEnable         = true
+	RefreshAuthRateLimitNum            = 60
+	RefreshAuthRateLimitDuration int64 = 20 * 60
+
+	// Per-token rate limit for the read-only usage query (keyed by token ID)
+	TokenUsageRateLimitEnable         = true
+	TokenUsageRateLimitNum            = 60
+	TokenUsageRateLimitDuration int64 = 60
 )
 
 var RateLimitKeyExpirationDuration = 20 * time.Minute
