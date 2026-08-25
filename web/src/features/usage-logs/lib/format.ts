@@ -407,6 +407,7 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'user.oauth_unbind': 'Removed an OAuth binding for the user',
   'user.reseller_bind': 'Bound the user to a reseller as a direct customer',
   'user.reseller_unbind': 'Released the user from its reseller',
+  'reseller.admin_open': 'Opened the reseller center for a user',
   // System settings
   'option.update': 'Updated system setting {{key}}',
   'option.payment_compliance': 'Confirmed payment compliance',

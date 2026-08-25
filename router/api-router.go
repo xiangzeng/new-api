@@ -207,6 +207,7 @@ func SetApiRouter(router *gin.Engine) {
 		resellerAdminRoute.Use(middleware.AdminAuth(), middleware.DisableCache())
 		{
 			resellerAdminRoute.GET("/resellers", controller.AdminListResellers)
+			resellerAdminRoute.POST("/resellers", middleware.CriticalRateLimit(), controller.AdminOpenResellerCenter)
 			resellerAdminRoute.GET("/resellers/:id/customers", controller.AdminListResellerCustomers)
 		}
 

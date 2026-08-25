@@ -180,3 +180,109 @@ func TestAdminGetResellerBindingReportsOwnershipAndRole(t *testing.T) {
 	assert.Equal(t, int64(1), resellerView.OwnCustomerCount)
 	assert.False(t, resellerView.Bound)
 }
+
+func TestAdminOpenResellerCenterCreatesAnActiveProfileWithoutAnyCustomer(t *testing.T) {
+	db := setupResellerAdminTestDB(t)
+	user := createResellerAdminUser(t, db, "admin-open-fresh")
+
+	profile, created, err := AdminOpenResellerCenter(user.Id, "", 1_700_000_000)
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.Equal(t, user.Id, profile.UserId)
+	assert.Equal(t, ResellerStatusActive, profile.Status)
+	assert.Len(t, profile.ReceivePublicId, 32)
+	assert.Equal(t, int64(1_700_000_000), profile.CreatedAt)
+
+	// Opening a center hands out no customers and no pricing; it only makes the
+	// account eligible to receive them.
+	var customerCount int64
+	require.NoError(t, db.Model(&ResellerCustomer{}).Where("reseller_id = ?", user.Id).
+		Count(&customerCount).Error)
+	assert.Equal(t, int64(0), customerCount)
+	var pricingCount int64
+	require.NoError(t, db.Model(&ResellerPricingRule{}).Count(&pricingCount).Error)
+	assert.Equal(t, int64(0), pricingCount)
+
+	// The roster is what the operator searches, so a center opened this way has
+	// to show up there straight away.
+	items, total, err := ListResellerRoster("admin-open-fresh", 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	require.Len(t, items, 1)
+	assert.Equal(t, user.Id, items[0].UserId)
+}
+
+func TestAdminOpenResellerCenterIsIdempotentAndReportsItWasAlreadyOpen(t *testing.T) {
+	db := setupResellerAdminTestDB(t)
+	user := createResellerAdminUser(t, db, "admin-open-twice")
+
+	first, created, err := AdminOpenResellerCenter(user.Id, "", 1_700_000_000)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	second, created, err := AdminOpenResellerCenter(user.Id, "", 1_700_000_500)
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.Equal(t, first.Id, second.Id)
+	// The original receive address must survive: it is handed to customers.
+	assert.Equal(t, first.ReceivePublicId, second.ReceivePublicId)
+
+	var profileCount int64
+	require.NoError(t, db.Model(&ResellerProfile{}).Where("user_id = ?", user.Id).
+		Count(&profileCount).Error)
+	assert.Equal(t, int64(1), profileCount)
+}
+
+func TestAdminOpenResellerCenterAcceptsAUsernameWhenTheIdIsUnknown(t *testing.T) {
+	db := setupResellerAdminTestDB(t)
+	user := createResellerAdminUser(t, db, "admin-open-by-name")
+
+	profile, created, err := AdminOpenResellerCenter(0, "  admin-open-by-name  ", 1_700_000_000)
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.Equal(t, user.Id, profile.UserId)
+}
+
+func TestAdminOpenResellerCenterRejectsUnusableTargets(t *testing.T) {
+	db := setupResellerAdminTestDB(t)
+	disabled := createResellerAdminUser(t, db, "admin-open-disabled")
+	require.NoError(t, db.Model(&User{}).Where("id = ?", disabled.Id).
+		Update("status", common.UserStatusDisabled).Error)
+	frozen := createResellerAdminUser(t, db, "admin-open-frozen")
+	openResellerCenterForTest(t, db, frozen.Id, "rcv-admin-open-frozen", 1_700_000_000)
+	require.NoError(t, db.Model(&ResellerProfile{}).Where("user_id = ?", frozen.Id).
+		Update("status", ResellerStatusFrozen).Error)
+
+	cases := []struct {
+		name        string
+		resellerId  int
+		username    string
+		expectedErr error
+	}{
+		{"no identifier at all", 0, "   ", gorm.ErrRecordNotFound},
+		{"unknown user id", 999_999, "", gorm.ErrRecordNotFound},
+		{"unknown username", 0, "nobody-by-this-name", gorm.ErrRecordNotFound},
+		{"disabled account", disabled.Id, "", ErrResellerForbidden},
+		// A frozen center is refused rather than quietly reactivated, the same
+		// way binding a customer to it is refused.
+		{"frozen reseller center", frozen.Id, "", ErrResellerForbidden},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			profile, created, err := AdminOpenResellerCenter(
+				testCase.resellerId, testCase.username, 1_700_000_600,
+			)
+			require.ErrorIs(t, err, testCase.expectedErr)
+			assert.Nil(t, profile)
+			assert.False(t, created)
+		})
+	}
+
+	var profileCount int64
+	require.NoError(t, db.Model(&ResellerProfile{}).Where("user_id = ?", disabled.Id).
+		Count(&profileCount).Error)
+	assert.Equal(t, int64(0), profileCount)
+	var frozenProfile ResellerProfile
+	require.NoError(t, db.Where("user_id = ?", frozen.Id).First(&frozenProfile).Error)
+	assert.Equal(t, ResellerStatusFrozen, frozenProfile.Status)
+}

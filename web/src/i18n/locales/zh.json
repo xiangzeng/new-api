@@ -5370,6 +5370,7 @@
     "Legacy": "历史数据",
     "Bound the user to a reseller as a direct customer": "将用户绑定为站长的直属客户",
     "Released the user from its reseller": "解除了用户的站长归属",
+    "Opened the reseller center for a user": "为用户开通了站长中心",
     "Failed to load page resources": "页面资源加载失败",
     "Part of this page could not be downloaded. Please reload.": "页面的部分资源未能下载，请重新加载。",
     "Reload": "重新加载",

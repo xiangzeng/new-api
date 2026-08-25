@@ -36,6 +36,41 @@ func AdminListResellers(c *gin.Context) {
 	resellerSuccess(c, page)
 }
 
+type adminResellerOpenRequest struct {
+	ResellerId       int    `json:"reseller_id"`
+	ResellerUsername string `json:"reseller_username"`
+}
+
+// AdminOpenResellerCenter is the only admin path that makes someone a reseller
+// on its own. Binding a customer opens the center too, but it needs a customer
+// to bind first, which is backwards for a reseller who has users waiting to be
+// imported and never opened anything.
+//
+// Reopening an already open center is not an error: the response reports
+// whether this call created the profile so the console can say which happened.
+func AdminOpenResellerCenter(c *gin.Context) {
+	var request adminResellerOpenRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resellerBadRequest(c, "站长标识无效")
+		return
+	}
+	profile, created, err := model.AdminOpenResellerCenter(
+		request.ResellerId, request.ResellerUsername, common.GetTimestamp(),
+	)
+	if err != nil {
+		resellerError(c, err)
+		return
+	}
+	username, err := model.GetUsernameById(profile.UserId, true)
+	if err != nil {
+		username = ""
+	}
+	resellerSuccess(c, gin.H{
+		"user_id": profile.UserId, "username": username,
+		"status": profile.Status, "created": created,
+	})
+}
+
 // AdminListResellerCustomers is the operator's view of one reseller's customers.
 // It reuses the reseller-facing query with an explicit reseller id instead of
 // the caller's own, so both views stay identical as that projection evolves.

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, UserPlus } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -40,9 +40,10 @@ import { unbindUserFromReseller } from '@/features/users/api'
 
 import { listResellerCustomers, listResellers } from './api'
 import { AddCustomerDialog } from './components/add-customer-dialog'
+import { OpenResellerDialog } from './components/open-reseller-dialog'
 import { ResellerCustomersPanel } from './components/reseller-customers-panel'
 import { ResellerRosterTable } from './components/reseller-roster-table'
-import type { ResellerRosterItem } from './types'
+import type { OpenResellerResult, ResellerRosterItem } from './types'
 
 const PAGE_SIZE = 20
 const SEARCH_DEBOUNCE_MS = 300
@@ -62,6 +63,10 @@ export function ResellerAdmin() {
   const [selected, setSelected] = useState<ResellerRosterItem | null>(null)
   const [customersPage, setCustomersPage] = useState(1)
   const [addOpen, setAddOpen] = useState(false)
+  const [openResellerOpen, setOpenResellerOpen] = useState(false)
+  // A freshly opened center is selected once the roster reports it, so the
+  // operator can go straight on to handing it its first customers.
+  const [pendingSelectUserId, setPendingSelectUserId] = useState(0)
   const [unbindTarget, setUnbindTarget] = useState<ResellerCustomer | null>(
     null
   )
@@ -106,9 +111,31 @@ export function ResellerAdmin() {
     enabled: selected !== null,
   })
 
+  useEffect(() => {
+    if (pendingSelectUserId === 0) return
+    const match = rosterQuery.data?.items.find(
+      (item) => item.user_id === pendingSelectUserId
+    )
+    if (!match) return
+    setSelected(match)
+    setCustomersPage(1)
+    setPendingSelectUserId(0)
+  }, [pendingSelectUserId, rosterQuery.data])
+
   const refreshAll = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['reseller-admin'] })
   }, [queryClient])
+
+  // Searching by the target's username is what brings a brand new center into
+  // the current roster page; the pending id then picks it out of the results.
+  const handleResellerOpened = useCallback(
+    async (result: OpenResellerResult) => {
+      setKeyword(result.username)
+      setPendingSelectUserId(result.user_id)
+      await refreshAll()
+    },
+    [refreshAll]
+  )
 
   const unbindMutation = useMutation({
     mutationFn: async (customer: ResellerCustomer) => {
@@ -138,6 +165,12 @@ export function ResellerAdmin() {
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Resellers')}</SectionPageLayout.Title>
         <SectionPageLayout.Actions>
+          <Button size='sm' onClick={() => setOpenResellerOpen(true)}>
+            <UserPlus />
+            <span className='hidden sm:inline'>
+              {t('Open a reseller center')}
+            </span>
+          </Button>
           <Button
             variant='outline'
             size='sm'
@@ -193,6 +226,12 @@ export function ResellerAdmin() {
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>
+
+      <OpenResellerDialog
+        open={openResellerOpen}
+        onOpenChange={setOpenResellerOpen}
+        onOpened={handleResellerOpened}
+      />
 
       <AddCustomerDialog
         reseller={selected}

@@ -47,6 +47,7 @@ var auditRouteActions = map[string]string{
 	"DELETE /api/user/:id/oauth/bindings/:provider_id": "user.oauth_unbind",
 	"PUT /api/user/:id/reseller-binding":               "user.reseller_bind",
 	"DELETE /api/user/:id/reseller-binding":            "user.reseller_unbind",
+	"POST /api/reseller/admin/resellers":               "reseller.admin_open",
 
 	// 系统设置（root）
 	"POST /api/option/payment_compliance":       "option.payment_compliance",

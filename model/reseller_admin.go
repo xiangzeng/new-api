@@ -83,34 +83,94 @@ func AdminGetResellerBinding(customerId int, now int64) (*ResellerAdminBinding, 
 	return result, nil
 }
 
+// resolveResellerTargetWithTx finds the user an admin addressed as a reseller.
+// The id wins when positive and the username is used otherwise, because the
+// operator has one or the other depending on the screen they came from. A
+// disabled account is refused here rather than at each call site, so opening a
+// center and handing it a customer agree on who may be a reseller at all.
+func resolveResellerTargetWithTx(tx *gorm.DB, resellerId int, resellerUsername string) (*User, error) {
+	query := tx.Select("id", "username", "status")
+	if resellerId > 0 {
+		query = query.Where("id = ?", resellerId)
+	} else {
+		query = query.Where("username = ?", resellerUsername)
+	}
+	var reseller User
+	if err := query.First(&reseller).Error; err != nil {
+		return nil, err
+	}
+	if reseller.Status != common.UserStatusEnabled {
+		return nil, ErrResellerForbidden
+	}
+	return &reseller, nil
+}
+
 // ensureResellerProfileWithTx opens the reseller center for an admin-selected
-// reseller that never opened it itself. A collision on the random receive code
-// aborts the whole binding instead of retrying, because a failed insert also
-// aborts the surrounding PostgreSQL transaction.
-func ensureResellerProfileWithTx(tx *gorm.DB, userId int, now int64) (*ResellerProfile, error) {
+// reseller that never opened it itself, and reports whether this call is what
+// created it. A collision on the random receive code aborts the whole
+// transaction instead of retrying, because a failed insert also aborts the
+// surrounding PostgreSQL transaction.
+func ensureResellerProfileWithTx(tx *gorm.DB, userId int, now int64) (*ResellerProfile, bool, error) {
 	var profile ResellerProfile
 	err := lockForUpdate(tx).Where("user_id = ?", userId).First(&profile).Error
 	if err == nil {
 		if profile.Status != ResellerStatusActive {
-			return nil, ErrResellerForbidden
+			return nil, false, ErrResellerForbidden
 		}
-		return &profile, nil
+		return &profile, false, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
+		return nil, false, err
 	}
 	receiveId, err := resellerReceiveCode()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	profile = ResellerProfile{
 		UserId: userId, Status: ResellerStatusActive, ReceivePublicId: receiveId,
 		PricingVersion: 1, CreatedAt: resellerNow(now), UpdatedAt: resellerNow(now),
 	}
 	if err := tx.Create(&profile).Error; err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return &profile, nil
+	return &profile, true, nil
+}
+
+// AdminOpenResellerCenter turns an ordinary account into a reseller without
+// also handing it a customer. Binding a customer opens the center as a side
+// effect, but that needs a customer to bind first, and a center nobody opened
+// is invisible in the roster — which is exactly where the operator goes looking
+// for the reseller they were asked to set up.
+//
+// The created flag separates "opened it now" from "it was already open" so the
+// caller can say which happened; a frozen center is refused rather than
+// silently reactivated, matching what binding a customer does.
+func AdminOpenResellerCenter(resellerId int, resellerUsername string, now int64) (*ResellerProfile, bool, error) {
+	resellerUsername = strings.TrimSpace(resellerUsername)
+	if resellerId <= 0 && resellerUsername == "" {
+		return nil, false, gorm.ErrRecordNotFound
+	}
+
+	var (
+		profile *ResellerProfile
+		created bool
+	)
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		reseller, err := resolveResellerTargetWithTx(tx, resellerId, resellerUsername)
+		if err != nil {
+			return err
+		}
+		opened, isNew, err := ensureResellerProfileWithTx(tx, reseller.Id, now)
+		if err != nil {
+			return err
+		}
+		profile, created = opened, isNew
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return profile, created, nil
 }
 
 // AdminBindResellerCustomer attaches an existing user to a reseller outside the
@@ -130,23 +190,14 @@ func AdminBindResellerCustomer(resellerId int, resellerUsername string, customer
 
 	var binding *ResellerCustomer
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		var reseller User
-		query := tx.Select("id", "username", "status")
-		if resellerId > 0 {
-			query = query.Where("id = ?", resellerId)
-		} else {
-			query = query.Where("username = ?", resellerUsername)
-		}
-		if err := query.First(&reseller).Error; err != nil {
+		reseller, err := resolveResellerTargetWithTx(tx, resellerId, resellerUsername)
+		if err != nil {
 			return err
-		}
-		if reseller.Status != common.UserStatusEnabled {
-			return ErrResellerForbidden
 		}
 		if reseller.Id == customerId {
 			return ErrResellerSelfBinding
 		}
-		if _, err := ensureResellerProfileWithTx(tx, reseller.Id, now); err != nil {
+		if _, _, err := ensureResellerProfileWithTx(tx, reseller.Id, now); err != nil {
 			return err
 		}
 		created, err := createResellerCustomerBindingWithTx(

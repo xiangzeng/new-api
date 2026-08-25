@@ -23,7 +23,11 @@ import type {
 } from '@/features/reseller/types'
 import { api } from '@/lib/api'
 
-import type { ResellerRosterItem } from './types'
+import type {
+  OpenResellerPayload,
+  OpenResellerResult,
+  ResellerRosterItem,
+} from './types'
 
 export async function listResellers(
   page: number,
@@ -49,5 +53,21 @@ export async function listResellerCustomers(
     `/api/reseller/admin/resellers/${resellerId}/customers`,
     { params: { p: page, page_size: pageSize } }
   )
+  return res.data
+}
+
+/**
+ * Opens the reseller center for an account that never opened it itself.
+ *
+ * The endpoint is idempotent: reopening an already open center succeeds with
+ * `created: false` rather than failing, so the caller reports what happened
+ * instead of having to check first.
+ */
+export async function openResellerCenter(
+  payload: OpenResellerPayload
+): Promise<ResellerEnvelope<OpenResellerResult>> {
+  const res = await api.post('/api/reseller/admin/resellers', payload, {
+    skipErrorHandler: true,
+  })
   return res.data
 }

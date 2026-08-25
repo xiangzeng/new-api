@@ -35,3 +35,20 @@ export interface ResellerRosterItem {
   available_commission_quota: number
   created_at: number
 }
+
+/** Addresses the account to promote: by id when known, by username otherwise. */
+export interface OpenResellerPayload {
+  reseller_id?: number
+  reseller_username?: string
+}
+
+/**
+ * `created` is false when the account already ran a center, which the endpoint
+ * treats as success so the console can distinguish the two outcomes.
+ */
+export interface OpenResellerResult {
+  user_id: number
+  username: string
+  status: string
+  created: boolean
+}

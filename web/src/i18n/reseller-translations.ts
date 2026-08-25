@@ -272,6 +272,13 @@ const zhCN = {
   'Searching...': '搜索中…',
   'No matching account.': '没有匹配的账号。',
   'Failed to search users': '搜索用户失败',
+  'Open a reseller center': '开通站长',
+  'The account becomes a reseller immediately and can then be given direct customers. It gets no customers and no pricing from this action.':
+    '账号会立即成为站长，随后就能给它添加直属客户。此操作不会附带任何客户或定价。',
+  Open: '开通',
+  'Reseller center opened': '站长中心已开通',
+  'This account already runs a reseller center': '该账号已经是站长',
+  'Failed to open the reseller center': '开通站长中心失败',
   'Customer bound': '客户已绑定',
   'Failed to bind the customer': '绑定客户失败',
   Unbind: '解绑',
