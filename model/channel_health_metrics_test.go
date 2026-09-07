@@ -4,6 +4,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func resetChannelMetricsForTest(t *testing.T) {
@@ -155,4 +158,36 @@ func TestChannelMetricsConcurrentAccess(t *testing.T) {
 	if total != 8*200 {
 		t.Fatalf("total attempts = %d, want %d", total, 8*200)
 	}
+}
+
+func TestChannelMetricsCacheUsageWindows(t *testing.T) {
+	resetChannelMetricsForTest(t)
+	now := time.Unix(1_700_000_000, 0)
+
+	// 25h 前：落在 24h 窗口外
+	recordChannelCacheUsageAt(7, 1000, 900, 50, now.Add(-25*time.Hour))
+	// 2h 前：只进 24h 窗口
+	recordChannelCacheUsageAt(7, 2000, 1000, 500, now.Add(-2*time.Hour))
+	// 10min 前：进 1h + 24h 窗口；负数写入按 0 处理，input<=0 不计样本
+	recordChannelCacheUsageAt(7, 1000, 800, -5, now.Add(-10*time.Minute))
+	recordChannelCacheUsageAt(7, 0, 100, 100, now.Add(-10*time.Minute))
+
+	info, ok := getChannelMetricsSnapshotAt(now)[7]
+	require.True(t, ok, "只有缓存样本、没有 attempt 的渠道也要进快照")
+
+	assert.Equal(t, int64(1), info.Hour.CacheSamples)
+	assert.Equal(t, int64(1000), info.Hour.CacheInputTokens)
+	assert.Equal(t, int64(800), info.Hour.CacheReadTokens)
+	assert.Equal(t, int64(0), info.Hour.CacheWriteTokens)
+	assert.Equal(t, 0.8, info.Hour.CacheHitRate)
+	assert.Equal(t, 0.0, info.Hour.CacheWriteRate)
+
+	assert.Equal(t, int64(2), info.Day.CacheSamples)
+	assert.Equal(t, int64(3000), info.Day.CacheInputTokens)
+	assert.Equal(t, int64(1800), info.Day.CacheReadTokens)
+	assert.Equal(t, int64(500), info.Day.CacheWriteTokens)
+	assert.Equal(t, 0.6, info.Day.CacheHitRate)
+	assert.Equal(t, 0.1667, info.Day.CacheWriteRate)
+	// 缓存记账不算 attempt，错误率口径不受影响
+	assert.Equal(t, int64(0), info.Day.Attempts)
 }

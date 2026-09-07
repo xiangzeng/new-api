@@ -6,9 +6,11 @@ import (
 	"time"
 )
 
-// 渠道级分钟桶指标（错误率/熔断次数/耗时/首字），级联编排页可视化用。
+// 渠道级分钟桶指标（错误率/熔断次数/耗时/首字/缓存命中），级联编排页可视化用。
 // 纯内存环形数组：每渠道 1440 个分钟桶（24h），进程重启清零，与健康注册表同语义。
 // 口径与级联熔断判定一致（IsChannelFaultError + ClassifyStreamEnd），探活流量不计入。
+// 缓存三项（总输入/命中/写入）在消费结算时按 token 记账，只收聊天类请求，口径见
+// service/text_quota.go 的 recordChannelCacheUsage。
 // 详见 docs/channel/cascade-failover.md
 
 // ChannelAttemptOutcome 一次 attempt 的归类结果
@@ -35,6 +37,12 @@ type channelMinuteBucket struct {
 	latencyCount int64
 	ttftSumMs    int64
 	ttftCount    int64
+	// 缓存口径：cacheInputTokens 是归一后的总输入（未缓存 + 命中 + 写入），
+	// 命中率 = read / input，写入率 = write / input；cacheSamples 是参与统计的请求数
+	cacheSamples     int64
+	cacheInputTokens int64
+	cacheReadTokens  int64
+	cacheWriteTokens int64
 }
 
 type channelMetricsRing struct {
@@ -56,6 +64,14 @@ type ChannelMetricsWindow struct {
 	Restores     int64   `json:"restores"`
 	AvgLatencyMs int64   `json:"avg_latency_ms"`
 	AvgTtftMs    int64   `json:"avg_ttft_ms"`
+	// 缓存命中：按 token 加权，CacheHitRate = read/input、CacheWriteRate = write/input，
+	// 未缓存占比 = 1 - hit - write。CacheSamples 为 0 时三项均无意义（前端不渲染）
+	CacheSamples     int64   `json:"cache_samples"`
+	CacheInputTokens int64   `json:"cache_input_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
+	CacheHitRate     float64 `json:"cache_hit_rate"`
+	CacheWriteRate   float64 `json:"cache_write_rate"`
 }
 
 // ChannelMetricsInfo 渠道指标快照（1h/24h 双窗口）
@@ -139,6 +155,27 @@ func recordChannelTransitionAt(channelId int, trip bool, now time.Time) {
 	}
 }
 
+// RecordChannelCacheUsage 记录一次成功结算请求的缓存 token 口径（探活、渠道测试不要调）。
+// inputTokens 是归一后的总输入，readTokens / writeTokens 分别是命中与写入；三者由调用方
+// 按上游语义换算好再传入，这里只做累加。inputTokens <= 0 视为无缓存信息，不计样本。
+func RecordChannelCacheUsage(channelId int, inputTokens, readTokens, writeTokens int64) {
+	recordChannelCacheUsageAt(channelId, inputTokens, readTokens, writeTokens, time.Now())
+}
+
+func recordChannelCacheUsageAt(channelId int, inputTokens, readTokens, writeTokens int64, now time.Time) {
+	if channelId <= 0 || inputTokens <= 0 {
+		return
+	}
+	channelMetricsLock.Lock()
+	defer channelMetricsLock.Unlock()
+
+	bucket := channelMetricsBucket(channelId, now)
+	bucket.cacheSamples++
+	bucket.cacheInputTokens += inputTokens
+	bucket.cacheReadTokens += max(readTokens, 0)
+	bucket.cacheWriteTokens += max(writeTokens, 0)
+}
+
 func (b *channelMinuteBucket) mergeInto(w *ChannelMetricsWindow) {
 	w.Attempts += b.attempts
 	w.Faults += b.faults
@@ -146,11 +183,19 @@ func (b *channelMinuteBucket) mergeInto(w *ChannelMetricsWindow) {
 	w.Restores += b.restores
 	w.AvgLatencyMs += b.latencySumMs // 聚合期间先存 sum，finalize 时除以 count
 	w.AvgTtftMs += b.ttftSumMs
+	w.CacheSamples += b.cacheSamples
+	w.CacheInputTokens += b.cacheInputTokens
+	w.CacheReadTokens += b.cacheReadTokens
+	w.CacheWriteTokens += b.cacheWriteTokens
 }
 
 func finalizeChannelMetricsWindow(w *ChannelMetricsWindow, latencyCount, ttftCount int64) {
 	if w.Attempts > 0 {
 		w.ErrorRate = math.Round(float64(w.Faults)/float64(w.Attempts)*10000) / 10000
+	}
+	if w.CacheInputTokens > 0 {
+		w.CacheHitRate = math.Round(float64(w.CacheReadTokens)/float64(w.CacheInputTokens)*10000) / 10000
+		w.CacheWriteRate = math.Round(float64(w.CacheWriteTokens)/float64(w.CacheInputTokens)*10000) / 10000
 	}
 	if latencyCount > 0 {
 		w.AvgLatencyMs /= latencyCount
@@ -198,7 +243,7 @@ func getChannelMetricsSnapshotAt(now time.Time) map[int]ChannelMetricsInfo {
 				hourTtftCount += bucket.ttftCount
 			}
 		}
-		if info.Day.Attempts == 0 && info.Day.Trips == 0 && info.Day.Restores == 0 {
+		if info.Day.Attempts == 0 && info.Day.Trips == 0 && info.Day.Restores == 0 && info.Day.CacheSamples == 0 {
 			continue
 		}
 		finalizeChannelMetricsWindow(&info.Hour, hourLatencyCount, hourTtftCount)

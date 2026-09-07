@@ -43,7 +43,7 @@ import type { Channel } from '@/features/channels/types'
 import { cn } from '@/lib/utils'
 
 import { saveCascadeWatermark } from '../api'
-import { formatMs } from '../lib/format'
+import { formatMs, formatPercent } from '../lib/format'
 import type { CascadeChannel, CascadeChannelMetrics } from '../types'
 import { HealthEventsDialog } from './health-events-dialog'
 import { UsedQuotaRow } from './used-quota-row'
@@ -86,6 +86,45 @@ function MetricsRow({ metrics }: { metrics?: CascadeChannelMetrics }) {
         </span>
       )}
     </div>
+  )
+}
+
+// 缓存命中配色：≥85% 绿、60–85% 黄、<60% 红——低于 60% 基本等于在按全价烧钱
+function cacheHitClass(rate: number): string {
+  if (rate >= 0.85) return 'text-emerald-600 dark:text-emerald-400'
+  if (rate >= 0.6) return 'text-amber-600 dark:text-amber-400'
+  return 'text-red-600 dark:text-red-400'
+}
+
+// 近 1h 缓存行：按 token 加权的命中率 / 写入率，悬停给样本数与未缓存占比（弹窗朝下，
+// 不糊住上半张卡）。近 1h 没有聊天类流量时不渲染；命中 0% 也照常显示——那正说明
+// 这条渠道在按全价计费，是调编排时最该看的信号。
+function CacheRow({ metrics }: { metrics?: CascadeChannelMetrics }) {
+  const { t } = useTranslation()
+  if (!metrics) return null
+  const hour = metrics['1h']
+  if (!hour.cache_samples) return null
+  const uncached = Math.max(0, 1 - hour.cache_hit_rate - hour.cache_write_rate)
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<div className='text-muted-foreground mt-1 text-xs' />}
+      >
+        {t('Cache')}{' '}
+        <span className={cacheHitClass(hour.cache_hit_rate)}>
+          {t('Hit')} {formatPercent(hour.cache_hit_rate)}
+        </span>
+        {hour.cache_write_rate > 0 &&
+          ` · ${t('Write')} ${formatPercent(hour.cache_write_rate)}`}
+      </TooltipTrigger>
+      <TooltipContent side='bottom' align='start'>
+        {t('Last 1h')} · {t('Requests')} {hour.cache_samples.toLocaleString()}{' '}
+        · {t('Hit')} {formatPercent(hour.cache_hit_rate, 1)} / {t('Write')}{' '}
+        {formatPercent(hour.cache_write_rate, 1)} / {t('Uncached')}{' '}
+        {formatPercent(uncached, 1)}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -377,6 +416,7 @@ export function ChannelCard({
         </div>
         <WatermarkRow channel={channel} />
         <MetricsRow metrics={channel.metrics} />
+        <CacheRow metrics={channel.metrics} />
         {eventsOpen && (
           <HealthEventsDialog
             channelId={channel.id}

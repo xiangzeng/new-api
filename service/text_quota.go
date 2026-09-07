@@ -384,6 +384,33 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	return summary
 }
 
+// recordChannelCacheUsage 把一次成功结算的缓存口径记到渠道分钟桶，供编排页显示命中率/写入率。
+// 归一口径：Claude 语义下 prompt 不含缓存，总输入 = prompt + 命中 + 写入；
+// OpenAI / Gemini 语义下 prompt 已含命中，总输入 = prompt，且没有写入概念。
+// 只收聊天类入站格式——embedding / 图片 / 音频 / rerank 没有缓存语义，进了分母只会把命中率拉低。
+func recordChannelCacheUsage(relayInfo *relaycommon.RelayInfo, summary textQuotaSummary) {
+	if relayInfo == nil || relayInfo.ChannelMeta == nil || relayInfo.ChannelId <= 0 {
+		return
+	}
+	switch relayInfo.RelayFormat {
+	case types.RelayFormatOpenAI, types.RelayFormatClaude, types.RelayFormatGemini,
+		types.RelayFormatOpenAIResponses, types.RelayFormatOpenAIResponsesCompaction:
+	default:
+		return
+	}
+	read := int64(summary.CacheTokens)
+	var write, input int64
+	if summary.IsClaudeUsageSemantic {
+		write = int64(cacheWriteTokensTotal(summary))
+		input = int64(summary.PromptTokens) + read + write
+	} else {
+		input = int64(summary.PromptTokens)
+		// 上游偶有 cached > prompt 的脏数据，钳住避免命中率超过 100%
+		read = min(read, input)
+	}
+	model.RecordChannelCacheUsage(relayInfo.ChannelId, input, read, write)
+}
+
 func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) string {
 	if usage != nil && usage.UsageSemantic != "" {
 		return usage.UsageSemantic
@@ -406,6 +433,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, billingUsage)
+	if originUsage != nil {
+		recordChannelCacheUsage(relayInfo, summary)
+	}
 
 	var tieredResult *billingexpr.TieredResult
 	tieredBillingApplied := false

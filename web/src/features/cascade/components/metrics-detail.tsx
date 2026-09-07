@@ -18,10 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
-import { formatMs } from '../lib/format'
+import { formatMs, formatPercent } from '../lib/format'
 import type { CascadeChannelMetricsWindow } from '../types'
 
-// 单个时间窗的指标明细行，卡片只显示紧凑摘要，明细统一在健康时间线弹窗里看
+// 单个时间窗的指标明细行，卡片只显示紧凑摘要，明细统一在健康时间线弹窗里看。
+// 缓存三项另起一行：卡片上只有近 1h，24h 口径只能在这里看
 export function MetricsDetailLine({
   label,
   window,
@@ -30,6 +31,10 @@ export function MetricsDetailLine({
   window: CascadeChannelMetricsWindow
 }) {
   const { t } = useTranslation()
+  const uncached = Math.max(
+    0,
+    1 - window.cache_hit_rate - window.cache_write_rate
+  )
   return (
     <div>
       <span className='font-medium'>{label}</span>
@@ -40,6 +45,15 @@ export function MetricsDetailLine({
         ` · ${t('Avg latency')} ${formatMs(window.avg_latency_ms)}`}
       {window.avg_ttft_ms > 0 &&
         ` · ${t('Avg TTFT')} ${formatMs(window.avg_ttft_ms)}`}
+      {window.cache_samples > 0 && (
+        <div className='text-muted-foreground'>
+          {t('Cache')} · {t('Requests')}{' '}
+          {window.cache_samples.toLocaleString()} · {t('Hit')}{' '}
+          {formatPercent(window.cache_hit_rate, 1)} / {t('Write')}{' '}
+          {formatPercent(window.cache_write_rate, 1)} / {t('Uncached')}{' '}
+          {formatPercent(uncached, 1)}
+        </div>
+      )}
     </div>
   )
 }

@@ -21,3 +21,9 @@ export function formatMs(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`
   return `${ms}ms`
 }
+
+/** 比率转百分比展示：digits 为小数位数，NaN / 越界值按 0 处理 */
+export function formatPercent(rate: number, digits = 0): string {
+  const safe = Number.isFinite(rate) ? Math.min(Math.max(rate, 0), 1) : 0
+  return `${(safe * 100).toFixed(digits)}%`
+}

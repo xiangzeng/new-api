@@ -37,6 +37,16 @@ export type CascadeChannelMetricsWindow = {
   restores: number
   avg_latency_ms: number
   avg_ttft_ms: number
+  /** 参与缓存统计的请求数（仅聊天类）；为 0 时下面几项无意义 */
+  cache_samples: number
+  /** 归一后的总输入 token（未缓存 + 命中 + 写入） */
+  cache_input_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  /** 按 token 加权：命中 / 总输入 */
+  cache_hit_rate: number
+  /** 按 token 加权：写入 / 总输入（OpenAI 语义恒为 0） */
+  cache_write_rate: number
 }
 
 export type CascadeChannelMetrics = {
