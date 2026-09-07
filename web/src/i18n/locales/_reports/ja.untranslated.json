@@ -1,4 +1,6 @@
 {
+  "User usage ranking": "User usage ranking",
+  "Users ranked by consumption on this channel in the selected period; click a user to open their usage details filtered to this channel.": "Users ranked by consumption on this channel in the selected period; click a user to open their usage details filtered to this channel.",
   "Reseller Binding": "Reseller Binding",
   "Manage the direct reseller this user belongs to": "Manage the direct reseller this user belongs to",
   "This user runs a reseller center with {{count}} direct customers": "This user runs a reseller center with {{count}} direct customers",
@@ -74,6 +76,9 @@
   "Ignore fault keywords": "Ignore fault keywords",
   "Last 1h": "Last 1h",
   "Last 24h": "Last 24h",
+  "Last 3 days": "Last 3 days",
+  "Last 7 days": "Last 7 days",
+  "Last 30 days": "Last 30 days",
   "Last 7d": "Last 7d",
   "Load failed": "Load failed",
   "Max attempts per request": "Max attempts per request",

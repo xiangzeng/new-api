@@ -33,6 +33,7 @@ import {
   Trash2,
   RefreshCw,
   Loader2,
+  Users,
 } from 'lucide-react'
 import { useContext, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -128,6 +129,11 @@ export function ChannelRowActions({ channel }: ChannelRowActionsProps) {
   const handleQueryBalance = () => {
     setCurrentRow(channel)
     setOpen('balance-query')
+  }
+
+  const handleUserUsage = () => {
+    setCurrentRow(channel)
+    setOpen('user-usage')
   }
 
   const handleFetchModels = () => {
@@ -293,6 +299,14 @@ export function ChannelRowActions({ channel }: ChannelRowActionsProps) {
             {t('Query Balance')}
             <DropdownMenuShortcut>
               <DollarSign size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+
+          {/* User usage ranking: who is spending on this channel */}
+          <DropdownMenuItem onClick={handleUserUsage}>
+            {t('User usage ranking')}
+            <DropdownMenuShortcut>
+              <Users size={16} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 

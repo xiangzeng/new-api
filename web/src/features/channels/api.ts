@@ -26,6 +26,7 @@ import type {
   Channel,
   ChannelBalanceResponse,
   ChannelDailyUsageResponse,
+  ChannelUserUsageResponse,
   ChannelOpsResponse,
   ChannelTestResponse,
   CopyChannelParams,
@@ -241,6 +242,20 @@ export async function getChannelDailyUsage(
 ): Promise<ChannelDailyUsageResponse> {
   const res = await api.get(
     `/api/channel/${id}/daily_usage`,
+    channelActionConfig({ params, disableDuplicate: true })
+  )
+  return res.data
+}
+
+/**
+ * Users ranked by consumption on one channel within [start_timestamp, end_timestamp] (unix seconds).
+ */
+export async function getChannelUserUsage(
+  id: number,
+  params: { start_timestamp: number; end_timestamp: number }
+): Promise<ChannelUserUsageResponse> {
+  const res = await api.get(
+    `/api/channel/${id}/user_usage`,
     channelActionConfig({ params, disableDuplicate: true })
   )
   return res.data

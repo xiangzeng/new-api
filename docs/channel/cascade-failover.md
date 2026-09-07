@@ -145,6 +145,10 @@
   已使用量（hover 出精确总量 + 近 3 天分日消耗，
   与渠道列表共用 `/api/channel/:id/daily_usage` 查询缓存，仅悬停时发起请求）、
   连续失败次数、最近错误摘要；HTML5 拖拽换序 + 保存落库。
+- 用户消耗排名：卡片与渠道列表的「…」菜单新增「用户消耗排名」弹窗（`GET /api/channel/:id/user_usage`，
+  `start_timestamp / end_timestamp` unix 秒，跨度 ≤ 90 天，最多 200 行），数据源为数据看板小时桶 `quota_data`
+  按 `channel_id` 聚合并合并未落库的内存增量；预设今天 / 近 3 天 / 近 7 天 / 近 30 天，列为排名、用户、消耗、
+  占比、请求数、Tokens，点用户名跳 `/users/:id?dim=model&channel=<id>` 看该用户在本渠道的模型明细。
 - 缓存口径（`service/text_quota.go` → `model.RecordChannelCacheUsage`）：消费结算时按渠道记入
   同一套分钟桶。Claude 语义 prompt 不含缓存，总输入 = 未缓存 + 命中 + 写入；OpenAI / Gemini 语义
   prompt 已含命中，总输入 = prompt、无写入。只收聊天类入站格式（chat / responses / messages /

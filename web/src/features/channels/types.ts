@@ -215,6 +215,21 @@ export interface ChannelDailyUsageResponse {
   data?: ChannelDailyUsage[]
 }
 
+/** 渠道维度的用户消耗汇总行（数据看板小时桶口径） */
+export interface ChannelUserUsage {
+  user_id: number
+  username: string
+  quota: number
+  count: number
+  token_used: number
+}
+
+export interface ChannelUserUsageResponse {
+  success: boolean
+  message?: string
+  data?: ChannelUserUsage[]
+}
+
 export interface FetchModelsResponse {
   success: boolean
   message?: string
