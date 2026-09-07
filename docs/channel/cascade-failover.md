@@ -148,7 +148,10 @@
 - 用户消耗排名：卡片与渠道列表的「…」菜单新增「用户消耗排名」弹窗（`GET /api/channel/:id/user_usage`，
   `start_timestamp / end_timestamp` unix 秒，跨度 ≤ 90 天，最多 200 行），数据源为数据看板小时桶 `quota_data`
   按 `channel_id` 聚合并合并未落库的内存增量；预设今天 / 近 3 天 / 近 7 天 / 近 30 天，列为排名、用户、消耗、
-  占比、请求数、Tokens，点用户名跳 `/users/:id?dim=model&channel=<id>` 看该用户在本渠道的模型明细。
+  倍率、占比、请求数、Tokens，点用户名跳 `/users/:id?dim=model&channel=<id>` 看该用户在本渠道的模型明细。
+  响应按 用户 × 分组 带 `groups` 明细，每个分组附当前定价配置下的生效倍率（`service.FillChannelUserUsageRatios`，
+  取值顺序与 `relay/helper/price.go` 一致：千人千面 > 用户组特殊倍率 > 分组默认倍率，再乘站长折扣；
+  `ratio_source` 标明来源），千人千面来源在弹窗里标黄——注意是当前配置值，不是请求当时的实际倍率。
 - 缓存口径（`service/text_quota.go` → `model.RecordChannelCacheUsage`）：消费结算时按渠道记入
   同一套分钟桶。Claude 语义 prompt 不含缓存，总输入 = 未缓存 + 命中 + 写入；OpenAI / Gemini 语义
   prompt 已含命中，总输入 = prompt、无写入。只收聊天类入站格式（chat / responses / messages /

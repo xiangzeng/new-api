@@ -215,6 +215,25 @@ export interface ChannelDailyUsageResponse {
   data?: ChannelDailyUsage[]
 }
 
+export type ChannelUserRatioSource = 'custom' | 'user_group' | 'default'
+
+/** 用户在某分组上的消耗明细及按当前定价配置算出的生效倍率 */
+export interface ChannelUserGroupUsage {
+  group: string
+  quota: number
+  count: number
+  token_used: number
+  /** 最终生效倍率（含站长折扣） */
+  ratio: number
+  /** 折扣前倍率 */
+  base_ratio: number
+  /** 分组默认倍率 */
+  default_ratio: number
+  ratio_source: ChannelUserRatioSource
+  /** 站长折扣，0 表示无 */
+  reseller_multiplier: number
+}
+
 /** 渠道维度的用户消耗汇总行（数据看板小时桶口径） */
 export interface ChannelUserUsage {
   user_id: number
@@ -222,6 +241,8 @@ export interface ChannelUserUsage {
   quota: number
   count: number
   token_used: number
+  /** 按分组拆分的明细，按消耗降序 */
+  groups: ChannelUserGroupUsage[]
 }
 
 export interface ChannelUserUsageResponse {

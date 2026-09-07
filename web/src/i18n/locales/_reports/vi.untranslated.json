@@ -1,4 +1,5 @@
 {
+  "Calculated from the current pricing configuration, not the ratio applied at request time.": "Calculated from the current pricing configuration, not the ratio applied at request time.",
   "Users ranked by consumption on this channel in the selected period; click a user to open their usage details filtered to this channel.": "Users ranked by consumption on this channel in the selected period; click a user to open their usage details filtered to this channel.",
   "Manage the direct reseller this user belongs to": "Manage the direct reseller this user belongs to",
   "This user runs a reseller center with {{count}} direct customers": "This user runs a reseller center with {{count}} direct customers",

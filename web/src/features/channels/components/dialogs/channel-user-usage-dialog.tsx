@@ -24,13 +24,24 @@ import { useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import dayjs from '@/lib/dayjs'
 import { formatCompactNumber, formatQuota } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import { getChannelUserUsage } from '../../api'
-import type { ChannelUserUsage } from '../../types'
+import type {
+  ChannelUserGroupUsage,
+  ChannelUserRatioSource,
+  ChannelUserUsage,
+} from '../../types'
 import { useChannels } from '../channels-provider'
 
 type ChannelUserUsageDialogProps = {
@@ -64,6 +75,84 @@ type RankedRow = ChannelUserUsage & {
   rank: number
   /** 该用户占本渠道区间总额度的比例（0-1） */
   share: number
+}
+
+const RATIO_SOURCE_LABEL_KEY: Record<ChannelUserRatioSource, string> = {
+  custom: 'Custom Pricing',
+  user_group: 'User group special ratio',
+  default: 'Default group ratio',
+}
+
+/** 倍率展示：去掉浮点噪声，最多 3 位小数 */
+function formatRatio(ratio: number): string {
+  if (!Number.isFinite(ratio)) return '-'
+  return `×${Number(ratio.toFixed(3))}`
+}
+
+// 「倍率」列：每个分组一行，千人千面来源标黄并挂标签；悬停展开取值链
+// （分组默认 → 来源倍率 → 站长折扣），并注明这是按当前配置算的。
+function RatioCell({ groups }: { groups: ChannelUserGroupUsage[] }) {
+  const { t } = useTranslation()
+  if (groups.length === 0) {
+    return <span className='text-muted-foreground'>-</span>
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<div className='cursor-help space-y-0.5' />}>
+        {groups.map((item) => (
+          <div
+            key={item.group}
+            className='flex items-center gap-1 text-xs tabular-nums'
+          >
+            {groups.length > 1 && (
+              <span className='text-muted-foreground max-w-[72px] truncate'>
+                {item.group}
+              </span>
+            )}
+            <span
+              className={cn(
+                'font-medium',
+                item.ratio_source === 'custom' &&
+                  'text-amber-600 dark:text-amber-400'
+              )}
+            >
+              {formatRatio(item.ratio)}
+            </span>
+            {item.ratio_source === 'custom' && (
+              <Badge
+                variant='outline'
+                className='h-4 border-amber-500/40 px-1 text-[10px] text-amber-600 dark:text-amber-400'
+              >
+                {t('Custom Pricing')}
+              </Badge>
+            )}
+          </div>
+        ))}
+      </TooltipTrigger>
+      <TooltipContent side='bottom' align='start' className='max-w-sm'>
+        <div className='space-y-1 text-xs'>
+          {groups.map((item) => (
+            <div key={item.group} className='tabular-nums'>
+              <span className='font-medium'>{item.group}</span>
+              {' · '}
+              {t(RATIO_SOURCE_LABEL_KEY[item.ratio_source])}{' '}
+              {formatRatio(item.base_ratio)}
+              {item.ratio_source !== 'default' &&
+                `（${t('Default group ratio')} ${formatRatio(item.default_ratio)}）`}
+              {item.reseller_multiplier > 0 &&
+                ` · ${t('Reseller multiplier')} ${formatRatio(item.reseller_multiplier)} → ${formatRatio(item.ratio)}`}
+            </div>
+          ))}
+          <p className='text-background/70'>
+            {t(
+              'Calculated from the current pricing configuration, not the ratio applied at request time.'
+            )}
+          </p>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 // 「这条渠道的钱是谁花的」：按用户汇总的消耗排名，点用户名跳到该用户的用量详情页
@@ -164,6 +253,12 @@ export function ChannelUserUsageDialog({
       cellClassName: 'text-right font-semibold tabular-nums',
       header: <span className='block text-right'>{t('Used Quota')}</span>,
       cell: (row: RankedRow) => formatQuota(row.quota),
+    },
+    {
+      id: 'ratio',
+      className: 'w-[120px]',
+      header: t('Ratio'),
+      cell: (row: RankedRow) => <RatioCell groups={row.groups ?? []} />,
     },
     {
       id: 'share',

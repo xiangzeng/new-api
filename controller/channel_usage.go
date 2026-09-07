@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -54,7 +55,8 @@ const (
 )
 
 // GetChannelUserUsage 返回渠道在 [start_timestamp, end_timestamp]（unix 秒）内按用户汇总的消耗排名，
-// 回答「这条渠道的消耗是被哪些用户用掉的」。口径为数据看板小时桶。
+// 回答「这条渠道的消耗是被哪些用户用掉的」。口径为数据看板小时桶，并按当前定价配置附上
+// 每个 用户 × 分组 的生效倍率（千人千面可见）。
 func GetChannelUserUsage(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil || channelId <= 0 {
@@ -75,6 +77,7 @@ func GetChannelUserUsage(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	service.FillChannelUserUsageRatios(rows, time.Now().Unix())
 	common.ApiSuccess(c, rows)
 }
 
