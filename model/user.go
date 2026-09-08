@@ -735,12 +735,13 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 	}
 
 	newUser := *user
+	// custom_pricing 只由 UpdateUserCustomPricing 维护：管理员「编辑用户」的请求体不带该字段，
+	// 若在这里一并写入，会把已有的千人千面配置清成空串。
 	updates := map[string]interface{}{
-		"username":       newUser.Username,
-		"display_name":   newUser.DisplayName,
-		"group":          newUser.Group,
-		"remark":         newUser.Remark,
-		"custom_pricing": newUser.CustomPricing,
+		"username":     newUser.Username,
+		"display_name": newUser.DisplayName,
+		"group":        newUser.Group,
+		"remark":       newUser.Remark,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -282,4 +283,34 @@ func TestResetUserPasswordByEmailRequiresSingleActiveMatch(t *testing.T) {
 
 	err = ResetUserPasswordByEmail("missing@example.com", "NewPassword123")
 	require.True(t, errors.Is(err, ErrEmailNotFound))
+}
+
+// 管理员「编辑用户」的请求体不带 custom_pricing，Edit 不得把已有千人千面配置清成空串
+func TestUserEditKeepsCustomPricing(t *testing.T) {
+	setupUserUpdateTestState(t)
+
+	const pricing = `{"enabled":true,"groups":{"svip":{"ratio":0.5}}}`
+	user := User{
+		Id:            1,
+		Username:      "custom-pricing-user",
+		Password:      "password",
+		DisplayName:   "before",
+		Group:         "svip",
+		Status:        common.UserStatusEnabled,
+		AffCode:       "cp-keep",
+		CustomPricing: pricing,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	body := `{"id":1,"username":"custom-pricing-user","display_name":"after","group":"svip","remark":"note"}`
+	var edited User
+	require.NoError(t, common.DecodeJson(strings.NewReader(body), &edited))
+	require.NoError(t, edited.Edit(false))
+
+	var stored User
+	require.NoError(t, DB.First(&stored, user.Id).Error)
+	assert.Equal(t, "after", stored.DisplayName)
+	assert.Equal(t, "note", stored.Remark)
+	assert.Equal(t, pricing, stored.CustomPricing)
+	assert.Equal(t, pricing, edited.CustomPricing, "Edit 回读后的对象要带原配置，供用户缓存刷新使用")
 }
