@@ -439,6 +439,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	var tieredResult *billingexpr.TieredResult
 	tieredBillingApplied := false
+	zeroResponseWaived := false
 	if originUsage != nil {
 		var tieredUsedVars map[string]bool
 		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
@@ -482,6 +483,20 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.AudioInputPrice > 0 && summary.AudioTokens > 0 {
 		q := decimal.NewFromFloat(summary.AudioInputPrice).Div(decimal.NewFromInt(1000000)).Mul(decimal.NewFromInt(int64(summary.AudioTokens))).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
 		extraContent = append(extraContent, fmt.Sprintf("Audio Input 花费 %s", logger.LogQuota(common.QuotaFromDecimal(q))))
+	}
+
+	// 零响应不计费：流式请求上游一条 data 都没吐（首字节超时 / 上游挂死 / 客户端等不及断开）。
+	// 扫描器是 ReceivedResponseCount 的唯一写入方且总会装上 StreamStatus，所以
+	// StreamStatus 非空 + 计数为 0 = 扫描器确实跑过、上游什么也没给。用户没拿到任何内容，
+	// 本地估算出来的 prompt token 不该收钱。
+	if constant.ZeroResponseNoCharge && summary.Quota > 0 && summary.CompletionTokens == 0 &&
+		relayInfo.IsStream && relayInfo.StreamStatus != nil && relayInfo.ReceivedResponseCount == 0 {
+		extraContent = append(extraContent, fmt.Sprintf("上游零响应，未产生任何输出，本次不计费（原应扣 %s）", logger.LogQuota(summary.Quota)))
+		logger.LogWarn(ctx, fmt.Sprintf("zero response no charge: userId %d, channelId %d, model %s, waived quota %d, stream end reason %s",
+			relayInfo.UserId, relayInfo.ChannelId, summary.ModelName, summary.Quota, relayInfo.StreamStatus.EndReason))
+		summary.Quota = 0
+		zeroResponseWaived = true
+		SetResellerActualQuota(relayInfo, 0, 0)
 	}
 
 	if !summary.hasBillableUsage() {
@@ -563,6 +578,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
+	}
+
+	if zeroResponseWaived {
+		other["zero_response_no_charge"] = true
 	}
 
 	attachQuotaSaturation(ctx, relayInfo, other)

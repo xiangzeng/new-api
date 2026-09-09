@@ -578,3 +578,61 @@ func TestChannelSettingsValidateHTTPTransport(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "http2_connection_shards")
 }
+
+func TestChannelSettingsValidateTimeouts(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings ChannelSettings
+		wantErr  string
+	}{
+		{
+			name:     "unset timeouts fall back to global",
+			settings: ChannelSettings{},
+		},
+		{
+			name:     "first token below total",
+			settings: ChannelSettings{TotalTimeoutSeconds: 1800, FirstTokenTimeoutSeconds: 600},
+		},
+		{
+			name:     "first token without total",
+			settings: ChannelSettings{FirstTokenTimeoutSeconds: 600},
+		},
+		{
+			name:     "negative total",
+			settings: ChannelSettings{TotalTimeoutSeconds: -1},
+			wantErr:  "invalid total_timeout_seconds",
+		},
+		{
+			name:     "negative first token",
+			settings: ChannelSettings{FirstTokenTimeoutSeconds: -1},
+			wantErr:  "invalid first_token_timeout_seconds",
+		},
+		{
+			name:     "total above cap",
+			settings: ChannelSettings{TotalTimeoutSeconds: MaxChannelTimeoutSeconds + 1},
+			wantErr:  "invalid total_timeout_seconds",
+		},
+		{
+			name:     "first token above cap",
+			settings: ChannelSettings{FirstTokenTimeoutSeconds: MaxChannelTimeoutSeconds + 1},
+			wantErr:  "invalid first_token_timeout_seconds",
+		},
+		{
+			name:     "first token exceeds total",
+			settings: ChannelSettings{TotalTimeoutSeconds: 600, FirstTokenTimeoutSeconds: 900},
+			wantErr:  "must not exceed total_timeout_seconds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.settings.ValidateTimeouts()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}

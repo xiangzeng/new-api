@@ -3,11 +3,13 @@ package helper
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -32,6 +34,31 @@ const (
 	// the handler forever.
 	streamWriteTimeout = 30 * time.Second
 )
+
+// ErrFirstTokenTimeout ends a stream that never produced upstream content
+// before the channel's first-token deadline. Unlike the idle StreamingTimeout,
+// upstream keep-alive lines cannot postpone it, so it is what catches a gateway
+// that holds the connection open while it is stuck.
+var ErrFirstTokenTimeout = errors.New("upstream sent no data before the channel first-token timeout")
+
+// firstTokenDeadline arms the channel's first-token timer, measured from the
+// request start so that time spent waiting on upstream response headers counts
+// too. Returns nil when the channel has no first-token timeout configured.
+func firstTokenDeadline(info *relaycommon.RelayInfo) *time.Timer {
+	if info == nil || info.ChannelMeta == nil {
+		return nil
+	}
+	seconds := info.ChannelSetting.FirstTokenTimeoutSeconds
+	if seconds <= 0 {
+		return nil
+	}
+	remaining := time.Until(info.StartTime.Add(time.Duration(seconds) * time.Second))
+	if remaining <= 0 {
+		// Already past the deadline before the scanner even started.
+		remaining = time.Millisecond
+	}
+	return time.NewTimer(remaining)
+}
 
 func getScannerBufferSize() int {
 	if constant.StreamScannerMaxBufferMB > 0 {
@@ -96,7 +123,23 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		wg          sync.WaitGroup // 用于等待所有 goroutine 退出
 		cleanupOnce sync.Once
 		stopOnce    sync.Once
+		// firstTokenSeen is written by the scanner goroutine and read by the
+		// wait loop, so it has to be atomic.
+		firstTokenSeen atomic.Bool
 	)
+
+	// dataOnlyIdleReset decides what postpones the idle StreamingTimeout. Off
+	// (the default) any upstream line does, so a gateway that emits nothing but
+	// keep-alive lines can hold a relay open indefinitely; on, only real data
+	// lines do, making StreamingTimeout a true "no content" deadline.
+	dataOnlyIdleReset := constant.StreamingTimeoutDataOnly
+
+	firstTokenTimer := firstTokenDeadline(info)
+	var firstTokenC <-chan time.Time
+	if firstTokenTimer != nil {
+		firstTokenC = firstTokenTimer.C
+		defer firstTokenTimer.Stop()
+	}
 
 	stop := func() {
 		stopOnce.Do(func() {
@@ -247,7 +290,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			default:
 			}
 
-			ticker.Reset(streamingTimeout)
+			if !dataOnlyIdleReset {
+				ticker.Reset(streamingTimeout)
+			}
 			data := scanner.Text()
 			logger.LogDebug(c, "stream scanner data: %s", data)
 
@@ -262,7 +307,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			if data == "" {
 				continue
 			}
+			if dataOnlyIdleReset {
+				ticker.Reset(streamingTimeout)
+			}
 			if !strings.HasPrefix(data, "[DONE]") {
+				if firstTokenTimer != nil && !firstTokenSeen.Load() {
+					firstTokenSeen.Store(true)
+					firstTokenTimer.Stop()
+				}
 				info.SetFirstResponseTime()
 				info.ReceivedResponseCount++
 
@@ -290,15 +342,33 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	})
 
 	// 主循环等待完成或超时
-	select {
-	case <-ticker.C:
-		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, nil)
-	case <-stopChan:
-		// EndReason already set by the goroutine that triggered stopChan
-	case <-c.Request.Context().Done():
-		// 客户端断开：立即 cleanup 关闭上游 resp.Body，解除 scanner 阻塞并让上游停止生成，
-		// 避免为已放弃的请求继续消费上游 token。
-		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+waitLoop:
+	for {
+		select {
+		case <-ticker.C:
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, nil)
+			break waitLoop
+		case <-firstTokenC:
+			// The scanner stops this timer on the first data line, but it can
+			// still fire in the race window. Only a stream that truly produced
+			// nothing counts as a first-token timeout; otherwise disarm the
+			// channel (nil blocks forever) and keep waiting.
+			if firstTokenSeen.Load() {
+				firstTokenC = nil
+				continue
+			}
+			logger.LogError(c, fmt.Sprintf("first token timeout after %ds, aborting upstream request", info.ChannelSetting.FirstTokenTimeoutSeconds))
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, ErrFirstTokenTimeout)
+			break waitLoop
+		case <-stopChan:
+			// EndReason already set by the goroutine that triggered stopChan
+			break waitLoop
+		case <-c.Request.Context().Done():
+			// 客户端断开：立即 cleanup 关闭上游 resp.Body，解除 scanner 阻塞并让上游停止生成，
+			// 避免为已放弃的请求继续消费上游 token。
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+			break waitLoop
+		}
 	}
 
 	cleanup()

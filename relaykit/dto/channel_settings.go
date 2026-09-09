@@ -23,13 +23,45 @@ type ChannelSettings struct {
 	// HTTP2ConnectionShards spreads HTTP/2 traffic across N independent transports
 	// (1-8). Zero/unset means 1. Ignored when HTTPProtocol is "http1".
 	HTTP2ConnectionShards int `json:"http2_connection_shards,omitempty"`
+	// TotalTimeoutSeconds bounds the whole upstream request wall clock for this
+	// channel, streaming body read included. Zero falls back to the global
+	// RELAY_TIMEOUT.
+	TotalTimeoutSeconds int `json:"total_timeout_seconds,omitempty"`
+	// FirstTokenTimeoutSeconds aborts a streaming relay that has not produced a
+	// single upstream data line within this many seconds of the request start.
+	// Zero disables the check. Upstream keep-alive lines do not count, so this
+	// is the only knob that catches a gateway holding the connection open while
+	// it is stuck. Measured from request start, so time spent waiting on
+	// response headers counts too.
+	FirstTokenTimeoutSeconds int `json:"first_token_timeout_seconds,omitempty"`
 }
 
 const (
 	HTTPProtocolAuto         = "auto"
 	HTTPProtocolHTTP1        = "http1"
 	MaxHTTP2ConnectionShards = 8
+	// MaxChannelTimeoutSeconds caps the per-channel timeouts at two hours so a
+	// mistyped value cannot effectively disable them.
+	MaxChannelTimeoutSeconds = 7200
 )
+
+// ValidateTimeouts validates save-time per-channel timeout settings.
+func (s *ChannelSettings) ValidateTimeouts() error {
+	if s == nil {
+		return nil
+	}
+	if s.TotalTimeoutSeconds < 0 || s.TotalTimeoutSeconds > MaxChannelTimeoutSeconds {
+		return fmt.Errorf("invalid total_timeout_seconds: %d", s.TotalTimeoutSeconds)
+	}
+	if s.FirstTokenTimeoutSeconds < 0 || s.FirstTokenTimeoutSeconds > MaxChannelTimeoutSeconds {
+		return fmt.Errorf("invalid first_token_timeout_seconds: %d", s.FirstTokenTimeoutSeconds)
+	}
+	if s.TotalTimeoutSeconds > 0 && s.FirstTokenTimeoutSeconds > s.TotalTimeoutSeconds {
+		return fmt.Errorf("first_token_timeout_seconds (%d) must not exceed total_timeout_seconds (%d)",
+			s.FirstTokenTimeoutSeconds, s.TotalTimeoutSeconds)
+	}
+	return nil
+}
 
 // ValidateHTTPTransport validates save-time HTTP transport channel settings.
 func (s *ChannelSettings) ValidateHTTPTransport() error {

@@ -1,6 +1,10 @@
 {
+  "Abort a streaming request that has produced no upstream content within this many seconds. Keep-alive lines do not count, so this catches an upstream that holds the connection open while stuck. 0 disables it.": "Abort a streaming request that has produced no upstream content within this many seconds. Keep-alive lines do not count, so this catches an upstream that holds the connection open while stuck. 0 disables it.",
+  "First token timeout must not exceed the total timeout": "First token timeout must not exceed the total timeout",
+  "Hard wall-clock limit for one upstream request, streaming included. 0 uses the global RELAY_TIMEOUT.": "Hard wall-clock limit for one upstream request, streaming included. 0 uses the global RELAY_TIMEOUT.",
   "Calculated from the current pricing configuration, not the ratio applied at request time.": "Calculated from the current pricing configuration, not the ratio applied at request time.",
   "Users ranked by consumption on this channel in the selected period; click a user to open their usage details filtered to this channel.": "Users ranked by consumption on this channel in the selected period; click a user to open their usage details filtered to this channel.",
+  "Timeout must be between 0 and 7200 seconds": "Timeout must be between 0 and 7200 seconds",
   "Manage the direct reseller this user belongs to": "Manage the direct reseller this user belongs to",
   "This user runs a reseller center with {{count}} direct customers": "This user runs a reseller center with {{count}} direct customers",
   "Reseller username or ID": "Reseller username or ID",

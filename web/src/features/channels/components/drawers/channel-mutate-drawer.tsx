@@ -150,6 +150,7 @@ import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
   CHANNEL_TYPE_ADVANCED_CUSTOM,
+  MAX_CHANNEL_TIMEOUT_SECONDS,
   channelFormSchema,
   channelsQueryKeys,
   getAdvancedCustomStats,
@@ -286,6 +287,8 @@ const SENSITIVE_FORM_FIELDS = [
   'proxy',
   'http_protocol',
   'http2_connection_shards',
+  'total_timeout_seconds',
+  'first_token_timeout_seconds',
   'pass_through_body_enabled',
   'system_prompt',
   'system_prompt_override',
@@ -344,6 +347,8 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     (values.http_protocol && values.http_protocol !== 'auto') ||
     (values.http2_connection_shards != null &&
       values.http2_connection_shards > 1) ||
+    values.total_timeout_seconds ||
+    values.first_token_timeout_seconds ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
@@ -4233,9 +4238,7 @@ export function ChannelMutateDrawer({
                                         <SelectValue />
                                       </SelectTrigger>
                                     </FormControl>
-                                    <SelectContent
-                                      alignItemWithTrigger={false}
-                                    >
+                                    <SelectContent alignItemWithTrigger={false}>
                                       <SelectGroup>
                                         <SelectItem value='auto'>
                                           {t('Auto')}
@@ -4315,6 +4318,68 @@ export function ChannelMutateDrawer({
                                   </FormItem>
                                 )
                               }}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name='total_timeout_seconds'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t('Total Timeout (seconds)')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type='number'
+                                      min={0}
+                                      max={MAX_CHANNEL_TIMEOUT_SECONDS}
+                                      placeholder='0'
+                                      {...field}
+                                      value={field.value ?? 0}
+                                      onChange={(e) =>
+                                        field.onChange(Number(e.target.value))
+                                      }
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t(
+                                      'Hard wall-clock limit for one upstream request, streaming included. 0 uses the global RELAY_TIMEOUT.'
+                                    )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name='first_token_timeout_seconds'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t('First Token Timeout (seconds)')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type='number'
+                                      min={0}
+                                      max={MAX_CHANNEL_TIMEOUT_SECONDS}
+                                      placeholder='0'
+                                      {...field}
+                                      value={field.value ?? 0}
+                                      onChange={(e) =>
+                                        field.onChange(Number(e.target.value))
+                                      }
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t(
+                                      'Abort a streaming request that has produced no upstream content within this many seconds. Keep-alive lines do not count, so this catches an upstream that holds the connection open while stuck. 0 disables it.'
+                                    )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
                             />
 
                             <FormField

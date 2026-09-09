@@ -498,6 +498,13 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	// transparent stream retries.
 	relayClient := *client
 	relayClient.CheckRedirect = keepUpstreamRedirectResponse
+	// Per-channel total timeout. http.Client.Timeout spans dial, response
+	// headers and the full body read, so this bounds streaming relays too.
+	// Set on the copy, never on the cached client shared by other channels.
+	// A channel without one keeps the global RELAY_TIMEOUT already on the client.
+	if info != nil && info.ChannelMeta != nil && info.ChannelSetting.TotalTimeoutSeconds > 0 {
+		relayClient.Timeout = time.Duration(info.ChannelSetting.TotalTimeoutSeconds) * time.Second
+	}
 	if common2.DebugEnabled && req != nil && req.URL != nil {
 		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
 		logger.LogDebug(c, fmt.Sprintf(

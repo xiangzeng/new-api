@@ -73,6 +73,7 @@ function isOptionalProxyURL(value: string | undefined): boolean {
 export const HTTP_PROTOCOL_AUTO = 'auto'
 export const HTTP_PROTOCOL_HTTP1 = 'http1'
 export const MAX_HTTP2_CONNECTION_SHARDS = 8
+export const MAX_CHANNEL_TIMEOUT_SECONDS = 7200
 
 export function normalizeHttpProtocol(
   value: string | undefined | null
@@ -99,6 +100,18 @@ export function normalizeHttp2ConnectionShards(
     return MAX_HTTP2_CONNECTION_SHARDS
   }
   return value
+}
+
+export function normalizeChannelTimeout(
+  value: number | undefined | null
+): number {
+  if (value == null || Number.isNaN(value) || value <= 0) {
+    return 0
+  }
+  if (value > MAX_CHANNEL_TIMEOUT_SECONDS) {
+    return MAX_CHANNEL_TIMEOUT_SECONDS
+  }
+  return Math.floor(value)
 }
 
 function parseOptionalJson(value: string | undefined): unknown {
@@ -258,6 +271,8 @@ export const channelFormSchema = z
       .refine(isOptionalProxyURL, ERROR_MESSAGES.INVALID_PROXY),
     http_protocol: z.enum(['auto', 'http1']).optional(),
     http2_connection_shards: z.number().int().optional(),
+    total_timeout_seconds: z.number().int().optional(),
+    first_token_timeout_seconds: z.number().int().optional(),
     pass_through_body_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
@@ -390,6 +405,33 @@ export const channelFormSchema = z
         ERROR_MESSAGES.INVALID_HTTP1_WITH_SHARDS
       )
     }
+
+    const totalTimeout = data.total_timeout_seconds ?? 0
+    const firstTokenTimeout = data.first_token_timeout_seconds ?? 0
+    if (totalTimeout < 0 || totalTimeout > MAX_CHANNEL_TIMEOUT_SECONDS) {
+      addRequiredIssue(
+        ctx,
+        'total_timeout_seconds',
+        ERROR_MESSAGES.INVALID_CHANNEL_TIMEOUT
+      )
+    }
+    if (
+      firstTokenTimeout < 0 ||
+      firstTokenTimeout > MAX_CHANNEL_TIMEOUT_SECONDS
+    ) {
+      addRequiredIssue(
+        ctx,
+        'first_token_timeout_seconds',
+        ERROR_MESSAGES.INVALID_CHANNEL_TIMEOUT
+      )
+    }
+    if (totalTimeout > 0 && firstTokenTimeout > totalTimeout) {
+      addRequiredIssue(
+        ctx,
+        'first_token_timeout_seconds',
+        ERROR_MESSAGES.INVALID_FIRST_TOKEN_TIMEOUT
+      )
+    }
   })
 
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
@@ -430,6 +472,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   proxy: '',
   http_protocol: HTTP_PROTOCOL_AUTO,
   http2_connection_shards: 1,
+  total_timeout_seconds: 0,
+  first_token_timeout_seconds: 0,
   pass_through_body_enabled: false,
   system_prompt: '',
   system_prompt_override: false,
@@ -470,6 +514,8 @@ export function transformChannelToFormDefaults(
     proxy: '',
     http_protocol: HTTP_PROTOCOL_AUTO as 'auto' | 'http1',
     http2_connection_shards: 1,
+    total_timeout_seconds: 0,
+    first_token_timeout_seconds: 0,
     pass_through_body_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
@@ -487,8 +533,13 @@ export function transformChannelToFormDefaults(
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
         http_protocol: protocol,
-        http2_connection_shards:
-          protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
+        http2_connection_shards: protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
+        total_timeout_seconds: normalizeChannelTimeout(
+          parsed.total_timeout_seconds
+        ),
+        first_token_timeout_seconds: normalizeChannelTimeout(
+          parsed.first_token_timeout_seconds
+        ),
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
@@ -622,6 +673,17 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
     settingObj.http_protocol = HTTP_PROTOCOL_HTTP1
   } else if (shards > 1) {
     settingObj.http2_connection_shards = shards
+  }
+
+  const totalTimeout = normalizeChannelTimeout(formData.total_timeout_seconds)
+  if (totalTimeout > 0) {
+    settingObj.total_timeout_seconds = totalTimeout
+  }
+  const firstTokenTimeout = normalizeChannelTimeout(
+    formData.first_token_timeout_seconds
+  )
+  if (firstTokenTimeout > 0) {
+    settingObj.first_token_timeout_seconds = firstTokenTimeout
   }
 
   return JSON.stringify(settingObj)

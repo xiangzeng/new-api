@@ -75,6 +75,10 @@ func ClassifyStreamEnd(status *relaycommon.StreamStatus) (StreamOutcome, string)
 	}
 	switch status.EndReason {
 	case relaycommon.StreamEndReasonTimeout:
+		if status.EndError != nil {
+			// 首字节超时带 EndError，和「吐到一半停了」的空闲超时区分开
+			return StreamOutcomeFault, "流式响应超时: " + status.EndError.Error()
+		}
 		return StreamOutcomeFault, "流式响应超时（上游停止发送数据）"
 	case relaycommon.StreamEndReasonScannerErr:
 		reason := "流读取错误"
