@@ -202,6 +202,38 @@
 - **软限流**：全员打满时仍照常发请求（按负载率摊到最空的渠道），不向用户返 429，
   不替代真正的限速。
 
+### 2.11 渠道级超时（`relaykit/dto/channel_settings.go`）
+
+外接号商渠道常见的挂死形态是：上游回了 200 + SSE 头，然后靠心跳行把连接吊着，
+一条 `data:` 都不吐。这种请求全局配置抓不住——`RELAY_TIMEOUT` 是全局值，
+必须放到最慢渠道的水平；`STREAMING_TIMEOUT` 是空闲计时，而心跳行会把它无限续命。
+所以超时下放到渠道，配在渠道设置的高级区：
+
+| 字段 | 语义 | 落点 |
+|---|---|---|
+| `total_timeout_seconds` | 单次上游请求墙钟硬上限（含流式读完 body），`0` = 沿用全局 `RELAY_TIMEOUT` | `doRequest` 里设在 `http.Client` 浅拷贝上，不污染共享缓存客户端 |
+| `first_token_timeout_seconds` | 从**请求开始**算，没吐出任何有效 `data:` 就掐断，`0` = 不启用 | `StreamScannerHandler` 的独立定时器，收到首条 data 即解除 |
+
+两者都受 `MaxChannelTimeoutSeconds`（7200）上限约束，且 `first_token ≤ total`（total > 0 时），
+保存时由 `ChannelSettings.ValidateTimeouts` 校验。首字节超时按 `info.StartTime` 计时，
+所以「等响应头」的时间也算在内。
+
+首字节超时以 `StreamEndReasonTimeout` + `ErrFirstTokenTimeout` 收尾，因此直接复用 2.9 的
+健康归因，被判为**故障**并计入熔断——反复挂死的渠道会被自动绕开，不需要额外接线。
+
+配值靠日志里的 `other.frt`（首字节耗时，毫秒）分位数来定：取该渠道正常请求的 p99.9
+再留一档余量，避免误杀「推理很久才开口」的正常长请求。
+
+补充两个全局开关（`.env`）：
+
+- `STREAMING_TIMEOUT_DATA_ONLY`（默认 `false`）：打开后 `STREAMING_TIMEOUT` 的空闲计时
+  只由真正的 `data:` 行重置，心跳行不再续命，让它变成真正的「无内容超时」。默认关闭
+  保持历史行为，确认没有误杀后再切开。
+- `ZERO_RESPONSE_NO_CHARGE`（默认 `true`）：流式请求上游一条 data 都没吐时跳过计费
+  （`service.PostTextConsumeQuota`），消费日志记 `other.zero_response_no_charge`。
+  判定条件是「扫描器跑过（`StreamStatus != nil`）+ `ReceivedResponseCount == 0` +
+  补全 token 为 0」，不走扫描器的适配器不受影响。
+
 ## 3. 边界与已知限制
 
 1. **流式响应已开始向客户端吐字后 failure 无法透明切换**——级联的自动切换只覆盖首字节前

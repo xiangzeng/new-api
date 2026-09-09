@@ -571,3 +571,153 @@ func TestStreamScannerHandler_StreamStatus_ReplacesPreInitialized(t *testing.T) 
 	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
 	assert.Equal(t, 0, info.StreamStatus.TotalErrorCount())
 }
+
+// ---------- Per-channel first-token timeout ----------
+
+// keepAliveOnlyBody mimics a stuck upstream gateway: it holds the connection
+// open with SSE keep-alive lines forever and never sends a data line. Closing
+// it (as cleanup does) unblocks the scanner.
+func keepAliveOnlyBody(interval time.Duration) io.ReadCloser {
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		for {
+			time.Sleep(interval)
+			if _, err := pw.Write([]byte(": keep-alive\n")); err != nil {
+				return
+			}
+		}
+	}()
+	return pr
+}
+
+// dataThenKeepAliveBody sends one real data line, stalls on keep-alives past
+// the first-token deadline, then closes the stream normally.
+func dataThenKeepAliveBody(stall time.Duration) io.ReadCloser {
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		if _, err := pw.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n")); err != nil {
+			return
+		}
+		deadline := time.Now().Add(stall)
+		for time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+			if _, err := pw.Write([]byte(": keep-alive\n")); err != nil {
+				return
+			}
+		}
+		_, _ = pw.Write([]byte("data: [DONE]\n"))
+	}()
+	return pr
+}
+
+func TestStreamScannerHandler_FirstTokenTimeoutEndsKeepAliveOnlyStream(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 60
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	c, resp, info := setupStreamTest(t, nil)
+	resp.Body = keepAliveOnlyBody(50 * time.Millisecond)
+	info.IsStream = true
+	info.StartTime = time.Now()
+	info.ChannelSetting.FirstTokenTimeoutSeconds = 1
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {})
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("StreamScannerHandler did not return after the first-token timeout")
+	}
+
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
+	assert.ErrorIs(t, info.StreamStatus.EndError, ErrFirstTokenTimeout)
+	assert.Zero(t, info.ReceivedResponseCount)
+}
+
+func TestStreamScannerHandler_FirstTokenTimeoutDisarmedAfterFirstData(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 60
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	c, resp, info := setupStreamTest(t, nil)
+	resp.Body = dataThenKeepAliveBody(1500 * time.Millisecond)
+	info.IsStream = true
+	info.StartTime = time.Now()
+	info.ChannelSetting.FirstTokenTimeoutSeconds = 1
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {})
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("StreamScannerHandler did not return after the stream completed")
+	}
+
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
+	assert.Equal(t, 1, info.ReceivedResponseCount)
+}
+
+func TestStreamScannerHandler_KeepAliveLinesPostponeIdleTimeoutByDefault(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	oldDataOnly := constant.StreamingTimeoutDataOnly
+	constant.StreamingTimeout = 1
+	constant.StreamingTimeoutDataOnly = false
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldTimeout
+		constant.StreamingTimeoutDataOnly = oldDataOnly
+	})
+
+	c, resp, info := setupStreamTest(t, nil)
+	resp.Body = keepAliveOnlyBody(200 * time.Millisecond)
+	info.IsStream = true
+	info.StartTime = time.Now()
+	info.ChannelSetting.FirstTokenTimeoutSeconds = 3
+
+	start := time.Now()
+	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {})
+	elapsed := time.Since(start)
+
+	require.NotNil(t, info.StreamStatus)
+	// The 1s idle timeout never fires because every keep-alive line resets it;
+	// only the first-token deadline stops the stream.
+	assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
+	assert.ErrorIs(t, info.StreamStatus.EndError, ErrFirstTokenTimeout)
+	assert.Greater(t, elapsed, 2*time.Second)
+}
+
+func TestStreamScannerHandler_DataOnlyIdleResetIgnoresKeepAliveLines(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	oldDataOnly := constant.StreamingTimeoutDataOnly
+	constant.StreamingTimeout = 1
+	constant.StreamingTimeoutDataOnly = true
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldTimeout
+		constant.StreamingTimeoutDataOnly = oldDataOnly
+	})
+
+	c, resp, info := setupStreamTest(t, nil)
+	resp.Body = keepAliveOnlyBody(200 * time.Millisecond)
+	info.IsStream = true
+	info.StartTime = time.Now()
+
+	start := time.Now()
+	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {})
+	elapsed := time.Since(start)
+
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
+	assert.NoError(t, info.StreamStatus.EndError)
+	assert.Less(t, elapsed, 2*time.Second)
+}

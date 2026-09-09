@@ -1,6 +1,16 @@
 package constant
 
 var StreamingTimeout int
+
+// StreamingTimeoutDataOnly restricts what resets the idle StreamingTimeout to
+// real upstream data lines. Off by default: the historical behaviour lets any
+// line, keep-alive included, postpone the deadline forever.
+var StreamingTimeoutDataOnly bool
+
+// ZeroResponseNoCharge skips billing a streaming relay that received no
+// upstream data at all. The user got nothing, so locally estimated prompt
+// tokens must not be charged.
+var ZeroResponseNoCharge bool
 var DifyDebug bool
 var MaxFileDownloadMB int
 var StreamScannerMaxBufferMB int

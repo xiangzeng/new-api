@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Pull beta image and restart service
+    name: Blue-green deploy (zero-downtime)
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||
@@ -30,7 +30,7 @@ jobs:
         )
       }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     env:
       DEPLOY_HOST: ${{ secrets.NEW_API_HK_HOST }}
@@ -54,21 +54,11 @@ jobs:
           chmod 600 ~/.ssh/new-api-hk
           ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
-      - name: Pull latest image and restart new-api
+      # 蓝绿部署：脚本先把流量切到备用实例、等在途请求排空，再重建另一实例，
+      # 全程 nginx 只 reload，不会掐断用户正在跑的流式请求。实测约 11 分钟。
+      - name: Blue-green deploy new-api
         run: |
           ssh -i ~/.ssh/new-api-hk -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
           set -euo pipefail
-
-          cd /root/new-api
-
-          BEFORE_IMAGE_ID="$(docker inspect --format='{{.Image}}' new-api 2>/dev/null || true)"
-          echo "Current new-api image ID: ${BEFORE_IMAGE_ID:-unknown}"
-
-          docker compose pull new-api
-          docker compose up -d new-api
-
-          AFTER_IMAGE_ID="$(docker inspect --format='{{.Image}}' new-api)"
-          echo "Deployed new-api image ID: ${AFTER_IMAGE_ID}"
-
-          docker compose ps new-api
+          /root/new-api/deploy-bluegreen.sh
           REMOTE
