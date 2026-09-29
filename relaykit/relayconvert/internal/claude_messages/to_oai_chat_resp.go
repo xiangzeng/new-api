@@ -360,6 +360,10 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 			if claudeResponse.Delta.Thinking != nil {
 				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Thinking)
 			}
+			// 工具调用参数同属输出，流未正常收尾时兜底估算要算上
+			if claudeResponse.Delta.PartialJson != nil {
+				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.PartialJson)
+			}
 		}
 	} else if claudeResponse.Type == "message_delta" {
 		if claudeResponse.Usage != nil {
@@ -388,6 +392,9 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 
 		claudeInfo.Done = true
 	} else if claudeResponse.Type == "content_block_start" {
+		if claudeResponse.ContentBlock != nil && claudeResponse.ContentBlock.Type == "tool_use" {
+			claudeInfo.ResponseText.WriteString(claudeResponse.ContentBlock.Name)
+		}
 	} else {
 		return false
 	}

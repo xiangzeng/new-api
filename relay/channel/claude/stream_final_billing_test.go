@@ -61,6 +61,25 @@ func TestHandleStreamFinalResponse_AbnormalEndBillsStreamedOutput(t *testing.T) 
 	require.Equal(t, 50, billed.CacheCreationInputTokens)
 }
 
+// 工具调用参数流到一半客户端断开：工具名与已下发的参数 JSON 同样计入输出
+func TestHandleStreamFinalResponse_AbnormalEndBillsStreamedToolUse(t *testing.T) {
+	c, info, claudeInfo := newStreamFinalTestContext()
+	FormatClaudeResponseInfo(&dto.ClaudeResponse{
+		Type:         "content_block_start",
+		ContentBlock: &dto.ClaudeMediaMessage{Type: "tool_use", Id: "toolu_1", Name: "Write", Input: map[string]any{}},
+	}, nil, claudeInfo)
+	feedDelta(claudeInfo, &dto.ClaudeMediaMessage{Type: "input_json_delta", PartialJson: commonPointer(`{"file_path":"/tmp/a.go","content":"`)})
+	feedDelta(claudeInfo, &dto.ClaudeMediaMessage{Type: "input_json_delta", PartialJson: commonPointer(strings.Repeat("package main\\nfunc main() {}\\n", 50))})
+	require.False(t, claudeInfo.Done)
+
+	HandleStreamFinalResponse(c, info, claudeInfo)
+
+	require.Greater(t, claudeInfo.Usage.CompletionTokens, 1)
+	billed := claudeInfo.Usage.BillingUsage.ClaudeUsage
+	require.NotNil(t, billed)
+	require.Equal(t, claudeInfo.Usage.CompletionTokens, billed.OutputTokens)
+}
+
 // 正常收尾：以上游 message_delta 的 output_tokens 为准，不被本地估算覆盖
 func TestHandleStreamFinalResponse_NormalEndKeepsUpstreamOutput(t *testing.T) {
 	c, info, claudeInfo := newStreamFinalTestContext()
