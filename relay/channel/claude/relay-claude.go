@@ -168,12 +168,17 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 			claudeInfo.Usage.PromptTokens = fallback.PromptTokens
 		}
 		claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
+		// 结算以 BillingUsage 为准，而它在 message_start 时已按其 output_tokens（通常为 1）定格；
+		// 不重建的话，上面补算的输出（客户端中途断开前已下发的正文/推理）不会进账
+		claudeInfo.Usage.BillingUsage = nil
 	}
 	if claudeInfo.Usage != nil {
 		claudeInfo.Usage.UsageSemantic = "anthropic"
 	}
 	if claudeInfo.Usage != nil && claudeInfo.Usage.BillingUsage == nil {
-		claudeInfo.Usage.BillingUsage = dto.NewClaudeMessagesBillingUsage(buildMessageDeltaPatchUsage(nil, claudeInfo))
+		billingUsage := buildMessageDeltaPatchUsage(nil, claudeInfo)
+		billingUsage.OutputTokens = claudeInfo.Usage.CompletionTokens
+		claudeInfo.Usage.BillingUsage = dto.NewClaudeMessagesBillingUsage(billingUsage)
 	}
 
 	if info.RelayFormat == types.RelayFormatClaude {
