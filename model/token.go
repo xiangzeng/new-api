@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -25,7 +26,10 @@ type Token struct {
 	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
 	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
-	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
+	UsedQuota          int            `json:"used_quota" gorm:"default:0"`        // used quota
+	DailyQuotaLimit    int            `json:"daily_quota_limit" gorm:"default:0"` // 每日额度上限，0 表示不限
+	DailyUsedQuota     int            `json:"daily_used_quota" gorm:"default:0"`  // daily_quota_day 当天已用额度
+	DailyQuotaDay      int            `json:"daily_quota_day" gorm:"default:0"`   // daily_used_quota 所属日期（服务器时区 YYYYMMDD）
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	AutoGroups         string         `json:"-" gorm:"type:text"`
@@ -248,6 +252,10 @@ func ValidateUserToken(key string) (token *Token, err error) {
 			}
 			return token, ErrTokenInvalid
 		}
+		// 每日额度只拦截不改状态：次日 0 点计数自然归零即恢复可用
+		if token.DailyQuotaLimit > 0 && token.TodayUsedQuota() >= token.DailyQuotaLimit {
+			return token, ErrTokenDailyQuotaExhausted
+		}
 		return token, nil
 	}
 	common.SysLog("ValidateUserToken: failed to get token: " + err.Error())
@@ -316,7 +324,7 @@ func (token *Token) Insert() error {
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update() (err error) {
-	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota", "daily_quota_limit",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups").Updates(token).Error
 	if shouldUpdateRedis(true, err) {
 		if cacheErr := cacheSetToken(*token); cacheErr != nil {
@@ -412,6 +420,9 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 			if err != nil {
 				common.SysLog("failed to increase token quota: " + err.Error())
 			}
+			if err := cacheIncrTokenDailyUsed(tokenId, -quota); err != nil {
+				common.SysLog("failed to decrease token daily used quota: " + err.Error())
+			}
 		})
 	}
 	if common.BatchUpdateEnabled {
@@ -422,14 +433,22 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 }
 
 func increaseTokenQuota(id int, quota int) (err error) {
-	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]interface{}{
-			"remain_quota":  gorm.Expr("remain_quota + ?", quota),
-			"used_quota":    gorm.Expr("used_quota - ?", quota),
-			"accessed_time": common.GetTimestamp(),
-		},
+	return applyTokenQuotaConsumption(id, -quota)
+}
+
+// applyTokenQuotaConsumption 把一次令牌额度变动写入数据库：consumed > 0 为消耗，< 0 为退还。
+// 同时维护当天用量 daily_used_quota：日期仍是当天则累加，跨天则从本次消耗重新起算（退还不计负数）。
+func applyTokenQuotaConsumption(id int, consumed int) error {
+	today := tokenQuotaDay(time.Now())
+	// MySQL 按书写顺序从左到右计算 SET，后面的表达式会读到前面刚赋的新值，
+	// daily_used_quota 必须写在 daily_quota_day 之前 CASE 才能读到旧日期；
+	// GORM 的 map 更新会按列名字母序重排赋值，所以这里用原生 SQL 固定顺序。
+	return DB.Exec(
+		"UPDATE tokens SET remain_quota = remain_quota - ?, used_quota = used_quota + ?, "+
+			"daily_used_quota = CASE WHEN daily_quota_day = ? THEN daily_used_quota + ? ELSE ? END, "+
+			"daily_quota_day = ?, accessed_time = ? WHERE id = ?",
+		consumed, consumed, today, consumed, max(consumed, 0), today, common.GetTimestamp(), id,
 	).Error
-	return err
 }
 
 func DecreaseTokenQuota(id int, key string, quota int) (err error) {
@@ -442,6 +461,9 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 			if err != nil {
 				common.SysLog("failed to decrease token quota: " + err.Error())
 			}
+			if err := cacheIncrTokenDailyUsed(id, quota); err != nil {
+				common.SysLog("failed to increase token daily used quota: " + err.Error())
+			}
 		})
 	}
 	if common.BatchUpdateEnabled {
@@ -452,14 +474,31 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 }
 
 func decreaseTokenQuota(id int, quota int) (err error) {
-	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]interface{}{
-			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
-			"used_quota":    gorm.Expr("used_quota + ?", quota),
-			"accessed_time": common.GetTimestamp(),
-		},
-	).Error
-	return err
+	return applyTokenQuotaConsumption(id, quota)
+}
+
+// tokenQuotaDay 返回 t 在服务器时区下的自然日（YYYYMMDD），每日额度按它切换计数。
+func tokenQuotaDay(t time.Time) int {
+	return t.Year()*10000 + int(t.Month())*100 + t.Day()
+}
+
+// TodayUsedQuota 返回令牌当天已用额度：取 Redis 实时计数与数据库当天值中的较大者。
+// 数据库值在批量更新模式下会滞后一个批量周期，Redis 计数丢失时仍可兜底。
+func (token *Token) TodayUsedQuota() int {
+	today := tokenQuotaDay(time.Now())
+	used := 0
+	if token.DailyQuotaDay == today {
+		used = token.DailyUsedQuota
+	}
+	if common.RedisEnabled {
+		cached, err := cacheGetTokenDailyUsed(token.Id, today)
+		if err != nil {
+			common.SysLog("failed to get token daily used quota: " + err.Error())
+		} else if cached > used {
+			used = cached
+		}
+	}
+	return max(used, 0)
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination

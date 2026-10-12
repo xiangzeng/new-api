@@ -47,6 +47,8 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
+	// 数据库里的 daily_used_quota 可能还停在前一天，对外统一返回当天实际用量
+	maskedToken.DailyUsedQuota = token.TodayUsedQuota()
 	autoGroups, err := token.GetAutoGroups()
 	if err != nil {
 		common.SysError(fmt.Sprintf("failed to parse auto groups for token %d: %v", token.Id, err))
@@ -111,6 +113,20 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 
 	if err := token.SetAutoGroups(groups); err != nil {
 		common.ApiError(c, err)
+		return false
+	}
+	return true
+}
+
+// validateTokenDailyQuotaLimit 校验每日额度上限：0 表示不限，范围与总额度一致
+func validateTokenDailyQuotaLimit(c *gin.Context, limit int) bool {
+	if limit < 0 {
+		common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
+		return false
+	}
+	maxQuotaValue := int((1000000000 * common.QuotaPerUnit))
+	if limit > maxQuotaValue {
+		common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
 		return false
 	}
 	return true
@@ -285,6 +301,9 @@ func AddToken(c *gin.Context) {
 			return
 		}
 	}
+	if !validateTokenDailyQuotaLimit(c, token.DailyQuotaLimit) {
+		return
+	}
 	// 检查用户令牌数量是否已达上限
 	maxTokens := operation_setting.GetMaxUserTokens()
 	count, err := model.CountUserTokens(c.GetInt("id"))
@@ -322,6 +341,7 @@ func AddToken(c *gin.Context) {
 		ExpiredTime:        token.ExpiredTime,
 		RemainQuota:        token.RemainQuota,
 		UnlimitedQuota:     token.UnlimitedQuota,
+		DailyQuotaLimit:    token.DailyQuotaLimit,
 		ModelLimitsEnabled: token.ModelLimitsEnabled,
 		ModelLimits:        token.ModelLimits,
 		AllowIps:           token.AllowIps,
@@ -379,6 +399,9 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 	}
+	if !validateTokenDailyQuotaLimit(c, token.DailyQuotaLimit) {
+		return
+	}
 	cleanToken, err := model.GetTokenByIds(token.Id, userId)
 	if err != nil {
 		common.ApiError(c, err)
@@ -402,6 +425,7 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ExpiredTime = token.ExpiredTime
 		cleanToken.RemainQuota = token.RemainQuota
 		cleanToken.UnlimitedQuota = token.UnlimitedQuota
+		cleanToken.DailyQuotaLimit = token.DailyQuotaLimit
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps

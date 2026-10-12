@@ -44,6 +44,8 @@ const baseApiKey: ApiKey = {
   remain_quota: 0,
   used_quota: 0,
   unlimited_quota: true,
+  daily_quota_limit: 0,
+  daily_used_quota: 0,
   expired_time: -1,
   created_time: 1,
   accessed_time: 0,

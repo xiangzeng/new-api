@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/tooltip'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { formatQuota } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
@@ -173,6 +174,29 @@ export function UnlimitedQuotaBadge(props: UnlimitedQuotaBadgeProps) {
         </span>
       </PopoverContent>
     </Popover>
+  )
+}
+
+type DailyQuotaUsageProps = {
+  apiKey: ApiKey
+}
+
+/** Today's usage against the daily quota; renders nothing when no daily limit is set. */
+export function DailyQuotaUsage(props: DailyQuotaUsageProps) {
+  const { t } = useTranslation()
+  const limit = props.apiKey.daily_quota_limit ?? 0
+  if (limit <= 0) return null
+
+  const used = props.apiKey.daily_used_quota ?? 0
+  return (
+    <div
+      className={cn(
+        'text-muted-foreground text-xs tabular-nums',
+        used >= limit && 'text-rose-500'
+      )}
+    >
+      {t('Today:')} {formatQuota(used)} / {formatQuota(limit)}
+    </div>
   )
 }
 

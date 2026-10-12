@@ -53,7 +53,11 @@ import {
   ERROR_MESSAGES,
 } from '../constants'
 import type { ApiKey } from '../types'
-import { ApiKeyCell, UnlimitedQuotaBadge } from './api-keys-cells'
+import {
+  ApiKeyCell,
+  DailyQuotaUsage,
+  UnlimitedQuotaBadge,
+} from './api-keys-cells'
 import { useApiKeysColumns } from './api-keys-columns'
 import { useApiKeys } from './api-keys-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
@@ -179,6 +183,14 @@ function ApiKeysMobileList({
                 </span>
               )}
             </div>
+            {(apiKey.daily_quota_limit ?? 0) > 0 && (
+              <div className='flex items-center justify-between gap-2 text-xs'>
+                <span className='text-muted-foreground'>
+                  {t('Daily Quota')}
+                </span>
+                <DailyQuotaUsage apiKey={apiKey} />
+              </div>
+            )}
           </div>
         )
       })}
