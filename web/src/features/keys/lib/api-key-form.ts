@@ -38,6 +38,7 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       remain_quota_dollars: z.number().optional(),
       expired_time: z.date().optional(),
       unlimited_quota: z.boolean(),
+      daily_quota_dollars: z.number().optional(),
       model_limits: z.array(z.string()),
       allow_ips: z.string().optional(),
       group: z.string().optional(),
@@ -80,6 +81,18 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
         }
       }
 
+      // Daily quota applies to unlimited keys as well, so check it first
+      if (
+        data.daily_quota_dollars !== undefined &&
+        data.daily_quota_dollars < 0
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['daily_quota_dollars'],
+          message: t('Quota must be zero or greater'),
+        })
+      }
+
       if (data.unlimited_quota) {
         return
       }
@@ -108,6 +121,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   remain_quota_dollars: 10,
   expired_time: undefined,
   unlimited_quota: true,
+  daily_quota_dollars: 0,
   model_limits: [],
   allow_ips: '',
   group: DEFAULT_GROUP,
@@ -148,6 +162,7 @@ export function transformFormDataToPayload(
       ? Math.floor(data.expired_time.getTime() / 1000)
       : -1,
     unlimited_quota: data.unlimited_quota,
+    daily_quota_limit: parseQuotaFromDollars(data.daily_quota_dollars || 0),
     model_limits_enabled: data.model_limits.length > 0,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
@@ -185,6 +200,7 @@ export function transformApiKeyToFormDefaults(
         ? new Date(apiKey.expired_time * 1000)
         : undefined,
     unlimited_quota: apiKey.unlimited_quota,
+    daily_quota_dollars: quotaUnitsToDollars(apiKey.daily_quota_limit ?? 0),
     model_limits: apiKey.model_limits
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],

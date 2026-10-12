@@ -20,6 +20,8 @@ var (
 var (
 	ErrTokenNotProvided = errors.New("token not provided")
 	ErrTokenInvalid     = errors.New("token invalid")
+	// ErrTokenDailyQuotaExhausted 令牌当天用量已达每日额度上限
+	ErrTokenDailyQuotaExhausted = errors.New("token daily quota exhausted")
 )
 
 // Redemption errors

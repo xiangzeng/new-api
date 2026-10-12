@@ -41,6 +41,7 @@ import { ApiKeyGroupCell } from './api-key-group-cell'
 import { ApiKeyTimestampCell } from './api-key-timestamp-cell'
 import {
   ApiKeyCell,
+  DailyQuotaUsage,
   IpRestrictionsCell,
   ModelLimitsCell,
   UnlimitedQuotaBadge,
@@ -147,7 +148,12 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
       cell: ({ row }) => {
         const apiKey = row.original
         if (apiKey.unlimited_quota) {
-          return <UnlimitedQuotaBadge used={apiKey.used_quota} />
+          return (
+            <div className='space-y-1'>
+              <UnlimitedQuotaBadge used={apiKey.used_quota} />
+              <DailyQuotaUsage apiKey={apiKey} />
+            </div>
+          )
         }
 
         const used = apiKey.used_quota
@@ -170,6 +176,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
                 value={percentage}
                 className={cn('h-1.5', getQuotaProgressColor(percentage))}
               />
+              <DailyQuotaUsage apiKey={apiKey} />
             </TooltipTrigger>
             <TooltipContent>
               <div className='space-y-1 text-xs'>

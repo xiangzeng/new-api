@@ -413,7 +413,11 @@ func TokenAuth() func(c *gin.Context) {
 			}
 		}
 		if err != nil {
-			if errors.Is(err, model.ErrDatabase) {
+			if errors.Is(err, model.ErrTokenDailyQuotaExhausted) {
+				abortWithOpenAiMessage(c, http.StatusForbidden,
+					common.TranslateMessage(c, i18n.MsgTokenDailyQuotaExhausted, map[string]any{"Limit": logger.FormatQuota(token.DailyQuotaLimit)}),
+					types.ErrorCodeTokenDailyQuotaExhausted)
+			} else if errors.Is(err, model.ErrDatabase) {
 				common.SysLog("TokenAuth ValidateUserToken database error: " + err.Error())
 				abortWithOpenAiMessage(c, http.StatusInternalServerError,
 					common.TranslateMessage(c, i18n.MsgDatabaseError))
