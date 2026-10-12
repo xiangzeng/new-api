@@ -30,7 +30,8 @@ jobs:
         )
       }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 服务器脚本两次排空各最多 900s，加上拉镜像、重建与健康检查最坏约 35 分钟
+    timeout-minutes: 45
 
     env:
       DEPLOY_HOST: ${{ secrets.NEW_API_HK_HOST }}
@@ -55,7 +56,8 @@ jobs:
           ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
       # 蓝绿部署：脚本先把流量切到备用实例、等在途请求排空，再重建另一实例，
-      # 全程 nginx 只 reload，不会掐断用户正在跑的流式请求。实测约 11 分钟。
+      # 全程 nginx 只 reload，不会掐断用户正在跑的流式请求。通常几分钟，
+      # 取决于被切走实例上最长的在途请求，最坏约 35 分钟。
       - name: Blue-green deploy new-api
         run: |
           ssh -i ~/.ssh/new-api-hk -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
