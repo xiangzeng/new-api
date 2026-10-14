@@ -258,3 +258,32 @@ export interface BalanceKeyCreated {
   scope: string
   created_time: number
 }
+
+/**
+ * The balance as `GET /api/open/v1/balance` returns it to a key holder.
+ */
+export interface OpenBalance {
+  quota: number
+  used_quota: number
+  balance: number
+  used: number
+  display_type: string
+  currency_symbol: string
+}
+
+/**
+ * Outcome of testing a balance key from the browser. `network_error` means no
+ * HTTP answer came back at all; `http_error` keeps the open API error code and
+ * message as sent so they can be quoted to support.
+ */
+export type BalanceKeyTestResult =
+  | { kind: 'success'; status: number; elapsedMs: number; balance: OpenBalance }
+  | {
+      kind: 'http_error'
+      status: number
+      elapsedMs: number
+      code: string
+      message: string
+      body: string
+    }
+  | { kind: 'network_error'; elapsedMs: number; message: string }
