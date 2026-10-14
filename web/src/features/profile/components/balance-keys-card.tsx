@@ -50,6 +50,8 @@ import dayjs from '@/lib/dayjs'
 
 import { createBalanceKey, getBalanceKeys, revokeBalanceKey } from '../api'
 import type { BalanceKey } from '../types'
+import { BalanceKeyTestDialog } from './balance-key-test-dialog'
+import { BalanceKeyTestPanel } from './balance-key-test-panel'
 
 const BALANCE_KEYS_QUERY_KEY = ['profile', 'balance-keys'] as const
 
@@ -78,6 +80,7 @@ export function BalanceKeysCard() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [revokeTarget, setRevokeTarget] = useState<BalanceKey | null>(null)
+  const [testTarget, setTestTarget] = useState<BalanceKey | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
   const [issuedKey, setIssuedKey] = useState<string | null>(null)
@@ -197,14 +200,23 @@ export function BalanceKeysCard() {
                     })}
                   </div>
                 </div>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  disabled={revokeMutation.isPending}
-                  onClick={() => setRevokeTarget(key)}
-                >
-                  {t('Revoke')}
-                </Button>
+                <div className='flex shrink-0 gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => setTestTarget(key)}
+                  >
+                    {t('Test')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={revokeMutation.isPending}
+                    onClick={() => setRevokeTarget(key)}
+                  >
+                    {t('Revoke')}
+                  </Button>
+                </div>
               </div>
             ))
           )}
@@ -252,7 +264,7 @@ export function BalanceKeysCard() {
               )
             : t('Name it after the program that will use it.')
         }
-        contentClassName='sm:max-w-md'
+        contentClassName={issuedKey ? 'sm:max-w-lg' : 'sm:max-w-md'}
         contentHeight='auto'
         bodyClassName='space-y-4'
         footer={
@@ -328,6 +340,9 @@ export function BalanceKeysCard() {
                   'This command already carries the key above, so it runs as is. The same example, with a placeholder, stays on the card after you close this dialog.'
                 )}
               </p>
+              <div className='border-t pt-4'>
+                <BalanceKeyTestPanel balanceKey={issuedKey} />
+              </div>
             </>
           ) : (
             <>
@@ -343,6 +358,11 @@ export function BalanceKeysCard() {
           )}
         </div>
       </Dialog>
+
+      <BalanceKeyTestDialog
+        target={testTarget}
+        onClose={() => setTestTarget(null)}
+      />
 
       <AlertDialog
         open={revokeTarget !== null}

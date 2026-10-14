@@ -19,6 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 import type { LoginSession } from '@/stores/auth-store'
 
+import {
+  interpretBalanceResponse,
+  OPEN_BALANCE_PATH,
+} from './lib/balance-key-test'
 import type {
   ApiResponse,
   UserProfile,
@@ -29,6 +33,7 @@ import type {
   CheckinResponse,
   BalanceKey,
   BalanceKeyCreated,
+  BalanceKeyTestResult,
 } from './types'
 
 // ============================================================================
@@ -257,4 +262,45 @@ export async function createBalanceKey(
 export async function revokeBalanceKey(id: number): Promise<ApiResponse> {
   const res = await api.delete(`/api/user/balance-keys/${id}`)
   return res.data
+}
+
+const BALANCE_KEY_TEST_TIMEOUT_MS = 15_000
+
+/**
+ * Query the balance with a balance key, the same way a user's own program does.
+ * Uses plain fetch: the shared client would replace the Authorization header
+ * with the session token and treat a 401 as an expired login. Never throws —
+ * every outcome, including a timeout, comes back as a result to show.
+ */
+export async function testBalanceKey(
+  key: string
+): Promise<BalanceKeyTestResult> {
+  const startedAt = Date.now()
+  const controller = new AbortController()
+  const timer = setTimeout(
+    () => controller.abort(),
+    BALANCE_KEY_TEST_TIMEOUT_MS
+  )
+  try {
+    const res = await fetch(OPEN_BALANCE_PATH, {
+      headers: { Authorization: `Bearer ${key}` },
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+    const body = await res.text()
+    return interpretBalanceResponse(res.status, body, Date.now() - startedAt)
+  } catch (error) {
+    let message = error instanceof Error ? error.message : String(error)
+    if (controller.signal.aborted) {
+      message = `No response within ${BALANCE_KEY_TEST_TIMEOUT_MS / 1000}s`
+    }
+    return {
+      kind: 'network_error',
+      elapsedMs: Date.now() - startedAt,
+      message,
+    }
+  } finally {
+    clearTimeout(timer)
+  }
 }
