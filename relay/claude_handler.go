@@ -77,9 +77,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		strings.HasSuffix(request.Model, "-thinking") {
 		if request.Thinking == nil {
 			baseModel := strings.TrimSuffix(request.Model, "-thinking")
-			if strings.HasPrefix(baseModel, "claude-opus-4-7") ||
-				strings.HasPrefix(baseModel, "claude-opus-4-8") {
-				// Opus 4.7/4.8 reject thinking.type="enabled"; use adaptive at high effort.
+			if claudeModelRejectsBudgetThinking(baseModel) {
+				// Opus 4.7+ and the 5.x family reject thinking.type="enabled"; use adaptive at high effort.
 				request.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
 				request.OutputConfig = json.RawMessage(`{"effort":"high"}`)
 				request.Temperature = nil
@@ -108,6 +107,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 		info.UpstreamModelName = request.Model
 	}
+
+	normalizeClaudeLegacyThinking(request)
+
 	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled && !info.ChannelSetting.PassThroughBodyEnabled {
 		if effort := request.GetEfforts(); effort != "" {
 			info.SetReasoningEffort(effort)
@@ -229,4 +231,44 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	return nil
+}
+
+// claudeAdaptiveOnlyModelPrefixes lists models that reject
+// thinking.type="enabled" with budget_tokens (400) and only accept adaptive thinking.
+var claudeAdaptiveOnlyModelPrefixes = []string{
+	"claude-opus-4-7",
+	"claude-opus-4-8",
+	"claude-opus-5",
+	"claude-sonnet-5",
+	"claude-haiku-5",
+	"claude-fable-5",
+	"claude-mythos-5",
+}
+
+func claudeModelRejectsBudgetThinking(model string) bool {
+	for _, prefix := range claudeAdaptiveOnlyModelPrefixes {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeClaudeLegacyThinking rewrites a client-sent thinking.type="enabled"
+// to adaptive for models that only accept adaptive thinking (e.g. Claude Code's
+// web search side query still sends budget_tokens to claude-opus-5-5), instead
+// of letting the upstream return 400. Client output_config is kept as is;
+// sampling params are dropped because these models reject them too.
+func normalizeClaudeLegacyThinking(request *dto.ClaudeRequest) {
+	if request.Thinking == nil || request.Thinking.Type != "enabled" ||
+		!claudeModelRejectsBudgetThinking(request.Model) {
+		return
+	}
+	request.Thinking = &dto.Thinking{
+		Type:    "adaptive",
+		Display: request.Thinking.Display,
+	}
+	request.Temperature = nil
+	request.TopP = nil
+	request.TopK = nil
 }
