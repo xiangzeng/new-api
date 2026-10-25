@@ -124,12 +124,15 @@ func Distribute() func(c *gin.Context) {
 							preferredGroup = usingGroup
 						}
 					}
-					// 临时不可用（仅级联模式有健康 / 水位线信号）：熔断中一律不用；
+					// 临时不可用（仅级联模式有健康 / 水位线 / 额度信号）：熔断中、今日额度已满一律不用
+					// （额度满等同禁用到次日，但归属保留，次日自动回归）；
 					// 旧模式下达水位线即让位；归属模式下水位线只约束首次落位，仅达硬顶才绕行
 					detourReason := ""
 					if preferredGroup != "" && service.CascadeEnabled() {
 						if !model.IsChannelHealthAvailable(preferred.Id) {
 							detourReason = "tripped"
+						} else if model.IsChannelOverDailyQuota(preferred.Id) {
+							detourReason = "over_daily_quota"
 						} else if service.ChannelAffinityHomeModeEnabled() {
 							if model.IsChannelOverWatermarkRatio(preferred.Id, service.GetChannelAffinityHomeHardWatermarkRatio()) {
 								detourReason = "over_hard_watermark"

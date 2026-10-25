@@ -67,6 +67,10 @@ export type CascadeChannel = {
   rpm: number
   /** RPM 水位线，0 = 不限流 */
   rpm_watermark: number
+  /** 每日额度上限（quota 单位），0 = 不限；与 RPM 水位线二选一 */
+  daily_quota_cap: number
+  /** 今天（服务器本地时间 0 点起）累计消耗（quota 单位） */
+  today_used_quota: number
 }
 
 export type CascadeGroup = {

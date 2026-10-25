@@ -38,3 +38,22 @@ func TestGetChannelRpmWatermarkNegativeMeansUnlimited(t *testing.T) {
 	setting.ChannelRpm = map[int]int{7: -5}
 	assert.Equal(t, 0, GetChannelRpmWatermark(7), "负数水位线按不限流处理")
 }
+
+// 每日额度上限与水位线同为整数键 map：锁死往返、整体替换与负值按不限处理
+func TestCascadeDailyQuotaConfigRoundTrip(t *testing.T) {
+	setting := GetCascadeWatermarkSetting()
+	orig := setting.ChannelDailyQuota
+	t.Cleanup(func() { setting.ChannelDailyQuota = orig })
+
+	config.UpdateConfigFromMap(setting, map[string]string{
+		"channel_daily_quota": `{"39":50000000,"53":-1}`,
+	})
+	assert.Equal(t, int64(50000000), GetChannelDailyQuotaCap(39))
+	assert.Equal(t, int64(0), GetChannelDailyQuotaCap(53), "负值按不限处理")
+	assert.Equal(t, int64(0), GetChannelDailyQuotaCap(999), "未配置 = 不限")
+
+	config.UpdateConfigFromMap(setting, map[string]string{
+		"channel_daily_quota": `{}`,
+	})
+	assert.Equal(t, int64(0), GetChannelDailyQuotaCap(39), "应被整体替换清掉")
+}

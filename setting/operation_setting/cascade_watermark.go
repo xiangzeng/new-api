@@ -6,13 +6,19 @@ import "github.com/QuantumNous/new-api/setting/config"
 // 达到水位线的渠道在级联选择时被跳过（不管健康与否），流量自然溢出到下一个渠道。
 // 0 / 未配置 = 不限流，该渠道永不视为打满——保证未配置时行为与旧版完全一致。
 // 与 cascade_order 同构：编排相关配置集中在 option，不落渠道表。
+//
+// ChannelDailyQuota 渠道每日额度上限：渠道 ID → 当天（服务器本地时间 0 点起）累计消耗上限，
+// 单位为内部 quota（与消费日志 quota、渠道「已使用」同口径）。满额后级联选择器彻底不再选它
+// （含熔断兜底轮），次日自动恢复。与 RPM 水位线二选一（由编排 API 保证），0 / 未配置 = 不限。
 // 详见 docs/channel/cascade-failover.md
 type CascadeWatermarkSetting struct {
-	ChannelRpm map[int]int `json:"channel_rpm"`
+	ChannelRpm        map[int]int   `json:"channel_rpm"`
+	ChannelDailyQuota map[int]int64 `json:"channel_daily_quota"`
 }
 
 var cascadeWatermarkSetting = CascadeWatermarkSetting{
-	ChannelRpm: map[int]int{},
+	ChannelRpm:        map[int]int{},
+	ChannelDailyQuota: map[int]int64{},
 }
 
 func init() {
@@ -30,4 +36,13 @@ func GetChannelRpmWatermark(channelId int) int {
 		return 0
 	}
 	return watermark
+}
+
+// GetChannelDailyQuotaCap 返回渠道的每日额度上限（quota 单位）；<= 0 表示不限
+func GetChannelDailyQuotaCap(channelId int) int64 {
+	quotaCap, ok := cascadeWatermarkSetting.ChannelDailyQuota[channelId]
+	if !ok || quotaCap < 0 {
+		return 0
+	}
+	return quotaCap
 }

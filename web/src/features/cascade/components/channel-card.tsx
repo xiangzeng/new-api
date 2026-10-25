@@ -16,21 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { GripVertical, History, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
 import {
   Tooltip,
   TooltipContent,
@@ -42,10 +33,11 @@ import { ChannelRowActions } from '@/features/channels/components/data-table-row
 import type { Channel } from '@/features/channels/types'
 import { cn } from '@/lib/utils'
 
-import { saveCascadeWatermark } from '../api'
 import { formatMs, formatPercent } from '../lib/format'
+import { isDailyQuotaReached } from '../lib/limits'
 import type { CascadeChannel, CascadeChannelMetrics } from '../types'
 import { HealthEventsDialog } from './health-events-dialog'
+import { LimitRow } from './limit-row'
 import { UsedQuotaRow } from './used-quota-row'
 
 const CHANNEL_STATUS_ENABLED = 1
@@ -119,145 +111,12 @@ function CacheRow({ metrics }: { metrics?: CascadeChannelMetrics }) {
           ` · ${t('Write')} ${formatPercent(hour.cache_write_rate)}`}
       </TooltipTrigger>
       <TooltipContent side='bottom' align='start'>
-        {t('Last 1h')} · {t('Requests')} {hour.cache_samples.toLocaleString()}{' '}
-        · {t('Hit')} {formatPercent(hour.cache_hit_rate, 1)} / {t('Write')}{' '}
+        {t('Last 1h')} · {t('Requests')} {hour.cache_samples.toLocaleString()} ·{' '}
+        {t('Hit')} {formatPercent(hour.cache_hit_rate, 1)} / {t('Write')}{' '}
         {formatPercent(hour.cache_write_rate, 1)} / {t('Uncached')}{' '}
         {formatPercent(uncached, 1)}
       </TooltipContent>
     </Tooltip>
-  )
-}
-
-// 负载条配色：接近水位线转黄，打满转红
-function watermarkBarClass(ratio: number): string {
-  if (ratio >= 1) return 'bg-red-500'
-  if (ratio >= 0.7) return 'bg-amber-500'
-  return 'bg-emerald-500'
-}
-
-// RPM 水位线行：近 60 秒请求数 / 水位线 + 负载条，点开可就地改水位线。
-// 达到水位线的渠道会被级联选择器跳过，流量自然溢出到下一个渠道。
-function WatermarkRow({ channel }: { channel: CascadeChannel }) {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
-  const [open, setOpen] = useState(false)
-  const [draft, setDraft] = useState('')
-
-  const rpm = channel.rpm ?? 0
-  const watermark = channel.rpm_watermark ?? 0
-  const ratio = watermark > 0 ? rpm / watermark : 0
-  const full = watermark > 0 && rpm >= watermark
-
-  const saveMutation = useMutation({
-    mutationFn: async (value: number) => {
-      const res = await saveCascadeWatermark([
-        { channel_id: channel.id, rpm: value },
-      ])
-      if (!res.success) throw new Error(res.message || t('Save failed'))
-    },
-    onSuccess: () => {
-      toast.success(t('Watermark saved'))
-      queryClient.invalidateQueries({ queryKey: ['cascade', 'overview'] })
-      setOpen(false)
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : t('Save failed'))
-    },
-  })
-
-  const submit = () => {
-    const parsed = Number.parseInt(draft.trim(), 10)
-    saveMutation.mutate(Number.isInteger(parsed) && parsed > 0 ? parsed : 0)
-  }
-
-  return (
-    // 操作区屏蔽拖拽，避免点开水位线编辑时误触发卡片排序
-    <span
-      draggable
-      onDragStart={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      }}
-      className='mt-2 block cursor-default'
-    >
-      <Popover
-        open={open}
-        onOpenChange={(next) => {
-          setOpen(next)
-          if (next) setDraft(watermark > 0 ? String(watermark) : '')
-        }}
-      >
-        <PopoverTrigger
-          render={
-            <button
-              type='button'
-              className='hover:bg-accent/50 -mx-1 block w-[calc(100%+0.5rem)] cursor-pointer rounded px-1 py-0.5 text-left'
-            />
-          }
-        >
-          <span
-            className={cn(
-              'text-xs',
-              full ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'
-            )}
-          >
-            {t('RPM')}{' '}
-            <span className='font-medium'>
-              {rpm}/{watermark > 0 ? watermark : '∞'}
-            </span>
-          </span>
-          {watermark > 0 && (
-            <span className='bg-muted mt-1 block h-1 w-full overflow-hidden rounded-full'>
-              <span
-                className={cn(
-                  'block h-full rounded-full transition-all',
-                  watermarkBarClass(ratio)
-                )}
-                style={{ width: `${Math.min(100, ratio * 100)}%` }}
-              />
-            </span>
-          )}
-        </PopoverTrigger>
-        <PopoverContent align='start' className='w-64'>
-          <Label htmlFor={`cascade-watermark-${channel.id}`}>
-            {t('RPM watermark')}
-          </Label>
-          <Input
-            id={`cascade-watermark-${channel.id}`}
-            inputMode='numeric'
-            autoFocus
-            value={draft}
-            placeholder='0'
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submit()
-            }}
-          />
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Requests in the last 60s; once the watermark is reached traffic spills to the next channel. 0 = unlimited.'
-            )}
-          </p>
-          <div className='flex justify-end gap-2'>
-            <Button
-              variant='ghost'
-              size='sm'
-              disabled={saveMutation.isPending}
-              onClick={() => saveMutation.mutate(0)}
-            >
-              {t('Clear')}
-            </Button>
-            <Button
-              size='sm'
-              disabled={saveMutation.isPending}
-              onClick={submit}
-            >
-              {t('Save')}
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-    </span>
   )
 }
 
@@ -340,6 +199,9 @@ export function ChannelCard({
   const [eventsOpen, setEventsOpen] = useState(false)
   const tripped =
     channel.health?.state === 'cooling' || channel.health?.state === 'probing'
+  const enabled = channel.status === CHANNEL_STATUS_ENABLED
+  // 今日额度已满：级联选路等同禁用到次日 0 点，卡片按禁用样式淡化
+  const quotaReached = enabled && isDailyQuotaReached(channel)
 
   return (
     // 卡片内的 tooltip 统一走 delay 0（Base UI 默认 600ms，悬停要空等半秒），
@@ -355,7 +217,7 @@ export function ChannelCard({
           'bg-card w-64 shrink-0 cursor-grab rounded-lg border p-3.5 transition-opacity',
           isDragging && 'opacity-40',
           tripped && 'border-red-500/40',
-          channel.status !== CHANNEL_STATUS_ENABLED && 'opacity-60'
+          (!enabled || quotaReached) && 'opacity-60'
         )}
       >
         <div className='flex items-center gap-2'>
@@ -383,7 +245,24 @@ export function ChannelCard({
           <UsedQuotaRow fullChannel={fullChannel} />
         </div>
         <div className='mt-2 flex items-center justify-between gap-2'>
-          <HealthBadge channel={channel} recoveryTarget={recoveryTarget} />
+          <div className='flex min-w-0 items-center gap-1.5'>
+            <HealthBadge channel={channel} recoveryTarget={recoveryTarget} />
+            {quotaReached && (
+              <Tooltip>
+                <TooltipTrigger render={<span className='flex' />}>
+                  <Badge
+                    variant='outline'
+                    className='border-amber-500/40 text-amber-600 dark:text-amber-400'
+                  >
+                    {t('Daily cap reached')}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t('Re-enabled automatically at 00:00 (server time)')}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
           <div className='flex shrink-0 items-center'>
             {tripped && (
               <Button
@@ -414,7 +293,7 @@ export function ChannelCard({
             </Tooltip>
           </div>
         </div>
-        <WatermarkRow channel={channel} />
+        <LimitRow channel={channel} />
         <MetricsRow metrics={channel.metrics} />
         <CacheRow metrics={channel.metrics} />
         {eventsOpen && (

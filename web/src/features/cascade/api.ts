@@ -43,9 +43,10 @@ export async function saveCascadeOrder(payload: {
   return res.data
 }
 
-// 保存渠道 RPM 水位线：rpm <= 0 表示清除（= 不限流），未提交的渠道保持原值
+// 保存渠道限流方式：rpm（RPM 水位线）与 daily_quota（每日额度上限，quota 单位）二选一，
+// 提交即整体覆盖该渠道的限流方式，两者都 <= 0 = 不限；未提交的渠道保持原值
 export async function saveCascadeWatermark(
-  watermarks: { channel_id: number; rpm: number }[]
+  watermarks: { channel_id: number; rpm: number; daily_quota: number }[]
 ) {
   const res = await api.post<CascadeActionResponse>('/api/cascade/watermark', {
     watermarks,

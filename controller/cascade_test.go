@@ -65,3 +65,38 @@ func TestNormalizeGroupSequence(t *testing.T) {
 	)
 	assert.Equal(t, []string{}, normalizeGroupSequence(nil))
 }
+
+func TestMergeCascadeLimitsIsExclusivePerChannel(t *testing.T) {
+	currentRpm := map[int]int{34: 20, 49: 8}
+	currentQuota := map[int]int64{39: 50000000}
+
+	rpm, quota, err := mergeCascadeLimits(currentRpm, currentQuota, []cascadeLimitItem{
+		{ChannelId: 34, DailyQuota: 100000000}, // 水位线 → 每日额度：清掉水位线
+		{ChannelId: 39, Rpm: 30},               // 每日额度 → 水位线：清掉额度
+		{ChannelId: 53, DailyQuota: 0, Rpm: 0}, // 未配置渠道清除：无副作用
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, map[int]int{39: 30, 49: 8}, rpm)
+	assert.Equal(t, map[int]int64{34: 100000000}, quota)
+
+	// 入参 map 不被就地修改（它们是线上配置本体）
+	assert.Equal(t, map[int]int{34: 20, 49: 8}, currentRpm)
+	assert.Equal(t, map[int]int64{39: 50000000}, currentQuota)
+}
+
+func TestMergeCascadeLimitsClearsBoth(t *testing.T) {
+	rpm, quota, err := mergeCascadeLimits(map[int]int{34: 20}, map[int]int64{34: 1}, []cascadeLimitItem{
+		{ChannelId: 34},
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, rpm)
+	assert.Empty(t, quota)
+}
+
+func TestMergeCascadeLimitsRejectsInvalid(t *testing.T) {
+	_, _, err := mergeCascadeLimits(nil, nil, []cascadeLimitItem{{ChannelId: 34, Rpm: 20, DailyQuota: 1}})
+	assert.Error(t, err, "两种限流不能同时设置")
+
+	_, _, err = mergeCascadeLimits(nil, nil, []cascadeLimitItem{{ChannelId: 0, Rpm: 20}})
+	assert.Error(t, err, "非法渠道 ID")
+}

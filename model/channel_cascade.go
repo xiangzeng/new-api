@@ -13,6 +13,7 @@ import (
 // 分组、未入列的渠道按优先级降序、id 升序兜底（与旧版行为一致）。
 // 三轮兜底：正常轮（健康且未打满）→ 打满轮（健康渠道全达水位线时交负载率最低者接住）
 // → 熔断兜底轮（全部熔断时忽略健康标记与水位线按顺序选），保证服务可用性优先于标记。
+// 例外：每日额度已满的渠道等同禁用，三轮（含熔断兜底轮）一律跳过，次日自动恢复。
 // watermarkRatio > 0 时正常轮改按「水位线 × 倍数」的硬顶判定：归属亲和的首次落位与
 // 归属流量同用硬顶，否则软水位线会把新落位用户永久分给备用渠道（见 cascade-failover.md §2.4）。
 // 详见 docs/channel/cascade-failover.md
@@ -58,11 +59,14 @@ func CountCascadeCandidates(group string, model string, requestPath string) int 
 }
 
 // pickCascadeChannel 按候选列表顺序（已按编排顺序排好）返回第一个可用渠道。
-// checkAvailable 为 false 时忽略健康标记与水位线（熔断兜底轮）。
+// checkAvailable 为 false 时忽略健康标记与水位线（熔断兜底轮），但每日额度已满的渠道始终跳过。
 // watermarkRatio > 0 时用「水位线 × 倍数」硬顶代替软水位线（ratio=1 两者等价）。
 func pickCascadeChannel(candidates []*Channel, excludeIds map[int]bool, checkAvailable bool, watermarkRatio float64) *Channel {
 	for _, channel := range candidates {
 		if excludeIds[channel.Id] {
+			continue
+		}
+		if IsChannelOverDailyQuota(channel.Id) {
 			continue
 		}
 		if checkAvailable {
@@ -94,6 +98,9 @@ func pickLeastLoadedCascadeChannel(candidates []*Channel, excludeIds map[int]boo
 	lowest := 0.0
 	for _, channel := range candidates {
 		if excludeIds[channel.Id] {
+			continue
+		}
+		if IsChannelOverDailyQuota(channel.Id) {
 			continue
 		}
 		if !IsChannelHealthAvailable(channel.Id) {
