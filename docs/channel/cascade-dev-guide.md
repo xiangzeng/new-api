@@ -268,6 +268,14 @@ func IsChannelFaultError(err *types.NewAPIError) bool {
 **三层优先级要背下来：`ignore` > `内置规则` > `extra`。**
 `ignore` 是逃生舱——线上发现某类错误被误判成故障导致疯狂切换时，加一个关键词就能立刻止血，不用发版。
 
+**第三类：容量类错误（要切换，但不是渠道的错）。** `capacity_detour_keywords` 命中
+（`IsChannelCapacityError`，如号商的 `exceeding the native input budget 124000`）：本次请求超出
+**这个渠道**的输入上限，换个上限更大的渠道就能成。它既不是"用户的错"（别的渠道能接），
+也不是"渠道的错"（渠道对小请求完全健康），所以单独成类：`cascadeShouldRetry` 放行切换，
+`IsChannelFaultError` 返回 false（判定在 ignore 之后、内置规则之前），`processChannelError`
+只计 attempt、不熔断、不自动禁用、不改归属。若误把它塞进 `extra_fault_keywords`，阈值 2 时
+一个大上下文用户连发两次就会把渠道对所有人熔断——这正是 2026-10-17 的临时止血方案的副作用。
+
 ---
 
 ### 4.3 级联选择器 —— 三轮兜底
@@ -477,6 +485,13 @@ if affinityUsable && channel != nil {
 列表不齐时（生产：`claude-sonnet-5-5` 只开在备用渠道 49），用户发一条该模型就被清归属、
 落到唯一支持它的渠道，之后其他模型那边也支持，于是永久留下；反方向（备用渠道缺 thinking 模型）
 又把人踹回来，单用户 72h 乒乓数百次。归属模式关闭时仍按旧逻辑清除。
+
+**容量缺口也是临时不可用，而且要记住**：大上下文用户被归属在输入上限小的渠道上，单纯请求内
+绕行会让他每次请求都先在归属渠道白跑一趟（生产实测 400 回来要 2–16 秒）。所以命中容量错误时
+按「亲和键 + 渠道」记 10 分钟（`service/channel_affinity_capacity.go`，单实例内存），
+`distributor.go` 选路前 `LoadChannelAffinityCapacitySkips`：归属渠道在记忆里 → 绕行
+（`detour_reason=capacity_exceeded`）；级联选择器 `cacheGetCascadeChannel` 把记忆渠道并进排除集，
+排除后无路可走时还原 auto 分组游标、放回再选一次。记忆固定时长不续期——上下文压缩后最多晚 10 分钟回归。
 
 > **通用教训**：加一层新的选路逻辑时，先把代码里**所有绕开选路的旁路**找出来
 > （亲和、指定渠道、playground、内部调用），逐个决定它们是让位、豁免、还是补记账。
@@ -943,3 +958,4 @@ service/channel_health_test.go     # 故障分类边界 + 流结束归因
 | `extra_fault_status_codes` | `[]` | 额外视为渠道故障的状态码 |
 | `extra_fault_keywords` | `[]` | 命中即视为渠道故障的关键词 |
 | `ignore_fault_keywords` | `[]` | 命中即**不**视为渠道故障（优先级最高，线上止血用） |
+| `capacity_detour_keywords` | `["native input budget"]` | 命中即本次换渠道但不计故障 / 不熔断 / 不改归属，该亲和键 10 分钟内跳过该渠道 |

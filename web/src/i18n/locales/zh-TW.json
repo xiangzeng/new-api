@@ -5497,6 +5497,8 @@
     "Not enabled": "未啟用",
     "One per line; matching errors are treated as channel faults": "每行一個，錯誤內容命中即視為渠道故障",
     "One per line; matching errors never trip the channel (highest precedence)": "每行一個，命中即不視為渠道故障（優先級最高）",
+    "Capacity detour keywords": "容量繞行關鍵詞",
+    "One per line; request exceeds the channel input limit: retry on the next channel without counting a fault or changing the home channel, and skip this channel for that user for 10 minutes": "每行一個，命中即本次請求超出該渠道輸入上限：換下一個渠道重試，不計故障、不改歸屬，該用戶 10 分鐘內跳過此渠道",
     "Only the root user can modify these settings": "僅超級管理員可修改這些設定",
     "Order saved": "順序已保存",
     "Probe interval seconds": "探活間隔（秒）",

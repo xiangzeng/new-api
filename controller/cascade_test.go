@@ -1,8 +1,15 @@
 package controller
 
 import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -99,4 +106,27 @@ func TestMergeCascadeLimitsRejectsInvalid(t *testing.T) {
 
 	_, _, err = mergeCascadeLimits(nil, nil, []cascadeLimitItem{{ChannelId: 0, Rpm: 20}})
 	assert.Error(t, err, "非法渠道 ID")
+}
+
+func TestCascadeShouldRetryCapacityError(t *testing.T) {
+	setting := operation_setting.GetCascadeSetting()
+	orig := *setting
+	t.Cleanup(func() { *setting = orig })
+	setting.ExtraFaultStatusCodes = nil
+	setting.ExtraFaultKeywords = nil
+	setting.IgnoreFaultKeywords = nil
+	setting.CapacityDetourKeywords = []string{"native input budget"}
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{}
+	capacityErr := types.NewErrorWithStatusCode(errors.New("require approximately 136875 input tokens, exceeding the native input budget 124000"), types.ErrorCodeBadResponse, http.StatusBadRequest)
+	plainErr := types.NewErrorWithStatusCode(errors.New("invalid request body"), types.ErrorCodeBadResponse, http.StatusBadRequest)
+
+	assert.True(t, cascadeShouldRetry(ctx, info, capacityErr, 3), "容量类 400 应换渠道重试")
+	assert.False(t, cascadeShouldRetry(ctx, info, capacityErr, 0), "无剩余重试次数")
+	assert.False(t, cascadeShouldRetry(ctx, info, plainErr, 3), "普通 400 原样返回")
+
+	setting.CapacityDetourKeywords = nil
+	assert.False(t, cascadeShouldRetry(ctx, info, capacityErr, 3), "未配置关键词时行为不变")
 }

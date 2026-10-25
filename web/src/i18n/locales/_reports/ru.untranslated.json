@@ -123,6 +123,8 @@
   "Not enabled": "Not enabled",
   "One per line; matching errors are treated as channel faults": "One per line; matching errors are treated as channel faults",
   "One per line; matching errors never trip the channel (highest precedence)": "One per line; matching errors never trip the channel (highest precedence)",
+  "Capacity detour keywords": "Capacity detour keywords",
+  "One per line; request exceeds the channel input limit: retry on the next channel without counting a fault or changing the home channel, and skip this channel for that user for 10 minutes": "One per line; request exceeds the channel input limit: retry on the next channel without counting a fault or changing the home channel, and skip this channel for that user for 10 minutes",
   "Only the root user can modify these settings": "Only the root user can modify these settings",
   "Order saved": "Order saved",
   "Probe interval seconds": "Probe interval seconds",

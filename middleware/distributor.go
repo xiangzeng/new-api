@@ -112,7 +112,10 @@ func Distribute() func(c *gin.Context) {
 					return
 				}
 
-				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+				preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup)
+				// 容量绕行记忆：同一亲和键近期超出过输入上限的渠道，本次归属判定与级联选路都跳过
+				service.LoadChannelAffinityCapacitySkips(c)
+				if found {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					// 可用性：渠道存在、已启用、支持该路径、且在（某个）分组下对本次模型启用
 					preferredGroup := ""
@@ -152,7 +155,8 @@ func Distribute() func(c *gin.Context) {
 						}
 					}
 					// 临时不可用（仅级联模式有健康 / 水位线 / 额度信号）：熔断中、今日额度已满一律不用
-					// （额度满等同禁用到次日，但归属保留，次日自动回归）；
+					// （额度满等同禁用到次日，但归属保留，次日自动回归）；本亲和键近期在归属渠道上超出过
+					// 输入上限的，记忆有效期内同样绕行；
 					// 旧模式下达水位线即让位；归属模式下水位线只约束首次落位，仅达硬顶才绕行
 					detourReason := ""
 					if preferredGroup == "" && blockedGroup != "" {
@@ -164,6 +168,8 @@ func Distribute() func(c *gin.Context) {
 							detourReason = "tripped"
 						} else if model.IsChannelOverDailyQuota(preferred.Id) {
 							detourReason = "over_daily_quota"
+						} else if service.IsChannelAffinityCapacitySkipped(c, preferred.Id) {
+							detourReason = "capacity_exceeded"
 						} else if service.ChannelAffinityHomeModeEnabled() {
 							if model.IsChannelOverWatermarkRatio(preferred.Id, service.GetChannelAffinityHomeHardWatermarkRatio()) {
 								detourReason = "over_hard_watermark"

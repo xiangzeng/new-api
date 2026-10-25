@@ -63,6 +63,17 @@
 - `extra_fault_keywords`：错误内容命中关键词则视为渠道故障（应对把渠道故障报成 400 的上游）
 - `ignore_fault_keywords`：反向排除，命中则不视为渠道故障（优先级最高）
 
+容量类错误（`capacity_detour_keywords`，`IsChannelCapacityError`）：上游明确报「本次请求超出该渠道
+输入上限」（如部分 Kiro 号商的 `exceeding the native input budget 124000`）。这是请求级问题、渠道本身健康：
+
+- 本次换下一个渠道重试，但计 attempt 不计故障、不熔断、不自动禁用、不改归属；
+  判定优先于 `extra_fault_*` 白名单与 5xx（`ignore_fault_keywords` 不影响它）。
+- 按「亲和键 + 渠道」记忆 10 分钟（`service/channel_affinity_capacity.go`）：期间同一亲和键的请求
+  归属绕行（`detour_reason=capacity_exceeded`），级联选路排除该渠道；排除后无渠道可选时放回再选。
+- 记忆固定时长、跳过不续期：到期回该渠道试一次，上下文已压缩即自然回归，仍超限则再记一轮。
+- 背景（2026-10-17）：新渠道 #58 输入上限 124k，大上下文用户被归属钉在 #58，400 不切换，
+  每次请求都失败且 Claude Code 自动压缩阈值更高、`/compact` 同样超限，用户无法自救。
+
 ### 2.3 级联选择器（`model/channel_cache.go` + `service/channel_select.go`）
 
 - 新增 `GetCascadeSatisfiedChannel(group, model, path, excludeIds)`（已试渠道集 =
@@ -112,6 +123,9 @@
 - 归属渠道仍在分组内、只是**不支持本次请求的模型 / 路径**时同样绕行（`detour_reason=model_unsupported`），
   不清归属——亲和键是用户级不含模型，否则同组渠道模型列表不齐时，用户发一条备用渠道独有的模型
   就会被永久搬过去。
+- 本亲和键近期在归属渠道上**超出过输入上限**（见 2.2 容量类错误）时，记忆有效期内同样绕行
+  （`detour_reason=capacity_exceeded`，判定顺序在额度已满之后、水位线之前）；请求内在归属渠道上
+  命中容量错误换渠道时，日志同样标这个原因。
 - 请求内重试切到别的渠道成功也不改写归属；无归属时首次落位记实际成功的渠道。
 - 日志 `admin_info.channel_affinity` 增加 `home_channel_id` / `detour` / `detour_reason`
   供事后核对。
@@ -151,6 +165,7 @@
 | `extra_fault_status_codes` | [] | 白名单：额外视为渠道故障的状态码 |
 | `extra_fault_keywords` | [] | 白名单：命中即视为渠道故障的关键词 |
 | `ignore_fault_keywords` | [] | 排除：命中即不视为渠道故障的关键词 |
+| `capacity_detour_keywords` | ["native input budget"] | 容量绕行：命中即本次换渠道，不计故障、不熔断、不改归属，该亲和键 10 分钟内跳过该渠道 |
 
 ### 2.7 编排 API（`controller/cascade.go` + `router/api-router.go`）
 
@@ -312,6 +327,9 @@
 6. **编排页的分组来自渠道 `group` 字段，不是分组倍率配置**——在分组倍率里删掉一个分组
    只会让它从用户侧（`/api/group`、密钥创建下拉）消失，渠道身上的组名与 abilities 仍在，
    编排页因此仍会列出它。这类分组标记为 orphan，需用「清理分组」显式摘除。
+7. 容量绕行记忆是单实例内存态，重启 / 蓝绿切换后清空（代价是多白跑一次）；只对命中亲和规则的
+   请求记忆，无亲和键的请求每次仍会先试一次该渠道再换。上游若在开始回流后才报超限
+   （吐字后），同第 1 条无法切换。
 
 ## 4. 阶段划分
 

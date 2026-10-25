@@ -93,6 +93,7 @@ export type CascadeSetting = {
   extra_fault_status_codes: number[]
   extra_fault_keywords: string[]
   ignore_fault_keywords: string[]
+  capacity_detour_keywords: string[]
 }
 
 export type CascadeOverviewResponse = {

@@ -52,6 +52,7 @@ type SettingsForm = {
   extra_fault_status_codes: string
   extra_fault_keywords: string
   ignore_fault_keywords: string
+  capacity_detour_keywords: string
 }
 
 function toForm(setting: CascadeSetting): SettingsForm {
@@ -70,6 +71,9 @@ function toForm(setting: CascadeSetting): SettingsForm {
     ),
     extra_fault_keywords: (setting.extra_fault_keywords ?? []).join('\n'),
     ignore_fault_keywords: (setting.ignore_fault_keywords ?? []).join('\n'),
+    capacity_detour_keywords: (setting.capacity_detour_keywords ?? []).join(
+      '\n'
+    ),
   }
 }
 
@@ -136,6 +140,10 @@ export function CascadeSettingsCard({ setting }: { setting: CascadeSetting }) {
         {
           key: 'ignore_fault_keywords',
           value: JSON.stringify(parseKeywords(form.ignore_fault_keywords)),
+        },
+        {
+          key: 'capacity_detour_keywords',
+          value: JSON.stringify(parseKeywords(form.capacity_detour_keywords)),
         },
       ]
       for (const update of updates) {
@@ -263,7 +271,7 @@ export function CascadeSettingsCard({ setting }: { setting: CascadeSetting }) {
           )}
         </div>
 
-        <div className='grid gap-4 lg:grid-cols-3'>
+        <div className='grid gap-4 sm:grid-cols-2'>
           <div className='space-y-1.5'>
             <Label htmlFor='cascade-extra-codes'>
               {t('Extra fault status codes')}
@@ -320,6 +328,27 @@ export function CascadeSettingsCard({ setting }: { setting: CascadeSetting }) {
             <p className='text-muted-foreground text-xs'>
               {t(
                 'One per line; matching errors never trip the channel (highest precedence)'
+              )}
+            </p>
+          </div>
+          <div className='space-y-1.5'>
+            <Label htmlFor='cascade-capacity-keywords'>
+              {t('Capacity detour keywords')}
+            </Label>
+            <Textarea
+              id='cascade-capacity-keywords'
+              rows={3}
+              value={form.capacity_detour_keywords}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  capacity_detour_keywords: e.target.value,
+                }))
+              }
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'One per line; request exceeds the channel input limit: retry on the next channel without counting a fault or changing the home channel, and skip this channel for that user for 10 minutes'
               )}
             </p>
           </div>

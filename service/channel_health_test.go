@@ -19,6 +19,7 @@ func withCascadeSetting(t *testing.T) *operation_setting.CascadeSetting {
 	setting.ExtraFaultStatusCodes = nil
 	setting.ExtraFaultKeywords = nil
 	setting.IgnoreFaultKeywords = nil
+	setting.CapacityDetourKeywords = nil
 	return setting
 }
 
@@ -79,6 +80,58 @@ func TestIsChannelFaultErrorIgnoreKeywordsPrecedence(t *testing.T) {
 
 	if IsChannelFaultError(newStatusError(http.StatusTooManyRequests, "Quota Exceeded For User abc")) {
 		t.Error("ignore keyword should take precedence over 429")
+	}
+}
+
+// 生产实例：Kiro 号商的输入上限报错（2026-10-17 渠道 #58）
+const nativeInputBudgetMessage = "Latest complete request and protected instructions require approximately 136875 input tokens, exceeding the native input budget 124000. No messages were truncated."
+
+func TestIsChannelCapacityError(t *testing.T) {
+	setting := withCascadeSetting(t)
+
+	if IsChannelCapacityError(newStatusError(http.StatusBadRequest, nativeInputBudgetMessage)) {
+		t.Error("no keywords configured: should not be a capacity error")
+	}
+
+	setting.CapacityDetourKeywords = []string{"Native Input Budget"}
+	if !IsChannelCapacityError(newStatusError(http.StatusBadRequest, nativeInputBudgetMessage)) {
+		t.Error("keyword-matched error should be a capacity error (case-insensitive)")
+	}
+	if IsChannelCapacityError(newStatusError(http.StatusBadRequest, "invalid request body")) {
+		t.Error("plain 400 should not be a capacity error")
+	}
+	if IsChannelCapacityError(nil) {
+		t.Error("nil error should not be a capacity error")
+	}
+}
+
+func TestIsChannelFaultErrorCapacityPrecedence(t *testing.T) {
+	setting := withCascadeSetting(t)
+	setting.CapacityDetourKeywords = []string{"native input budget"}
+	setting.ExtraFaultKeywords = []string{"native input budget"}
+
+	if IsChannelFaultError(newStatusError(http.StatusBadRequest, nativeInputBudgetMessage)) {
+		t.Error("capacity keyword should take precedence over extra fault keywords")
+	}
+	if IsChannelFaultError(newStatusError(http.StatusInternalServerError, nativeInputBudgetMessage)) {
+		t.Error("capacity keyword should take precedence over 5xx")
+	}
+	if !IsChannelFaultError(newStatusError(http.StatusInternalServerError, "upstream exploded")) {
+		t.Error("unrelated 5xx should still be a fault")
+	}
+}
+
+func TestCascadeSettingDefaultCapacityKeywords(t *testing.T) {
+	// 默认值预填已知的号商输入上限报错，部署后无需手动配置即生效
+	defaults := operation_setting.GetCascadeSetting().CapacityDetourKeywords
+	found := false
+	for _, keyword := range defaults {
+		if keyword == "native input budget" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("default capacity keywords = %v, want to contain %q", defaults, "native input budget")
 	}
 }
 

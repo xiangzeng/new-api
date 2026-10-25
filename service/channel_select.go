@@ -193,8 +193,33 @@ func selectSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 // cacheGetCascadeChannel 级联模式的渠道选择。
 // 非 auto 分组：组内按编排顺序遍历（排除已试/熔断渠道）。
 // auto 分组：分组顺序即级联外层，组内耗尽或无候选时切换到下一个分组。
+// 容量绕行记忆里的渠道（同一亲和键近期超出过其输入上限）先一并排除；排除后无渠道可选时
+// 放回再选一次，宁可再试一次也不直接报无可用渠道。
 func cacheGetCascadeChannel(param *RetryParam, userGroup string) (*model.Channel, string, error) {
 	tried := GetTriedChannelIds(param.Ctx, param.ExcludeChannelIDs)
+	skips := getChannelAffinityCapacitySkips(param.Ctx)
+	if len(skips) == 0 {
+		return cacheGetCascadeChannelExcluding(param, userGroup, tried)
+	}
+	exclude := make(map[int]bool, len(tried)+len(skips))
+	for id := range tried {
+		exclude[id] = true
+	}
+	for id := range skips {
+		exclude[id] = true
+	}
+	// auto 分组遍历会推进分组游标，放回重选前须还原
+	groupIndex, _ := common.GetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex)
+	channel, selectGroup, err := cacheGetCascadeChannelExcluding(param, userGroup, exclude)
+	if channel != nil || err != nil {
+		return channel, selectGroup, err
+	}
+	idx, _ := groupIndex.(int)
+	common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, idx)
+	return cacheGetCascadeChannelExcluding(param, userGroup, tried)
+}
+
+func cacheGetCascadeChannelExcluding(param *RetryParam, userGroup string, tried map[int]bool) (*model.Channel, string, error) {
 	// 归属模式首次落位：与归属流量同用硬顶倍数选路，软水位线只约束绕行等临时流量
 	// （否则主渠道稍忙就把新用户永久落到备用渠道，见 docs/channel/cascade-failover.md §2.4）
 	watermarkRatio := 0.0

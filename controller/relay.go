@@ -423,8 +423,9 @@ func shouldRetry(c *gin.Context, info *relaycommon.RelayInfo, openaiErr *types.N
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
-// cascadeShouldRetry 级联模式的切换判定：只有「渠道故障类」错误才切换到下一个渠道，
-// 其余错误（如 400 格式错误）原样返回用户。渠道亲和的 skip-retry 不阻断级联切换。
+// cascadeShouldRetry 级联模式的切换判定：只有「渠道故障类」与「容量类」（本次请求超出该渠道
+// 输入上限）错误才切换到下一个渠道，其余错误（如 400 格式错误）原样返回用户。
+// 渠道亲和的 skip-retry 不阻断级联切换。
 // 详见 docs/channel/cascade-failover.md
 func cascadeShouldRetry(c *gin.Context, info *relaycommon.RelayInfo, openaiErr *types.NewAPIError, retryTimes int) bool {
 	// 已向客户端发过内容后不能切换重试（会二次输出），交由熔断标记 + 客户端重试兜底
@@ -443,15 +444,22 @@ func cascadeShouldRetry(c *gin.Context, info *relaycommon.RelayInfo, openaiErr *
 	if code := openaiErr.StatusCode; code >= 200 && code < 300 {
 		return false
 	}
-	return service.IsChannelFaultError(openaiErr)
+	return service.IsChannelFaultError(openaiErr) || service.IsChannelCapacityError(openaiErr)
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
 	// 级联模式：故障类错误记入健康注册表（可能触发熔断），并处理当前会话的渠道亲和：
 	// 旧模式清除亲和、成功后重绑到新渠道；归属模式保留归属、本次绕行、恢复后回归。
+	capacityErr := service.CascadeEnabled() && service.IsChannelCapacityError(err)
 	if service.CascadeEnabled() {
-		if service.IsChannelFaultError(err) {
+		if capacityErr {
+			// 容量类错误（本次请求超出该渠道输入上限）是请求级的：计 attempt 不计 fault、不熔断、不改归属，
+			// 并记住「亲和键 + 渠道」一段时间，期间同一亲和键的请求直接跳过该渠道
+			model.RecordChannelAttempt(channelError.ChannelId, model.ChannelAttemptOther, 0, 0, false)
+			service.RecordChannelAffinityCapacityDetour(c, channelError.ChannelId)
+			logger.LogWarn(c, fmt.Sprintf("级联：渠道 #%d（%s）报本次请求超出输入上限，换渠道重试且不计故障", channelError.ChannelId, channelError.ChannelName))
+		} else if service.IsChannelFaultError(err) {
 			model.RecordChannelAttempt(channelError.ChannelId, model.ChannelAttemptFault, 0, 0, false)
 			if model.MarkChannelHealthFailure(channelError.ChannelId, err.ErrorWithStatusCode()) {
 				model.RecordChannelTrip(channelError.ChannelId)
@@ -469,7 +477,8 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(err) && channelError.AutoBan {
+	// 容量类错误是请求级的，不应让渠道被自动禁用
+	if !capacityErr && service.ShouldDisableChannel(err) && channelError.AutoBan {
 		gopool.Go(func() {
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
 		})

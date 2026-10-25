@@ -43,6 +43,7 @@
   "Consecutive successes required to restore": "Consecutive successes required to restore",
   "Fault errors (429/401/403/5xx/network) trip the channel and spill traffic to the next one; 400-class errors are returned to the client as-is.": "Fault errors (429/401/403/5xx/network) trip the channel and spill traffic to the next one; 400-class errors are returned to the client as-is.",
   "One per line; matching errors never trip the channel (highest precedence)": "One per line; matching errors never trip the channel (highest precedence)",
+  "One per line; request exceeds the channel input limit: retry on the next channel without counting a fault or changing the home channel, and skip this channel for that user for 10 minutes": "One per line; request exceeds the channel input limit: retry on the next channel without counting a fault or changing the home channel, and skip this channel for that user for 10 minutes",
   "Only the root user can modify these settings": "Only the root user can modify these settings",
   "The group name will be removed from {{count}} channels and their abilities rebuilt. This cannot be undone.": "The group name will be removed from {{count}} channels and their abilities rebuilt. This cannot be undone.",
   "This group is no longer in the group ratio settings, so users cannot select it. It still shows here because the channels below still carry the group name.": "This group is no longer in the group ratio settings, so users cannot select it. It still shows here because the channels below still carry the group name.",
