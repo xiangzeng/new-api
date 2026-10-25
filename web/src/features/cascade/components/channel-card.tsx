@@ -122,6 +122,8 @@ function CacheRow({ metrics }: { metrics?: CascadeChannelMetrics }) {
 
 type ChannelCardProps = {
   channel: CascadeChannel
+  /** 所在泳道的分组名：RPM 水位线按分组独立设置 */
+  group: string
   fullChannel?: Channel
   index: number
   recoveryTarget: number
@@ -185,6 +187,7 @@ function HealthBadge({
 
 export function ChannelCard({
   channel,
+  group,
   fullChannel,
   index,
   recoveryTarget,
@@ -293,7 +296,7 @@ export function ChannelCard({
             </Tooltip>
           </div>
         </div>
-        <LimitRow channel={channel} />
+        <LimitRow channel={channel} group={group} />
         <MetricsRow metrics={channel.metrics} />
         <CacheRow metrics={channel.metrics} />
         {eventsOpen && (

@@ -18,16 +18,16 @@ func TestCascadeWatermarkConfigRoundTrip(t *testing.T) {
 	require.NoError(t, config.UpdateConfigFromMap(setting, map[string]string{
 		"channel_rpm": `{"51":220,"49":8}`,
 	}))
-	assert.Equal(t, 220, GetChannelRpmWatermark(51))
-	assert.Equal(t, 8, GetChannelRpmWatermark(49))
-	assert.Equal(t, 0, GetChannelRpmWatermark(999), "未配置的渠道 = 不限流")
+	assert.Equal(t, 220, GetGroupChannelRpmWatermark("default", 51))
+	assert.Equal(t, 8, GetGroupChannelRpmWatermark("default", 49))
+	assert.Equal(t, 0, GetGroupChannelRpmWatermark("default", 999), "未配置的渠道 = 不限流")
 
 	// 整体替换：不在新 JSON 里的渠道必须被清掉，不能残留旧值
 	require.NoError(t, config.UpdateConfigFromMap(setting, map[string]string{
 		"channel_rpm": `{"51":100}`,
 	}))
-	assert.Equal(t, 100, GetChannelRpmWatermark(51))
-	assert.Equal(t, 0, GetChannelRpmWatermark(49), "被移除的渠道不应残留旧水位线")
+	assert.Equal(t, 100, GetGroupChannelRpmWatermark("default", 51))
+	assert.Equal(t, 0, GetGroupChannelRpmWatermark("default", 49), "被移除的渠道不应残留旧水位线")
 }
 
 func TestGetChannelRpmWatermarkNegativeMeansUnlimited(t *testing.T) {
@@ -36,7 +36,7 @@ func TestGetChannelRpmWatermarkNegativeMeansUnlimited(t *testing.T) {
 	t.Cleanup(func() { setting.ChannelRpm = orig })
 
 	setting.ChannelRpm = map[int]int{7: -5}
-	assert.Equal(t, 0, GetChannelRpmWatermark(7), "负数水位线按不限流处理")
+	assert.Equal(t, 0, GetGroupChannelRpmWatermark("default", 7), "负数水位线按不限流处理")
 }
 
 // 每日额度上限与水位线同为整数键 map：锁死往返、整体替换与负值按不限处理
@@ -56,4 +56,24 @@ func TestCascadeDailyQuotaConfigRoundTrip(t *testing.T) {
 		"channel_daily_quota": `{}`,
 	})
 	assert.Equal(t, int64(0), GetChannelDailyQuotaCap(39), "应被整体替换清掉")
+}
+
+// 分组水位线：两层 map 往返，分组优先、未设置的分组回落旧版渠道级水位线
+func TestCascadeGroupWatermarkConfigRoundTrip(t *testing.T) {
+	setting := GetCascadeWatermarkSetting()
+	origLegacy, origGroups := setting.ChannelRpm, setting.GroupChannelRpm
+	t.Cleanup(func() {
+		setting.ChannelRpm = origLegacy
+		setting.GroupChannelRpm = origGroups
+	})
+
+	config.UpdateConfigFromMap(setting, map[string]string{
+		"channel_rpm":       `{"59":20}`,
+		"group_channel_rpm": `{"kiro-高缓":{"59":20},"kiro-特价":{"59":10,"53":-3}}`,
+	})
+	assert.Equal(t, 10, GetGroupChannelRpmWatermark("kiro-特价", 59))
+	assert.Equal(t, 20, GetGroupChannelRpmWatermark("kiro-高缓", 59))
+	assert.Equal(t, 0, GetGroupChannelRpmWatermark("kiro-特价", 53), "负值按不限流处理")
+	assert.Equal(t, 20, GetGroupChannelRpmWatermark("other", 59), "未设置分组回落旧值")
+	assert.Equal(t, 0, GetGroupChannelRpmWatermark("other", 49))
 }

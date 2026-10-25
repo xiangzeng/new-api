@@ -171,10 +171,10 @@ func Distribute() func(c *gin.Context) {
 						} else if service.IsChannelAffinityCapacitySkipped(c, preferred.Id) {
 							detourReason = "capacity_exceeded"
 						} else if service.ChannelAffinityHomeModeEnabled() {
-							if model.IsChannelOverWatermarkRatio(preferred.Id, service.GetChannelAffinityHomeHardWatermarkRatio()) {
+							if model.IsChannelOverWatermarkRatio(preferredGroup, preferred.Id, service.GetChannelAffinityHomeHardWatermarkRatio()) {
 								detourReason = "over_hard_watermark"
 							}
-						} else if model.IsChannelOverWatermark(preferred.Id) {
+						} else if model.IsChannelOverWatermark(preferredGroup, preferred.Id) {
 							detourReason = "over_watermark"
 						}
 					}
@@ -199,9 +199,9 @@ func Distribute() func(c *gin.Context) {
 							common.SetContextKey(c, constant.ContextKeyAutoGroup, preferredGroup)
 						}
 						service.MarkChannelAffinityUsed(c, preferredGroup, preferred.Id)
-						// 亲和命中绕开了级联选择器，须在此单独记账，
+						// 亲和命中绕开了级联选择器，须在此单独记账（记在归属所在分组），
 						// 否则粘住的渠道 RPM 恒为 0、水位线形同虚设
-						model.RecordChannelRequest(channel.Id)
+						model.RecordChannelRequest(selectGroup, channel.Id)
 					}
 				}
 

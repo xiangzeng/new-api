@@ -127,19 +127,19 @@ func TestSelectCascadeChannelSkipsChannelOverDailyQuota(t *testing.T) {
 	}
 
 	addChannelTodayQuota(1, today, 60)
-	picked := selectCascadeChannel(candidates, map[int]bool{}, 0)
+	picked := selectCascadeChannel(testRpmGroup, candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 1, picked.Id, "额度未满")
 
 	// 正常轮：额度满即溢出到下一个渠道
 	addChannelTodayQuota(1, today, 40)
-	picked = selectCascadeChannel(candidates, map[int]bool{}, 0)
+	picked = selectCascadeChannel(testRpmGroup, candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 2, picked.Id, "渠道 1 额度满溢出")
 
 	// 打满轮：其余健康渠道全被试过 / 压满时，也不回落到额度已满的渠道
 	fillChannelRpmForTest(2, 10)
-	picked = selectCascadeChannel(candidates, map[int]bool{3: true}, 0)
+	picked = selectCascadeChannel(testRpmGroup, candidates, map[int]bool{3: true}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 2, picked.Id, "打满轮跳过额度已满渠道")
 
@@ -147,9 +147,9 @@ func TestSelectCascadeChannelSkipsChannelOverDailyQuota(t *testing.T) {
 	MarkChannelHealthFailure(1, "boom")
 	MarkChannelHealthFailure(2, "boom")
 	MarkChannelHealthFailure(3, "boom")
-	picked = selectCascadeChannel(candidates, map[int]bool{}, 0)
+	picked = selectCascadeChannel(testRpmGroup, candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 2, picked.Id, "兜底轮跳过额度已满渠道")
 	// 只剩额度已满的渠道可选：返回 nil，宁可失败也不超支
-	assert.Nil(t, selectCascadeChannel(candidates, map[int]bool{2: true, 3: true}, 0), "只剩额度已满渠道")
+	assert.Nil(t, selectCascadeChannel(testRpmGroup, candidates, map[int]bool{2: true, 3: true}, 0), "只剩额度已满渠道")
 }

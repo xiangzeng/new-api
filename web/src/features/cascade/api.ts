@@ -44,10 +44,16 @@ export async function saveCascadeOrder(payload: {
   return res.data
 }
 
-// 保存渠道限流方式：rpm（RPM 水位线）与 daily_quota（每日额度上限，quota 单位）二选一，
-// 提交即整体覆盖该渠道的限流方式，两者都 <= 0 = 不限；未提交的渠道保持原值
+// 保存渠道限流方式：rpm（group 分组下的 RPM 水位线，各分组独立）与 daily_quota
+// （渠道级每日额度上限，quota 单位）二选一。设 rpm 会清掉渠道的额度上限，设 daily_quota
+// 会清掉渠道在全部分组的水位线；两者都 <= 0 = 清除本组水位线与额度上限；未提交的渠道保持原值
 export async function saveCascadeWatermark(
-  watermarks: { channel_id: number; rpm: number; daily_quota: number }[]
+  watermarks: {
+    channel_id: number
+    group: string
+    rpm: number
+    daily_quota: number
+  }[]
 ) {
   const res = await api.post<CascadeActionResponse>('/api/cascade/watermark', {
     watermarks,

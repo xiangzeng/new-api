@@ -239,6 +239,7 @@ export function CascadeLane({
               )}
               <ChannelCard
                 channel={channel}
+                group={group.name}
                 fullChannel={fullChannelsById.get(id)}
                 index={index}
                 recoveryTarget={recoveryTarget}

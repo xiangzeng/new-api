@@ -63,9 +63,11 @@ export type CascadeChannel = {
   weight: number
   health?: CascadeChannelHealth
   metrics?: CascadeChannelMetrics
-  /** 近 60 秒被选中的次数（滚动窗口，选中即记账） */
+  /** 近 60 秒在本分组被选中的次数（滚动窗口，选中即记账，各分组独立计数） */
   rpm: number
-  /** RPM 水位线，0 = 不限流 */
+  /** 近 60 秒在全部分组被选中的次数合计（上游实际承受的总压力） */
+  rpm_total: number
+  /** 本分组的 RPM 水位线，0 = 不限流 */
   rpm_watermark: number
   /** 每日额度上限（quota 单位），0 = 不限；与 RPM 水位线二选一 */
   daily_quota_cap: number

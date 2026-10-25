@@ -72,9 +72,16 @@ function quotaToDraft(quota: number): string {
 }
 
 // 限流行：RPM 水位线与每日额度上限二选一，点开可就地切换方式并修改数值。
-// 水位线模式：近 60 秒请求数 / 水位线，达到后流量溢出到下一个渠道（软限流）；
-// 额度模式：今日累计消耗 / 上限，满额后该渠道等同禁用到次日 0 点（硬限流）。
-export function LimitRow({ channel }: { channel: CascadeChannel }) {
+// 水位线模式：本分组近 60 秒请求数 / 本分组水位线，达到后本分组流量溢出到下一个渠道
+// （软限流；同一渠道在各分组独立设置、独立计数）；
+// 额度模式：今日累计消耗 / 上限，满额后该渠道等同禁用到次日 0 点（硬限流，渠道级、各分组共用）。
+export function LimitRow({
+  channel,
+  group,
+}: {
+  channel: CascadeChannel
+  group: string
+}) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { sensitiveVisible } = useChannels()
@@ -84,6 +91,7 @@ export function LimitRow({ channel }: { channel: CascadeChannel }) {
 
   const currentMode = getCascadeLimitMode(channel)
   const rpm = channel.rpm ?? 0
+  const rpmTotal = channel.rpm_total ?? 0
   const watermark = channel.rpm_watermark ?? 0
   const quotaCap = channel.daily_quota_cap ?? 0
   const todayUsed = channel.today_used_quota ?? 0
@@ -117,6 +125,7 @@ export function LimitRow({ channel }: { channel: CascadeChannel }) {
       const res = await saveCascadeWatermark([
         {
           channel_id: channel.id,
+          group,
           rpm: payload.rpm,
           daily_quota: payload.dailyQuota,
         },
@@ -271,16 +280,33 @@ export function LimitRow({ channel }: { channel: CascadeChannel }) {
                   'Spend since 00:00 today (server time), same basis as Used. Once the cap is reached the channel is skipped like a disabled one until tomorrow. 0 = unlimited.'
                 )
               : t(
-                  'Requests in the last 60s; once the watermark is reached traffic spills to the next channel. 0 = unlimited.'
+                  "Requests from this group in the last 60s; once the watermark is reached this group's traffic spills to the next channel. Each group is set and counted separately. 0 = unlimited."
                 )}
           </p>
-          {mode === 'daily_quota' && (
-            <p className='text-muted-foreground text-xs'>
-              {t('Used today')}{' '}
-              <span className='text-foreground font-medium'>
-                {formatAmount(todayUsed)}
-              </span>
-            </p>
+          {mode === 'daily_quota' ? (
+            <>
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'The daily quota cap applies to the channel across all groups; saving it clears the RPM watermarks in every group.'
+                )}
+              </p>
+              <p className='text-muted-foreground text-xs'>
+                {t('Used today')}{' '}
+                <span className='text-foreground font-medium'>
+                  {formatAmount(todayUsed)}
+                </span>
+              </p>
+            </>
+          ) : (
+            // 其他分组也在用这个渠道时，给出上游实际承受的合计 RPM
+            rpmTotal > rpm && (
+              <p className='text-muted-foreground text-xs'>
+                {t('All groups combined')}{' '}
+                <span className='text-foreground font-medium'>
+                  {t('RPM')} {rpmTotal}
+                </span>
+              </p>
+            )
           )}
           <div className='flex justify-end gap-2'>
             <Button
