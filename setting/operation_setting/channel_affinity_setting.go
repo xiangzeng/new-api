@@ -28,12 +28,22 @@ type ChannelAffinityRule struct {
 }
 
 type ChannelAffinitySetting struct {
-	Enabled               bool                  `json:"enabled"`
-	SwitchOnSuccess       bool                  `json:"switch_on_success"`
-	KeepOnChannelDisabled bool                  `json:"keep_on_channel_disabled"`
-	MaxEntries            int                   `json:"max_entries"`
-	DefaultTTLSeconds     int                   `json:"default_ttl_seconds"`
-	Rules                 []ChannelAffinityRule `json:"rules"`
+	Enabled               bool `json:"enabled"`
+	SwitchOnSuccess       bool `json:"switch_on_success"`
+	KeepOnChannelDisabled bool `json:"keep_on_channel_disabled"`
+	// HomeMode 归属模式：亲和缓存记录的是「归属渠道」而非「上次成功渠道」。
+	// 归属渠道熔断中（或达硬顶）时，本次请求临时绕行级联选择器，但不清除、不改写归属，
+	// 渠道恢复后自动回归（上游 prompt cache 大概率仍热）；归属渠道达水位线仍沿用——
+	// 水位线只约束首次落位，否则会在阈值附近逐请求来回弹。
+	// 仅渠道被禁用 / 删除 / 不在分组时才清除归属重新落位。
+	// 关闭 = 旧行为（让位或故障即清除，成功后改写到新渠道）。详见 docs/channel/cascade-failover.md §2.4
+	HomeMode bool `json:"home_mode"`
+	// HomeHardWatermarkRatio 归属渠道硬顶倍数：>0 时归属渠道 RPM ≥ 水位线 × 倍数则本次绕行，
+	// 防止归属流量把上游打到限流；0 = 不设硬顶。仅归属模式生效。
+	HomeHardWatermarkRatio float64               `json:"home_hard_watermark_ratio"`
+	MaxEntries             int                   `json:"max_entries"`
+	DefaultTTLSeconds      int                   `json:"default_ttl_seconds"`
+	Rules                  []ChannelAffinityRule `json:"rules"`
 }
 
 // Keep Codex CLI passthrough aligned with upstream. Codex uses lower-case
@@ -109,12 +119,22 @@ func buildCodexPassHeaderTemplate() map[string]interface{} {
 	}
 }
 
+// claudeUserKeySources Claude 流量的亲和键源：用户级（context_int:id，含分组后即「每用户 × 每分组」），
+// 让同一用户的全部会话 / 客户端归属同一渠道，跨会话共享的 system prompt / tools 前缀也能命中缓存；
+// metadata.user_id（Claude Code 会话标识）仅作兜底键源。
+var claudeUserKeySources = []ChannelAffinityKeySource{
+	{Type: "context_int", Key: "id"},
+	{Type: "gjson", Path: "metadata.user_id"},
+}
+
 var channelAffinitySetting = ChannelAffinitySetting{
-	Enabled:               true,
-	SwitchOnSuccess:       true,
-	KeepOnChannelDisabled: false,
-	MaxEntries:            100_000,
-	DefaultTTLSeconds:     3600,
+	Enabled:                true,
+	SwitchOnSuccess:        true,
+	KeepOnChannelDisabled:  false,
+	HomeMode:               false,
+	HomeHardWatermarkRatio: 0,
+	MaxEntries:             100_000,
+	DefaultTTLSeconds:      3600,
 	Rules: []ChannelAffinityRule{
 		{
 			Name:       "codex cli trace",
@@ -132,15 +152,29 @@ var channelAffinitySetting = ChannelAffinitySetting{
 			UserAgentInclude:      nil,
 		},
 		{
-			Name:       "claude cli trace",
-			ModelRegex: []string{"^claude-.*$"},
-			PathRegex:  []string{"/v1/messages"},
-			KeySources: []ChannelAffinityKeySource{
-				{Type: "gjson", Path: "metadata.user_id"},
-			},
+			// Anthropic 格式：用户级归属 + Claude CLI 请求头透传
+			Name:                  "claude user",
+			ModelRegex:            []string{"^claude-.*$"},
+			PathRegex:             []string{"/v1/messages"},
+			KeySources:            claudeUserKeySources,
 			ValueRegex:            "",
 			TTLSeconds:            0,
 			ParamOverrideTemplate: buildPassHeaderTemplate(claudeCliPassThroughHeaders),
+			SkipRetryOnFailure:    true,
+			IncludeUsingGroup:     true,
+			IncludeRuleName:       true,
+			UserAgentInclude:      nil,
+		},
+		{
+			// OpenAI 格式调用 Claude 模型：同样用户级归属，但不透传 Claude CLI 请求头
+			// （避免把 OpenAI 格式客户端的 UA 等原样送给上游）
+			Name:                  "claude user chat",
+			ModelRegex:            []string{"^claude-.*$"},
+			PathRegex:             []string{"/v1/chat/completions"},
+			KeySources:            claudeUserKeySources,
+			ValueRegex:            "",
+			TTLSeconds:            0,
+			ParamOverrideTemplate: nil,
 			SkipRetryOnFailure:    true,
 			IncludeUsingGroup:     true,
 			IncludeRuleName:       true,

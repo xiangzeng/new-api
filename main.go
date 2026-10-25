@@ -117,6 +117,10 @@ func main() {
 	// 渠道日用量统计（内存累计 → 周期落库，供渠道「最近 N 天消耗」读取）
 	go model.UpdateChannelDailyUsage()
 
+	// 渠道今日累计消耗：先同步做种（级联每日额度上限判定用），再周期性与库对账
+	model.SyncChannelTodayQuota()
+	go model.StartChannelTodayQuotaSyncLoop()
+
 	// 渠道日用量清理任务（保留 30 天，仅主节点执行）
 	model.StartChannelDataCleanupTask()
 

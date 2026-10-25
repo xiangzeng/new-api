@@ -276,6 +276,8 @@ distributor.get_channel_failed: "获取分组 {{.Group}} 下模型 {{.Model}} �
 distributor.no_available_channel: "分组 {{.Group}} 下模型 {{.Model}} 无可用渠道（distributor）；{{.Detail}}"
 distributor.invalid_midjourney_request: "无效的midjourney请求，{{.Error}}"
 distributor.invalid_request_parse_model: "无效的请求，无法解析模型"
+distributor.user_group_blocked: "分组 {{.Group}} 暂时对您的账号停止服务，预计 {{.Until}} 恢复，如有疑问请联系管理员"
+distributor.user_group_blocked_permanent: "分组 {{.Group}} 已对您的账号停止服务，如有疑问请联系管理员"
 
 # Custom OAuth provider messages
 custom_oauth.not_found: "自定义 OAuth 提供商不存在"

@@ -47,6 +47,7 @@ const (
 	ContextKeyUserId            ContextKey = "id"
 	ContextKeyUserSetting       ContextKey = "user_setting"
 	ContextKeyUserCustomPricing ContextKey = "user_custom_pricing"
+	ContextKeyUserGroupBlocks   ContextKey = "user_group_blocks"
 	ContextKeyUserQuota         ContextKey = "user_quota"
 	ContextKeyUserStatus        ContextKey = "user_status"
 	ContextKeyUserEmail         ContextKey = "user_email"

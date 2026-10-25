@@ -37,6 +37,7 @@ func TestToBaseUserCopiesEveryCachedField(t *testing.T) {
 		Username:      "tester",
 		Setting:       `{"accept_unset_ratio_model":true}`,
 		CustomPricing: `{"enabled":true,"groups":{"kiro":{"ratio":1}}}`,
+		GroupBlocks:   `{"blocks":[{"group":"kiro","expires_at":0,"created_at":1}]}`,
 		AuthVersion:   3,
 	}
 

@@ -33,6 +33,9 @@ import type {
   UserCustomPricingPayload,
   UserResellerBinding,
   BindUserToResellerPayload,
+  GroupBlockUserItem,
+  UserGroupBlocksDetail,
+  UserGroupBlocksPayload,
 } from './types'
 
 // ============================================================================
@@ -238,6 +241,45 @@ export async function unbindUserFromReseller(
   const res = await api.delete(`/api/user/${id}/reseller-binding`, {
     skipErrorHandler: true,
   })
+  return res.data
+}
+
+/**
+ * Get users that currently have active group restrictions.
+ */
+export async function getGroupBlockUsers(): Promise<
+  ApiResponse<GroupBlockUserItem[]>
+> {
+  const res = await api.get('/api/user/group-blocks/list')
+  return res.data
+}
+
+/**
+ * Get a user's active group restrictions and selectable groups.
+ */
+export async function getUserGroupBlocks(
+  id: number
+): Promise<ApiResponse<UserGroupBlocksDetail>> {
+  const res = await api.get(`/api/user/${id}/group-blocks`)
+  return res.data
+}
+
+/**
+ * Replace a user's group restrictions (omitted groups are unblocked).
+ */
+export async function updateUserGroupBlocks(
+  id: number,
+  payload: UserGroupBlocksPayload
+): Promise<ApiResponse> {
+  const res = await api.put(`/api/user/${id}/group-blocks`, payload)
+  return res.data
+}
+
+/**
+ * Remove all group restrictions of a user.
+ */
+export async function deleteUserGroupBlocks(id: number): Promise<ApiResponse> {
+  const res = await api.delete(`/api/user/${id}/group-blocks`)
   return res.data
 }
 

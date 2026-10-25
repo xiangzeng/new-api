@@ -63,10 +63,16 @@ export type CascadeChannel = {
   weight: number
   health?: CascadeChannelHealth
   metrics?: CascadeChannelMetrics
-  /** 近 60 秒被选中的次数（滚动窗口，选中即记账） */
+  /** 近 60 秒在本分组被选中的次数（滚动窗口，选中即记账，各分组独立计数） */
   rpm: number
-  /** RPM 水位线，0 = 不限流 */
+  /** 近 60 秒在全部分组被选中的次数合计（上游实际承受的总压力） */
+  rpm_total: number
+  /** 本分组的 RPM 水位线，0 = 不限流 */
   rpm_watermark: number
+  /** 每日额度上限（quota 单位），0 = 不限；与 RPM 水位线二选一 */
+  daily_quota_cap: number
+  /** 今天（服务器本地时间 0 点起）累计消耗（quota 单位） */
+  today_used_quota: number
 }
 
 export type CascadeGroup = {
@@ -89,6 +95,7 @@ export type CascadeSetting = {
   extra_fault_status_codes: number[]
   extra_fault_keywords: string[]
   ignore_fault_keywords: string[]
+  capacity_detour_keywords: string[]
 }
 
 export type CascadeOverviewResponse = {
@@ -111,6 +118,14 @@ export type CascadePurgeGroupResponse = {
   data?: {
     updated: number
     skipped: { id: number; name: string }[]
+  }
+}
+
+export type CascadeResetAffinityResponse = {
+  success: boolean
+  message?: string
+  data?: {
+    deleted: number
   }
 }
 

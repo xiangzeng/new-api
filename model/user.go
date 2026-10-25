@@ -105,6 +105,7 @@ type User struct {
 	LinuxDOId          string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting            string                     `json:"setting" gorm:"type:text;column:setting"`
 	CustomPricing      string                     `json:"custom_pricing" gorm:"type:text;column:custom_pricing"`
+	GroupBlocks        string                     `json:"-" gorm:"type:text;column:group_blocks"` // 分组限制 JSON，只由 UpdateUserGroupBlocks 维护；含管理员备注，不随 User 序列化外泄
 	Remark             string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
 	StripeCustomer     string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	CreatedAt          int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
@@ -126,6 +127,7 @@ func (user *User) ToBaseUser() *UserBase {
 		CustomPricing: user.CustomPricing,
 		AuthVersion:   user.AuthVersion,
 		CacheSchema:   userCacheSchemaVersion,
+		GroupBlocks:   user.GroupBlocks,
 	}
 	return cache
 }
@@ -1382,6 +1384,23 @@ func GetAllCustomPricingUsers() ([]User, error) {
 
 func UpdateUserCustomPricing(id int, pricingJSON string) error {
 	err := DB.Model(&User{}).Where("id = ?", id).Update("custom_pricing", pricingJSON).Error
+	if err != nil {
+		return err
+	}
+	return invalidateUserCache(id)
+}
+
+// GetAllGroupBlockUsers 返回配置过分组限制的用户（可能含已全部过期的，由上层按时间过滤）
+func GetAllGroupBlockUsers() ([]User, error) {
+	var users []User
+	err := DB.Where("group_blocks IS NOT NULL AND group_blocks != '' AND group_blocks LIKE ?", `%"group":%`).
+		Select("id, username, display_name, " + commonGroupCol + ", group_blocks").
+		Find(&users).Error
+	return users, err
+}
+
+func UpdateUserGroupBlocks(id int, blocksJSON string) error {
+	err := DB.Model(&User{}).Where("id = ?", id).Update("group_blocks", blocksJSON).Error
 	if err != nil {
 		return err
 	}

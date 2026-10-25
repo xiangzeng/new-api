@@ -45,6 +45,9 @@ func LogChannelDailyUsage(channelId int, quota int, tokenUsed int) {
 	cacheChannelDailyUsageLock.Lock()
 	defer cacheChannelDailyUsageLock.Unlock()
 
+	// 同锁内累加今日累计，供级联每日额度上限判定（不随刷库清零）
+	addChannelTodayQuota(channelId, date, int64(quota))
+
 	if entry, ok := cacheChannelDailyUsage[key]; ok {
 		entry.QuotaUsed += int64(quota)
 		entry.RequestCount++

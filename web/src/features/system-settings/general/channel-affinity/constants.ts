@@ -99,14 +99,36 @@ export const RULE_TEMPLATES: Record<string, RuleTemplate> = {
     include_model_name: false,
     include_rule_name: true,
   },
+  // 与后端默认规则保持一致（setting/operation_setting/channel_affinity_setting.go）：
+  // 用户级键（context_int:id）优先，metadata.user_id 兜底
   claudeCli: {
-    name: 'claude cli trace',
+    name: 'claude user',
     model_regex: ['^claude-.*$'],
     path_regex: ['/v1/messages'],
-    key_sources: [{ type: 'gjson', path: 'metadata.user_id' }],
+    key_sources: [
+      { type: 'context_int', key: 'id' },
+      { type: 'gjson', path: 'metadata.user_id' },
+    ],
     param_override_template: buildPassHeadersTemplate(
       CLAUDE_CLI_HEADER_PASSTHROUGH_HEADERS
     ),
+    value_regex: '',
+    ttl_seconds: 0,
+    skip_retry_on_failure: true,
+    include_using_group: true,
+    include_model_name: false,
+    include_rule_name: true,
+  },
+  // OpenAI 格式调用 Claude 模型：同样用户级归属，但不透传 Claude CLI 请求头
+  claudeChat: {
+    name: 'claude user chat',
+    model_regex: ['^claude-.*$'],
+    path_regex: ['/v1/chat/completions'],
+    key_sources: [
+      { type: 'context_int', key: 'id' },
+      { type: 'gjson', path: 'metadata.user_id' },
+    ],
+    param_override_template: null,
     value_regex: '',
     ttl_seconds: 0,
     skip_retry_on_failure: true,

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"sort"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -25,10 +27,16 @@ type cascadeChannelItem struct {
 	Weight   int                       `json:"weight"`
 	Health   *model.ChannelHealthInfo  `json:"health,omitempty"`
 	Metrics  *model.ChannelMetricsInfo `json:"metrics,omitempty"`
-	// Rpm 近 60 秒被选中的次数（滚动窗口，选中即记账）
+	// Rpm 近 60 秒在本分组被选中的次数（滚动窗口，选中即记账，各分组独立计数）
 	Rpm int64 `json:"rpm"`
-	// RpmWatermark 该渠道的 RPM 水位线，0 = 不限流
+	// RpmTotal 近 60 秒在全部分组被选中的次数合计（上游实际承受的总压力）
+	RpmTotal int64 `json:"rpm_total"`
+	// RpmWatermark 该渠道在本分组的 RPM 水位线，0 = 不限流
 	RpmWatermark int `json:"rpm_watermark"`
+	// DailyQuotaCap 该渠道的每日额度上限（quota 单位），0 = 不限；与 RPM 水位线二选一
+	DailyQuotaCap int64 `json:"daily_quota_cap"`
+	// TodayUsedQuota 该渠道今天（服务器本地时间 0 点起）累计消耗（quota 单位）
+	TodayUsedQuota int64 `json:"today_used_quota"`
 }
 
 type cascadeGroupItem struct {
@@ -68,18 +76,26 @@ func GetCascadeOverview(c *gin.Context) {
 	healthSnapshot := model.GetChannelHealthSnapshot()
 	metricsSnapshot := model.GetChannelMetricsSnapshot()
 	rpmSnapshot := model.GetChannelRpmSnapshot()
+	rpmTotals := make(map[int]int64)
+	for _, groupRpm := range rpmSnapshot {
+		for channelId, rpm := range groupRpm {
+			rpmTotals[channelId] += rpm
+		}
+	}
+	todayQuotaSnapshot := model.GetChannelTodayQuotaSnapshot()
 
 	groupMap := make(map[string][]cascadeChannelItem)
 	for _, channel := range channels {
 		item := cascadeChannelItem{
-			Id:           channel.Id,
-			Name:         channel.Name,
-			Type:         channel.Type,
-			Status:       channel.Status,
-			Priority:     channel.GetPriority(),
-			Weight:       channel.GetWeight(),
-			Rpm:          rpmSnapshot[channel.Id],
-			RpmWatermark: operation_setting.GetChannelRpmWatermark(channel.Id),
+			Id:             channel.Id,
+			Name:           channel.Name,
+			Type:           channel.Type,
+			Status:         channel.Status,
+			Priority:       channel.GetPriority(),
+			Weight:         channel.GetWeight(),
+			RpmTotal:       rpmTotals[channel.Id],
+			DailyQuotaCap:  operation_setting.GetChannelDailyQuotaCap(channel.Id),
+			TodayUsedQuota: todayQuotaSnapshot[channel.Id],
 		}
 		if health, ok := healthSnapshot[channel.Id]; ok {
 			healthCopy := health
@@ -94,7 +110,11 @@ func GetCascadeOverview(c *gin.Context) {
 			if group == "" {
 				continue
 			}
-			groupMap[group] = append(groupMap[group], item)
+			// RPM 与水位线按分组独立：同一渠道在每条泳道里填本组的数
+			groupItem := item
+			groupItem.Rpm = rpmSnapshot[group][channel.Id]
+			groupItem.RpmWatermark = operation_setting.GetGroupChannelRpmWatermark(group, channel.Id)
+			groupMap[group] = append(groupMap[group], groupItem)
 		}
 	}
 
@@ -217,15 +237,131 @@ func UpdateCascadeOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 }
 
-type cascadeWatermarkRequest struct {
-	Watermarks []struct {
-		ChannelId int `json:"channel_id"`
-		Rpm       int `json:"rpm"`
-	} `json:"watermarks"`
+type cascadeLimitItem struct {
+	ChannelId int `json:"channel_id"`
+	// Group RPM 水位线所属分组：设置 rpm 时必填；为空的清除请求清掉该渠道全部分组的水位线
+	Group string `json:"group"`
+	Rpm   int    `json:"rpm"`
+	// DailyQuota 每日额度上限（quota 单位），渠道级、不分分组
+	DailyQuota int64 `json:"daily_quota"`
 }
 
-// UpdateCascadeWatermark 保存渠道 RPM 水位线（cascade_watermark.channel_rpm 配置）。
-// rpm <= 0 表示清除该渠道的水位线（= 不限流），不在请求里的渠道保持原值。
+type cascadeWatermarkRequest struct {
+	Watermarks []cascadeLimitItem `json:"watermarks"`
+}
+
+// cascadeLimits 编排限流配置的工作副本：LegacyRpm 为旧版渠道级水位线（只减不增），
+// GroupRpm 为分组 → 渠道 → 水位线，DailyQuota 为渠道级每日额度上限
+type cascadeLimits struct {
+	LegacyRpm  map[int]int
+	GroupRpm   map[string]map[int]int
+	DailyQuota map[int]int64
+}
+
+// cloneCascadeLimits 深拷贝线上配置（入参是配置本体，不能就地改）
+func cloneCascadeLimits(current cascadeLimits) cascadeLimits {
+	next := cascadeLimits{
+		LegacyRpm:  make(map[int]int, len(current.LegacyRpm)),
+		GroupRpm:   make(map[string]map[int]int, len(current.GroupRpm)),
+		DailyQuota: make(map[int]int64, len(current.DailyQuota)),
+	}
+	for channelId, value := range current.LegacyRpm {
+		next.LegacyRpm[channelId] = value
+	}
+	for group, channels := range current.GroupRpm {
+		copied := make(map[int]int, len(channels))
+		for channelId, value := range channels {
+			copied[channelId] = value
+		}
+		next.GroupRpm[group] = copied
+	}
+	for channelId, value := range current.DailyQuota {
+		next.DailyQuota[channelId] = value
+	}
+	return next
+}
+
+func setGroupRpm(groupRpm map[string]map[int]int, group string, channelId int, value int) {
+	if groupRpm[group] == nil {
+		groupRpm[group] = make(map[int]int)
+	}
+	groupRpm[group][channelId] = value
+}
+
+// deleteGroupRpm 删除分组下渠道的水位线，分组清空后连组名一起删，不留空壳
+func deleteGroupRpm(groupRpm map[string]map[int]int, group string, channelId int) {
+	channels, ok := groupRpm[group]
+	if !ok {
+		return
+	}
+	delete(channels, channelId)
+	if len(channels) == 0 {
+		delete(groupRpm, group)
+	}
+}
+
+// mergeCascadeLimits 把请求里的渠道限流设置合并进现有配置（不在请求里的渠道 / 分组保持原值）。
+// RPM 水位线按分组独立；每日额度上限是渠道级。每个渠道只能二选一：rpm 与 daily_quota 不能同时 > 0，
+// 提交即覆盖——在某分组设 rpm 会清掉渠道的额度上限，设 daily_quota 会清掉该渠道全部分组的水位线，
+// 两者都 <= 0 = 清除（带分组只清本组水位线，不带分组清全部分组）。
+// 渠道还有旧版渠道级水位线时，先把它落到该渠道所在的每个分组（channelGroups）再删掉，
+// 让没改动的分组保持原值，此后该渠道完全按分组生效。
+func mergeCascadeLimits(current cascadeLimits, items []cascadeLimitItem, channelGroups func(channelId int) []string) (cascadeLimits, error) {
+	next := cloneCascadeLimits(current)
+	for _, item := range items {
+		channelId := item.ChannelId
+		group := strings.TrimSpace(item.Group)
+		if channelId <= 0 {
+			return cascadeLimits{}, errors.New("参数错误: 非法渠道 ID")
+		}
+		if item.Rpm > 0 && item.DailyQuota > 0 {
+			return cascadeLimits{}, errors.New("参数错误: RPM 水位线与每日额度上限只能二选一")
+		}
+		if item.Rpm > 0 && group == "" {
+			return cascadeLimits{}, errors.New("参数错误: 设置 RPM 水位线需指定分组")
+		}
+
+		if legacy, ok := next.LegacyRpm[channelId]; ok {
+			if legacy > 0 {
+				for _, g := range channelGroups(channelId) {
+					if _, set := next.GroupRpm[g][channelId]; !set {
+						setGroupRpm(next.GroupRpm, g, channelId, legacy)
+					}
+				}
+			}
+			delete(next.LegacyRpm, channelId)
+		}
+
+		// 清除一律删键，不留 0 值残渣
+		delete(next.DailyQuota, channelId)
+		if item.DailyQuota > 0 || group == "" {
+			for g := range next.GroupRpm {
+				deleteGroupRpm(next.GroupRpm, g, channelId)
+			}
+		} else {
+			deleteGroupRpm(next.GroupRpm, group, channelId)
+		}
+		if item.DailyQuota > 0 {
+			next.DailyQuota[channelId] = item.DailyQuota
+		}
+		if item.Rpm > 0 {
+			setGroupRpm(next.GroupRpm, group, channelId, item.Rpm)
+		}
+	}
+	return next, nil
+}
+
+// cascadeChannelGroups 渠道当前配置的分组（旧版水位线落地用）；查不到时返回 nil
+func cascadeChannelGroups(channelId int) []string {
+	channel, err := model.GetChannelById(channelId, false)
+	if err != nil || channel == nil {
+		return nil
+	}
+	return channel.GetGroups()
+}
+
+// UpdateCascadeWatermark 保存渠道限流方式：分组 RPM 水位线（cascade_watermark.group_channel_rpm）
+// 或渠道每日额度上限（cascade_watermark.channel_daily_quota），二选一，规则见 mergeCascadeLimits。
 func UpdateCascadeWatermark(c *gin.Context) {
 	var req cascadeWatermarkRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -237,32 +373,41 @@ func UpdateCascadeWatermark(c *gin.Context) {
 		return
 	}
 
-	current := operation_setting.GetCascadeWatermarkSetting().ChannelRpm
-	merged := make(map[int]int, len(current)+len(req.Watermarks))
-	for channelId, rpm := range current {
-		merged[channelId] = rpm
-	}
-	for _, item := range req.Watermarks {
-		if item.ChannelId <= 0 {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "参数错误: 非法渠道 ID"})
-			return
-		}
-		if item.Rpm <= 0 {
-			// 清除水位线，不留 0 值残渣
-			delete(merged, item.ChannelId)
-			continue
-		}
-		merged[item.ChannelId] = item.Rpm
-	}
-
-	value, err := common.Marshal(merged)
+	limitSetting := operation_setting.GetCascadeWatermarkSetting()
+	next, err := mergeCascadeLimits(cascadeLimits{
+		LegacyRpm:  limitSetting.ChannelRpm,
+		GroupRpm:   limitSetting.GroupChannelRpm,
+		DailyQuota: limitSetting.ChannelDailyQuota,
+	}, req.Watermarks, cascadeChannelGroups)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	if err := model.UpdateOption("cascade_watermark.channel_rpm", string(value)); err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
-		return
+
+	// 分次写入，中途失败直接报错，管理员重新保存即可收敛；分组水位线先于旧版渠道级写入，
+	// 旧值已落到各分组后才删，中途失败也不会丢水位线
+	type optionUpdate struct {
+		key   string
+		value any
+	}
+	updates := []optionUpdate{
+		{"cascade_watermark.channel_daily_quota", next.DailyQuota},
+		{"cascade_watermark.group_channel_rpm", next.GroupRpm},
+	}
+	// 旧版渠道级水位线只减不增，没变化就不重写
+	if len(next.LegacyRpm) != len(limitSetting.ChannelRpm) {
+		updates = append(updates, optionUpdate{"cascade_watermark.channel_rpm", next.LegacyRpm})
+	}
+	for _, update := range updates {
+		value, err := common.Marshal(update.value)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		if err := model.UpdateOption(update.key, string(value)); err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 }
@@ -318,6 +463,26 @@ func PurgeCascadeGroup(c *gin.Context) {
 		}
 	}
 
+	// 该组的 RPM 水位线一并清掉，别留死配置
+	if groupRpm := operation_setting.GetCascadeWatermarkSetting().GroupChannelRpm; groupRpm[group] != nil {
+		remaining := make(map[string]map[int]int, len(groupRpm))
+		for name, channels := range groupRpm {
+			if name == group {
+				continue
+			}
+			remaining[name] = channels
+		}
+		value, marshalErr := common.Marshal(remaining)
+		if marshalErr != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": marshalErr.Error()})
+			return
+		}
+		if updateErr := model.UpdateOption("cascade_watermark.group_channel_rpm", string(value)); updateErr != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": updateErr.Error()})
+			return
+		}
+	}
+
 	// 展示顺序里的同名分组也一并摘掉，别留死组名占位
 	sequence := operation_setting.GetCascadeGroupSequence()
 	if slices.Contains(sequence, group) {
@@ -346,6 +511,30 @@ func PurgeCascadeGroup(c *gin.Context) {
 		"skipped": len(result.Skipped),
 	})
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": result})
+}
+
+// ResetCascadeGroupAffinity 清除指定分组下全部用户的渠道归属（编排页「按当前顺序重新落位」）：
+// 归属只在首次落位时按编排顺序选、活跃用户 TTL 不过期，改编排顺序后已有归属不会跟随；
+// 清除后该分组用户的下一条请求按当前顺序重新落位，代价是每个活跃用户重建一次上游 prompt cache
+func ResetCascadeGroupAffinity(c *gin.Context) {
+	var req struct {
+		Group string `json:"group"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "参数错误: " + err.Error()})
+		return
+	}
+	group := strings.TrimSpace(req.Group)
+	if group == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "参数错误: 分组名为空"})
+		return
+	}
+	deleted, err := service.ClearChannelAffinityCacheByGroup(group)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"deleted": deleted}})
 }
 
 // ResetCascadeChannelHealth 手动清除指定渠道的熔断标记（编排页「立即恢复」）

@@ -36,3 +36,14 @@ export {
   transformFormDataToPayload,
   transformUserToFormDefaults,
 } from './user-form'
+
+// ============================================================================
+// Group Blocks (per-user temporary group restrictions)
+// ============================================================================
+export {
+  type GroupBlockDuration,
+  DEFAULT_GROUP_BLOCK_DURATION,
+  resolveGroupBlockExpiresAt,
+  formatGroupBlockRemaining,
+  formatGroupBlockExpiry,
+} from './group-blocks'

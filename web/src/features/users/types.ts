@@ -219,6 +219,44 @@ export interface BindUserToResellerPayload {
   reseller_username?: string
 }
 
+/** One active per-user group restriction. expires_at is unix seconds; 0 = permanent. */
+export interface UserGroupBlock {
+  group: string
+  expires_at: number
+  /** Admin-only internal note, never shown to the user */
+  note?: string
+  created_by?: number
+  created_at: number
+}
+
+export interface UserGroupBlockGroupOption {
+  name: string
+  desc: string
+}
+
+export interface UserGroupBlocksDetail {
+  id: number
+  username: string
+  display_name: string
+  group: string
+  blocks: UserGroupBlock[]
+  /** Groups the user can use (excluding auto) */
+  groups: UserGroupBlockGroupOption[]
+}
+
+/** Full replacement: groups omitted here are unblocked. */
+export interface UserGroupBlocksPayload {
+  blocks: Array<Pick<UserGroupBlock, 'group' | 'expires_at' | 'note'>>
+}
+
+export interface GroupBlockUserItem {
+  id: number
+  username: string
+  display_name: string
+  group: string
+  blocks: UserGroupBlock[]
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

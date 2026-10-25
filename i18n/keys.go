@@ -327,6 +327,12 @@ const (
 	MsgDistributorInvalidParseModel       = "distributor.invalid_request_parse_model"
 )
 
+// User group block (per-user temporary group restriction) messages
+const (
+	MsgDistributorUserGroupBlocked          = "distributor.user_group_blocked"
+	MsgDistributorUserGroupBlockedPermanent = "distributor.user_group_blocked_permanent"
+)
+
 // Custom OAuth provider related messages
 const (
 	MsgCustomOAuthNotFound          = "custom_oauth.not_found"

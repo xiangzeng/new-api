@@ -105,41 +105,103 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
-				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-					affinityUsable := false
+				// 用户分组限制（防蒸馏临时封禁）：指定分组被封、或 auto 下全部分组被封时明示拒绝；
+				// auto 只封了部分分组时由选路跳过被封分组顺延
+				if blocked, expiresAt := service.CheckUserGroupBlocked(c, usingGroup); blocked {
+					abortWithOpenAiMessage(c, http.StatusForbidden, userGroupBlockedMessage(c, usingGroup, expiresAt))
+					return
+				}
+
+				preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup)
+				// 容量绕行记忆：同一亲和键近期超出过输入上限的渠道，本次归属判定与级联选路都跳过
+				service.LoadChannelAffinityCapacitySkips(c)
+				if found {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) &&
-						// 级联模式：粘住的渠道熔断中、或 RPM 已达水位线，则亲和让位走级联选择
-						(!service.CascadeEnabled() ||
-							(model.IsChannelHealthAvailable(preferred.Id) && !model.IsChannelOverWatermark(preferred.Id))) {
-						if usingGroup == "auto" {
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetRequestAutoGroups(c, userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									affinityUsable = true
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
-									break
+					// 可用性：渠道存在、已启用、支持该路径、且在（某个）分组下对本次模型启用
+					preferredGroup := ""
+					// 归属渠道只在用户被封的分组下可用时记下该分组：分组限制是临时的，按绕行处理而非失效
+					blockedGroup := ""
+					// 归属模式下归属渠道仍挂在候选分组里、只是接不了本次请求的模型 / 路径：
+					// 亲和键是用户级（不含模型），能力缺口是请求级的，按绕行处理而非失效，
+					// 否则用户换一次模型就会被搬到唯一支持该模型的渠道并永久归属过去
+					modelUnsupported := false
+					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled {
+						if channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
+							if usingGroup == "auto" {
+								userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+								autoGroups := service.GetRequestAutoGroups(c, userGroup)
+								for _, g := range autoGroups {
+									if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+										if _, blocked := service.GetUserGroupBlock(c, g); blocked {
+											if blockedGroup == "" {
+												blockedGroup = g
+											}
+											continue
+										}
+										preferredGroup = g
+										break
+									}
 								}
+							} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+								preferredGroup = usingGroup
 							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							channel = preferred
-							selectGroup = usingGroup
-							affinityUsable = true
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+						}
+						if preferredGroup == "" && blockedGroup == "" && service.ChannelAffinityHomeModeEnabled() {
+							candidateGroups := []string{usingGroup}
+							if usingGroup == "auto" {
+								candidateGroups = service.GetRequestAutoGroups(c, common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+							}
+							modelUnsupported = channelInAnyGroup(preferred, candidateGroups)
 						}
 					}
-					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
-						service.ClearCurrentChannelAffinityCache(c)
+					// 临时不可用（仅级联模式有健康 / 水位线 / 额度信号）：熔断中、今日额度已满一律不用
+					// （额度满等同禁用到次日，但归属保留，次日自动回归）；本亲和键近期在归属渠道上超出过
+					// 输入上限的，记忆有效期内同样绕行；
+					// 旧模式下达水位线即让位；归属模式下水位线只约束首次落位，仅达硬顶才绕行
+					detourReason := ""
+					if preferredGroup == "" && blockedGroup != "" {
+						detourReason = "user_group_blocked"
+					} else if modelUnsupported {
+						detourReason = "model_unsupported"
+					} else if preferredGroup != "" && service.CascadeEnabled() {
+						if !model.IsChannelHealthAvailable(preferred.Id) {
+							detourReason = "tripped"
+						} else if model.IsChannelOverDailyQuota(preferred.Id) {
+							detourReason = "over_daily_quota"
+						} else if service.IsChannelAffinityCapacitySkipped(c, preferred.Id) {
+							detourReason = "capacity_exceeded"
+						} else if service.ChannelAffinityHomeModeEnabled() {
+							if model.IsChannelOverWatermarkRatio(preferredGroup, preferred.Id, service.GetChannelAffinityHomeHardWatermarkRatio()) {
+								detourReason = "over_hard_watermark"
+							}
+						} else if model.IsChannelOverWatermark(preferredGroup, preferred.Id) {
+							detourReason = "over_watermark"
+						}
 					}
-					if affinityUsable && channel != nil {
-						// 亲和命中绕开了级联选择器，须在此单独记账，
+					switch {
+					case detourReason != "":
+						if service.ChannelAffinityHomeModeEnabled() {
+							// 归属模式：保留归属，本次绕行级联选择器，恢复后自动回归
+							service.MarkChannelAffinityDetour(c, preferred.Id, detourReason)
+						} else if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+							// 旧模式：让位即清除，成功后重绑到新渠道
+							service.ClearCurrentChannelAffinityCache(c)
+						}
+					case preferredGroup == "":
+						// 永久失效（禁用 / 删除 / 移出分组；旧模式下也含不支持本次模型）：清除亲和，重新落位
+						if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+							service.ClearCurrentChannelAffinityCache(c)
+						}
+					default:
+						channel = preferred
+						selectGroup = preferredGroup
+						if usingGroup == "auto" {
+							common.SetContextKey(c, constant.ContextKeyAutoGroup, preferredGroup)
+						}
+						service.MarkChannelAffinityUsed(c, preferredGroup, preferred.Id)
+						// 亲和命中绕开了级联选择器，须在此单独记账（记在归属所在分组），
 						// 否则粘住的渠道 RPM 恒为 0、水位线形同虚设
-						model.RecordChannelRequest(channel.Id)
+						model.RecordChannelRequest(selectGroup, channel.Id)
 					}
 				}
 
@@ -185,6 +247,28 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+// userGroupBlockedMessage 分组限制的明示提示：带预计恢复时间（服务器本地时区），永久封禁不带
+func userGroupBlockedMessage(c *gin.Context, group string, expiresAt int64) string {
+	if expiresAt <= 0 {
+		return i18n.T(c, i18n.MsgDistributorUserGroupBlockedPermanent, map[string]any{"Group": group})
+	}
+	until := time.Unix(expiresAt, 0).Format("2006-01-02 15:04 (UTC-07:00)")
+	return i18n.T(c, i18n.MsgDistributorUserGroupBlocked, map[string]any{"Group": group, "Until": until})
+}
+
+// channelInAnyGroup 渠道配置的分组里是否含任一候选分组（只看渠道分组配置，不看模型能力）
+func channelInAnyGroup(channel *model.Channel, groups []string) bool {
+	if channel == nil {
+		return false
+	}
+	for _, g := range channel.GetGroups() {
+		if g != "" && slices.Contains(groups, g) {
+			return true
+		}
+	}
+	return false
 }
 
 // channelSupportsRequestPath reports whether a channel can serve the request path.

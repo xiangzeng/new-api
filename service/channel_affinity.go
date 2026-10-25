@@ -25,6 +25,10 @@ const (
 	ginKeyChannelAffinityMeta       = "channel_affinity_meta"
 	ginKeyChannelAffinityLogInfo    = "channel_affinity_log_info"
 	ginKeyChannelAffinitySkipRetry  = "channel_affinity_skip_retry_on_failure"
+	// 归属模式：本次请求的归属渠道 ID、是否绕行及原因（见 docs/channel/cascade-failover.md §2.4）
+	ginKeyChannelAffinityHomeChannel  = "channel_affinity_home_channel_id"
+	ginKeyChannelAffinityDetour       = "channel_affinity_detour"
+	ginKeyChannelAffinityDetourReason = "channel_affinity_detour_reason"
 
 	channelAffinityCacheNamespace           = "new-api:channel_affinity:v1"
 	channelAffinityUsageCacheStatsNamespace = "new-api:channel_affinity_usage_cache_stats:v1"
@@ -243,6 +247,81 @@ func ClearChannelAffinityCacheByRuleName(ruleName string) (int, error) {
 		return 0, err
 	}
 	return deleted, nil
+}
+
+// ClearChannelAffinityCacheByGroup 清除指定分组下的全部亲和缓存（编排页「按当前顺序重新落位」）：
+// 该分组用户的下一条请求按当前编排顺序重新落位，同一用户在其他分组的归属不受影响。
+// 只处理同时带规则名与分组名的规则（键形如 规则名[:模型]:分组:值）；
+// 归属模式下在途请求不会把被清除的归属写回（见 RecordChannelAffinity）。
+func ClearChannelAffinityCacheByGroup(group string) (int, error) {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return 0, fmt.Errorf("group 不能为空")
+	}
+
+	setting := operation_setting.GetChannelAffinitySetting()
+	if setting == nil {
+		return 0, fmt.Errorf("channel_affinity_setting 未初始化")
+	}
+
+	rules := make([]operation_setting.ChannelAffinityRule, 0, len(setting.Rules))
+	for _, r := range setting.Rules {
+		if strings.TrimSpace(r.Name) == "" || !r.IncludeRuleName || !r.IncludeUsingGroup {
+			continue
+		}
+		rules = append(rules, r)
+	}
+	if len(rules) == 0 {
+		return 0, nil
+	}
+
+	cache := getChannelAffinityCache()
+	keys, err := cache.Keys()
+	if err != nil {
+		return 0, err
+	}
+	prefix := channelAffinityCacheNamespace + ":"
+	matched := make([]string, 0, len(keys))
+	for _, k := range keys {
+		suffix, ok := strings.CutPrefix(k, prefix)
+		if !ok {
+			continue
+		}
+		for _, r := range rules {
+			if channelAffinityKeyInGroup(suffix, r, group) {
+				matched = append(matched, k)
+				break
+			}
+		}
+	}
+	if len(matched) == 0 {
+		return 0, nil
+	}
+
+	res, err := cache.DeleteMany(matched)
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, ok := range res {
+		if ok {
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// channelAffinityKeyInGroup 判断去掉命名空间的缓存键是否属于该规则在指定分组下的键（键结构见 buildChannelAffinityCacheKeySuffix）
+func channelAffinityKeyInGroup(suffix string, rule operation_setting.ChannelAffinityRule, group string) bool {
+	rest, ok := strings.CutPrefix(suffix, rule.Name+":")
+	if !ok {
+		return false
+	}
+	if strings.HasPrefix(rest, group+":") {
+		return true
+	}
+	// 键含模型名时分组段在模型之后，模型名本身可能带冒号，按中间段匹配
+	return rule.IncludeModelName && strings.Contains(rest, ":"+group+":")
 }
 
 func matchAnyRegexCached(patterns []string, s string) bool {
@@ -665,12 +744,99 @@ func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 	return false
 }
 
+// ClearCurrentChannelAffinityCacheOnFault 渠道报故障类错误时的亲和处理：
+// 归属模式下保留归属（本次请求由级联接管绕行，渠道恢复后自动回归，避免搬家式重建缓存），
+// 只解除 skip-retry 让故障切换不被阻断；旧模式下清除亲和，成功后重绑到新渠道。
+func ClearCurrentChannelAffinityCacheOnFault(c *gin.Context) bool {
+	if ChannelAffinityHomeModeEnabled() {
+		if c != nil {
+			c.Set(ginKeyChannelAffinitySkipRetry, false)
+		}
+		return false
+	}
+	return ClearCurrentChannelAffinityCache(c)
+}
+
 func ShouldKeepChannelAffinityOnChannelDisabled() bool {
 	setting := operation_setting.GetChannelAffinitySetting()
 	if setting == nil {
 		return false
 	}
 	return setting.KeepOnChannelDisabled
+}
+
+// ChannelAffinityHomeModeEnabled 归属模式是否生效（亲和总开关 + home_mode 同时开启）
+func ChannelAffinityHomeModeEnabled() bool {
+	setting := operation_setting.GetChannelAffinitySetting()
+	if setting == nil {
+		return false
+	}
+	return setting.Enabled && setting.HomeMode
+}
+
+// GetChannelAffinityHomeHardWatermarkRatio 归属渠道硬顶倍数；<= 0 表示不设硬顶
+func GetChannelAffinityHomeHardWatermarkRatio() float64 {
+	setting := operation_setting.GetChannelAffinitySetting()
+	if setting == nil || setting.HomeHardWatermarkRatio <= 0 {
+		return 0
+	}
+	return setting.HomeHardWatermarkRatio
+}
+
+func getChannelAffinityHomeChannel(c *gin.Context) int {
+	if c == nil {
+		return 0
+	}
+	return c.GetInt(ginKeyChannelAffinityHomeChannel)
+}
+
+// IsChannelAffinityFirstPlacement 本次请求是否是归属模式下的「首次落位」：
+// 命中了亲和规则（上下文里有亲和 meta）但尚无归属渠道——缓存 miss、TTL 过期、
+// 或归属永久失效被清除后重落位都算。命中归属（MarkChannelAffinityUsed）与绕行
+// （MarkChannelAffinityDetour）都已写入归属渠道，返回 false。
+// 首次落位的选路须与归属流量同用硬顶（home_hard_watermark_ratio），否则软水位线
+// 会把新落位用户永久分给备用渠道；重试循环里每次重选都沿用此判定。
+func IsChannelAffinityFirstPlacement(c *gin.Context) bool {
+	if c == nil || !ChannelAffinityHomeModeEnabled() {
+		return false
+	}
+	if _, ok := getChannelAffinityMeta(c); !ok {
+		return false
+	}
+	return getChannelAffinityHomeChannel(c) <= 0
+}
+
+// MarkChannelAffinityDetour 归属模式下，归属渠道临时不可用（熔断中 / 达硬顶）时标记本次请求绕行：
+// 归属保留在上下文里供 RecordChannelAffinity 写回刷新 TTL，日志信息带 detour 字段便于事后核对。
+// 绕行不算亲和命中，亲和的 skip-retry 语义不启用。
+func MarkChannelAffinityDetour(c *gin.Context, homeChannelID int, reason string) {
+	if c == nil || homeChannelID <= 0 {
+		return
+	}
+	meta, ok := getChannelAffinityMeta(c)
+	if !ok {
+		return
+	}
+	c.Set(ginKeyChannelAffinityHomeChannel, homeChannelID)
+	c.Set(ginKeyChannelAffinityDetour, true)
+	c.Set(ginKeyChannelAffinityDetourReason, reason)
+	c.Set(ginKeyChannelAffinitySkipRetry, false)
+	info := map[string]interface{}{
+		"reason":          meta.RuleName,
+		"rule_name":       meta.RuleName,
+		"using_group":     meta.UsingGroup,
+		"model":           meta.ModelName,
+		"request_path":    meta.RequestPath,
+		"home_channel_id": homeChannelID,
+		"detour":          true,
+		"detour_reason":   reason,
+		"key_source":      meta.KeySourceType,
+		"key_key":         meta.KeySourceKey,
+		"key_path":        meta.KeySourcePath,
+		"key_hint":        meta.KeyHint,
+		"key_fp":          meta.KeyFingerprint,
+	}
+	c.Set(ginKeyChannelAffinityLogInfo, info)
 }
 
 func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int) {
@@ -682,6 +848,8 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 		return
 	}
 	c.Set(ginKeyChannelAffinitySkipRetry, meta.SkipRetry)
+	// 归属模式下命中的渠道即归属：请求内重试切到别的渠道成功也不改写归属
+	c.Set(ginKeyChannelAffinityHomeChannel, channelID)
 	info := map[string]interface{}{
 		"reason":         meta.RuleName,
 		"rule_name":      meta.RuleName,
@@ -695,6 +863,9 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 		"key_path":       meta.KeySourcePath,
 		"key_hint":       meta.KeyHint,
 		"key_fp":         meta.KeyFingerprint,
+	}
+	if ChannelAffinityHomeModeEnabled() {
+		info["home_channel_id"] = channelID
 	}
 	c.Set(ginKeyChannelAffinityLogInfo, info)
 }
@@ -718,7 +889,19 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 	if setting == nil || !setting.Enabled {
 		return
 	}
-	if setting.SwitchOnSuccess && c != nil {
+	hadHome := false
+	if setting.HomeMode {
+		// 归属模式：已有归属则写回归属并刷新 TTL（绕行 / 请求内重试都不改写）；
+		// 首次落位记实际成功的渠道（刚失败过的渠道不该成为归属）
+		if homeChannelID := getChannelAffinityHomeChannel(c); homeChannelID > 0 {
+			channelID = homeChannelID
+			hadHome = true
+		} else if c != nil {
+			if successChannelID := c.GetInt("channel_id"); successChannelID > 0 {
+				channelID = successChannelID
+			}
+		}
+	} else if setting.SwitchOnSuccess && c != nil {
 		if successChannelID := c.GetInt("channel_id"); successChannelID > 0 {
 			channelID = successChannelID
 		}
@@ -734,6 +917,14 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 		ttlSeconds = 3600
 	}
 	cache := getChannelAffinityCache()
+	// 已有归属的请求只续期仍指向该归属的键：请求进行中归属被清除（编排页重新落位、渠道禁用即清、
+	// 手动删除）或已被新落位改写时不写回，否则在途请求结束会把旧归属复活
+	if hadHome {
+		current, found, err := cache.Get(cacheKey)
+		if err == nil && (!found || current != channelID) {
+			return
+		}
+	}
 	if err := cache.SetWithTTL(cacheKey, channelID, time.Duration(ttlSeconds)*time.Second); err != nil {
 		common.SysError(fmt.Sprintf("channel affinity cache set failed: key=%s, err=%v", cacheKey, err))
 	}

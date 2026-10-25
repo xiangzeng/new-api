@@ -24,6 +24,9 @@ type CascadeSetting struct {
 	ExtraFaultKeywords []string `json:"extra_fault_keywords"`
 	// 排除：错误内容命中关键词即不视为渠道故障（优先级最高）
 	IgnoreFaultKeywords []string `json:"ignore_fault_keywords"`
+	// 容量绕行：错误内容命中关键词即视为「本次请求超出该渠道输入上限」，
+	// 本次换渠道重试但不计故障、不熔断、不改归属（优先于故障判定）
+	CapacityDetourKeywords []string `json:"capacity_detour_keywords"`
 }
 
 var cascadeSetting = CascadeSetting{
@@ -39,6 +42,7 @@ var cascadeSetting = CascadeSetting{
 	ExtraFaultStatusCodes:   []int{},
 	ExtraFaultKeywords:      []string{},
 	IgnoreFaultKeywords:     []string{},
+	CapacityDetourKeywords:  []string{"native input budget"},
 }
 
 func init() {

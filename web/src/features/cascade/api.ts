@@ -23,6 +23,7 @@ import type {
   CascadeHealthEventsResponse,
   CascadeOverviewResponse,
   CascadePurgeGroupResponse,
+  CascadeResetAffinityResponse,
 } from './types'
 
 export async function getCascadeOverview() {
@@ -43,9 +44,16 @@ export async function saveCascadeOrder(payload: {
   return res.data
 }
 
-// 保存渠道 RPM 水位线：rpm <= 0 表示清除（= 不限流），未提交的渠道保持原值
+// 保存渠道限流方式：rpm（group 分组下的 RPM 水位线，各分组独立）与 daily_quota
+// （渠道级每日额度上限，quota 单位）二选一。设 rpm 会清掉渠道的额度上限，设 daily_quota
+// 会清掉渠道在全部分组的水位线；两者都 <= 0 = 清除本组水位线与额度上限；未提交的渠道保持原值
 export async function saveCascadeWatermark(
-  watermarks: { channel_id: number; rpm: number }[]
+  watermarks: {
+    channel_id: number
+    group: string
+    rpm: number
+    daily_quota: number
+  }[]
 ) {
   const res = await api.post<CascadeActionResponse>('/api/cascade/watermark', {
     watermarks,
@@ -67,6 +75,15 @@ export async function resetCascadeChannelHealth(channelId: number) {
 export async function purgeCascadeGroup(group: string) {
   const res = await api.post<CascadePurgeGroupResponse>(
     '/api/cascade/purge_group',
+    { group }
+  )
+  return res.data
+}
+
+// 按当前顺序重新落位：清除该分组全部用户的渠道归属，下一条请求按当前编排顺序重新落位
+export async function resetCascadeGroupAffinity(group: string) {
+  const res = await api.post<CascadeResetAffinityResponse>(
+    '/api/cascade/reset_affinity',
     { group }
   )
   return res.data

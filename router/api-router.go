@@ -165,6 +165,12 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/:id/custom-pricing", controller.GetUserCustomPricing)
 				adminRoute.PUT("/:id/custom-pricing", controller.UpdateUserCustomPricing)
 				adminRoute.DELETE("/:id/custom-pricing", controller.DeleteUserCustomPricing)
+
+				// Group blocks (分组限制：防蒸馏临时封禁)
+				adminRoute.GET("/group-blocks/list", controller.GetGroupBlockUsers)
+				adminRoute.GET("/:id/group-blocks", controller.GetUserGroupBlocks)
+				adminRoute.PUT("/:id/group-blocks", controller.UpdateUserGroupBlocks)
+				adminRoute.DELETE("/:id/group-blocks", controller.DeleteUserGroupBlocks)
 			}
 		}
 
@@ -393,6 +399,7 @@ func SetApiRouter(router *gin.Engine) {
 			cascadeRoute.POST("/watermark", controller.UpdateCascadeWatermark)
 			cascadeRoute.POST("/reset_health", controller.ResetCascadeChannelHealth)
 			cascadeRoute.POST("/purge_group", controller.PurgeCascadeGroup)
+			cascadeRoute.POST("/reset_affinity", controller.ResetCascadeGroupAffinity)
 		}
 
 		prefillGroupRoute := apiRouter.Group("/prefill_group")

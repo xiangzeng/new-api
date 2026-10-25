@@ -95,9 +95,10 @@ func (p *RetryParam) ResetRetryNextTry() {
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 	channel, selectGroup, err := selectSatisfiedChannel(param)
 	// 选中即记账：RPM 滚动窗口在渠道被选中的瞬间 +1，并发突发时下一次选择立刻看到新计数，
-	// 水位线判定才不会滞后。探活与渠道测试不走这里，天然不计入。
+	// 水位线判定才不会滞后。按实际选中的分组记，同一渠道在不同分组的 RPM 互不相干。
+	// 探活与渠道测试不走这里，天然不计入。
 	if channel != nil {
-		model.RecordChannelRequest(channel.Id)
+		model.RecordChannelRequest(selectGroup, channel.Id)
 	}
 	return channel, selectGroup, err
 }
@@ -116,7 +117,7 @@ func selectSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 	}
 
 	if param.TokenGroup == "auto" {
-		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+		autoGroups := GetRequestUserAutoGroup(param.Ctx, userGroup)
 		if len(autoGroups) == 0 {
 			return nil, selectGroup, errors.New("auto groups is not enabled")
 		}
@@ -193,18 +194,49 @@ func selectSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 // cacheGetCascadeChannel 级联模式的渠道选择。
 // 非 auto 分组：组内按编排顺序遍历（排除已试/熔断渠道）。
 // auto 分组：分组顺序即级联外层，组内耗尽或无候选时切换到下一个分组。
+// 容量绕行记忆里的渠道（同一亲和键近期超出过其输入上限）先一并排除；排除后无渠道可选时
+// 放回再选一次，宁可再试一次也不直接报无可用渠道。
 func cacheGetCascadeChannel(param *RetryParam, userGroup string) (*model.Channel, string, error) {
 	tried := GetTriedChannelIds(param.Ctx, param.ExcludeChannelIDs)
+	skips := getChannelAffinityCapacitySkips(param.Ctx)
+	if len(skips) == 0 {
+		return cacheGetCascadeChannelExcluding(param, userGroup, tried)
+	}
+	exclude := make(map[int]bool, len(tried)+len(skips))
+	for id := range tried {
+		exclude[id] = true
+	}
+	for id := range skips {
+		exclude[id] = true
+	}
+	// auto 分组遍历会推进分组游标，放回重选前须还原
+	groupIndex, _ := common.GetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex)
+	channel, selectGroup, err := cacheGetCascadeChannelExcluding(param, userGroup, exclude)
+	if channel != nil || err != nil {
+		return channel, selectGroup, err
+	}
+	idx, _ := groupIndex.(int)
+	common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, idx)
+	return cacheGetCascadeChannelExcluding(param, userGroup, tried)
+}
+
+func cacheGetCascadeChannelExcluding(param *RetryParam, userGroup string, tried map[int]bool) (*model.Channel, string, error) {
+	// 归属模式首次落位：与归属流量同用硬顶倍数选路，软水位线只约束绕行等临时流量
+	// （否则主渠道稍忙就把新用户永久落到备用渠道，见 docs/channel/cascade-failover.md §2.4）
+	watermarkRatio := 0.0
+	if IsChannelAffinityFirstPlacement(param.Ctx) {
+		watermarkRatio = GetChannelAffinityHomeHardWatermarkRatio()
+	}
 
 	if param.TokenGroup != "auto" {
-		channel, err := model.GetCascadeSatisfiedChannel(param.TokenGroup, param.ModelName, param.RequestPath, tried)
+		channel, err := model.GetCascadeSatisfiedChannel(param.TokenGroup, param.ModelName, param.RequestPath, tried, watermarkRatio)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
 		return channel, param.TokenGroup, nil
 	}
 
-	autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+	autoGroups := GetRequestUserAutoGroup(param.Ctx, userGroup)
 	if len(autoGroups) == 0 {
 		return nil, param.TokenGroup, errors.New("auto groups is not enabled")
 	}
@@ -220,7 +252,7 @@ func cacheGetCascadeChannel(param *RetryParam, userGroup string) (*model.Channel
 	selectGroup := param.TokenGroup
 	for i := startGroupIndex; i < len(autoGroups); i++ {
 		autoGroup := autoGroups[i]
-		channel, err := model.GetCascadeSatisfiedChannel(autoGroup, param.ModelName, param.RequestPath, tried)
+		channel, err := model.GetCascadeSatisfiedChannel(autoGroup, param.ModelName, param.RequestPath, tried, watermarkRatio)
 		if err != nil {
 			return nil, autoGroup, err
 		}

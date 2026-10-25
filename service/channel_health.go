@@ -13,7 +13,8 @@ import (
 // 默认视为渠道故障：网络/连接类错误、429、401、403、5xx。
 // 默认不处理（原样返回用户）：400 等其余状态码。
 // 白名单可扩展（extra_fault_status_codes / extra_fault_keywords），
-// ignore_fault_keywords 反向排除且优先级最高。
+// ignore_fault_keywords 反向排除且优先级最高；命中 capacity_detour_keywords 的
+// 容量类错误也不算故障（见 IsChannelCapacityError）。
 // 详见 docs/channel/cascade-failover.md
 func IsChannelFaultError(err *types.NewAPIError) bool {
 	if err == nil {
@@ -24,6 +25,12 @@ func IsChannelFaultError(err *types.NewAPIError) bool {
 	lowerMessage := strings.ToLower(err.Error())
 	if len(setting.IgnoreFaultKeywords) > 0 {
 		if hit, _ := AcSearch(lowerMessage, setting.IgnoreFaultKeywords, true); hit {
+			return false
+		}
+	}
+	// 容量类错误是请求级的（渠道本身健康），由级联另行换渠道，不计故障
+	if len(setting.CapacityDetourKeywords) > 0 {
+		if hit, _ := AcSearch(lowerMessage, setting.CapacityDetourKeywords, true); hit {
 			return false
 		}
 	}
@@ -51,6 +58,21 @@ func IsChannelFaultError(err *types.NewAPIError) bool {
 		}
 	}
 	return false
+}
+
+// IsChannelCapacityError 判断错误是否属于「请求级容量不足」：上游明确报本次请求超出该渠道的
+// 输入上限（如部分 Kiro 号商的 native input budget）。命中 capacity_detour_keywords 即是。
+// 级联模式下本次换渠道重试，但不计故障、不熔断、不改归属。详见 docs/channel/cascade-failover.md
+func IsChannelCapacityError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	keywords := operation_setting.GetCascadeSetting().CapacityDetourKeywords
+	if len(keywords) == 0 {
+		return false
+	}
+	hit, _ := AcSearch(strings.ToLower(err.Error()), keywords, true)
+	return hit
 }
 
 // StreamOutcome 流式请求「表面成功」（未返回错误对象）时的健康判定结果
