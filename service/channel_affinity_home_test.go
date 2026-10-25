@@ -65,6 +65,7 @@ func getAffinityCacheValueForTest(t *testing.T, cacheKeySuffix string) (int, boo
 func TestRecordChannelAffinity_HomeModeDetourKeepsHome(t *testing.T) {
 	setChannelAffinityHomeModeForTest(t, true, true, true)
 	ctx, key := newHomeAffinityContextForTest(t, "claude user", "detour")
+	require.NoError(t, getChannelAffinityCache().SetWithTTL(key, 34, time.Minute))
 
 	// 归属 #34 熔断中 → 绕行到 #53 成功
 	MarkChannelAffinityDetour(ctx, 34, "tripped")
@@ -89,6 +90,7 @@ func TestRecordChannelAffinity_HomeModeDetourKeepsHome(t *testing.T) {
 func TestRecordChannelAffinity_HomeModeInRequestRetryKeepsHome(t *testing.T) {
 	setChannelAffinityHomeModeForTest(t, true, true, true)
 	ctx, key := newHomeAffinityContextForTest(t, "claude user", "retry")
+	require.NoError(t, getChannelAffinityCache().SetWithTTL(key, 34, time.Minute))
 
 	// 归属 #34 命中 → 请求内故障重试切到 #49 成功
 	MarkChannelAffinityUsed(ctx, "default", 34)
@@ -206,6 +208,88 @@ func TestGetChannelAffinityHomeHardWatermarkRatio(t *testing.T) {
 	require.Equal(t, 0.0, GetChannelAffinityHomeHardWatermarkRatio(), "负数视为不设硬顶")
 	setting.HomeHardWatermarkRatio = 2
 	require.Equal(t, 2.0, GetChannelAffinityHomeHardWatermarkRatio())
+}
+
+// 在途请求不复活旧归属：请求进行中归属被清除（编排页重新落位 / 渠道禁用即清）或已被新落位改写，
+// 请求结束时不写回；归属仍是同一渠道才续期（续期见 DetourKeepsHome / InRequestRetryKeepsHome）
+func TestRecordChannelAffinity_HomeModeSkipsStaleWriteback(t *testing.T) {
+	setChannelAffinityHomeModeForTest(t, true, true, true)
+
+	clearedCtx, clearedKey := newHomeAffinityContextForTest(t, "claude user", "stale-cleared")
+	require.NoError(t, getChannelAffinityCache().SetWithTTL(clearedKey, 34, time.Minute))
+	MarkChannelAffinityUsed(clearedCtx, "default", 34)
+	_, err := getChannelAffinityCache().DeleteMany([]string{clearedKey})
+	require.NoError(t, err)
+	RecordChannelAffinity(clearedCtx, 34)
+	_, found := getAffinityCacheValueForTest(t, clearedKey)
+	require.False(t, found, "归属已被清除，在途请求不应写回")
+
+	replacedCtx, replacedKey := newHomeAffinityContextForTest(t, "claude user", "stale-replaced")
+	require.NoError(t, getChannelAffinityCache().SetWithTTL(replacedKey, 34, time.Minute))
+	MarkChannelAffinityDetour(replacedCtx, 34, "tripped")
+	require.NoError(t, getChannelAffinityCache().SetWithTTL(replacedKey, 59, time.Minute))
+	replacedCtx.Set("channel_id", 53)
+	RecordChannelAffinity(replacedCtx, 53)
+	got, found := getAffinityCacheValueForTest(t, replacedKey)
+	require.True(t, found)
+	require.Equal(t, 59, got, "归属已被新落位改写，在途请求不应覆盖")
+
+	// 首次落位不受影响：键不存在照常写入成功渠道
+	firstCtx, firstKey := newHomeAffinityContextForTest(t, "claude user", "stale-first")
+	firstCtx.Set("channel_id", 59)
+	RecordChannelAffinity(firstCtx, 59)
+	got, found = getAffinityCacheValueForTest(t, firstKey)
+	require.True(t, found)
+	require.Equal(t, 59, got)
+}
+
+// 按分组清归属：只删目标分组的键（含带模型名的规则），其他分组、同名前缀分组、
+// 不带分组的规则都不动
+func TestClearChannelAffinityCacheByGroup(t *testing.T) {
+	setting := operation_setting.GetChannelAffinitySetting()
+	require.NotNil(t, setting)
+	origRules := setting.Rules
+	t.Cleanup(func() { setting.Rules = origRules })
+	setting.Rules = []operation_setting.ChannelAffinityRule{
+		{Name: "claude user", IncludeRuleName: true, IncludeUsingGroup: true},
+		{Name: "claude user chat", IncludeRuleName: true, IncludeUsingGroup: true},
+		{Name: "model rule", IncludeRuleName: true, IncludeModelName: true, IncludeUsingGroup: true},
+		{Name: "no group", IncludeRuleName: true},
+	}
+
+	group := fmt.Sprintf("kiro-高缓-%d", time.Now().UnixNano())
+	other := group + "-特价"
+	wantDeleted := []string{
+		"claude user:" + group + ":93",
+		"claude user chat:" + group + ":430",
+		"model rule:claude:sonnet:" + group + ":5",
+	}
+	wantKept := []string{
+		"claude user:" + other + ":93",
+		"claude user:" + group + "x:1",
+		"model rule:claude-opus:" + other + ":5",
+		"no group:" + group + ":7",
+	}
+	cache := getChannelAffinityCache()
+	for _, k := range append(append([]string{}, wantDeleted...), wantKept...) {
+		require.NoError(t, cache.SetWithTTL(k, 34, time.Minute))
+	}
+	t.Cleanup(func() { _, _ = cache.DeleteMany(append(append([]string{}, wantDeleted...), wantKept...)) })
+
+	deleted, err := ClearChannelAffinityCacheByGroup(" " + group + " ")
+	require.NoError(t, err)
+	require.Equal(t, len(wantDeleted), deleted)
+	for _, k := range wantDeleted {
+		_, found := getAffinityCacheValueForTest(t, k)
+		require.False(t, found, k)
+	}
+	for _, k := range wantKept {
+		_, found := getAffinityCacheValueForTest(t, k)
+		require.True(t, found, k)
+	}
+
+	_, err = ClearChannelAffinityCacheByGroup("  ")
+	require.Error(t, err)
 }
 
 // 默认 Claude 规则：用户级键（context_int:id）优先于 metadata.user_id，

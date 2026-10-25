@@ -249,6 +249,81 @@ func ClearChannelAffinityCacheByRuleName(ruleName string) (int, error) {
 	return deleted, nil
 }
 
+// ClearChannelAffinityCacheByGroup 清除指定分组下的全部亲和缓存（编排页「按当前顺序重新落位」）：
+// 该分组用户的下一条请求按当前编排顺序重新落位，同一用户在其他分组的归属不受影响。
+// 只处理同时带规则名与分组名的规则（键形如 规则名[:模型]:分组:值）；
+// 归属模式下在途请求不会把被清除的归属写回（见 RecordChannelAffinity）。
+func ClearChannelAffinityCacheByGroup(group string) (int, error) {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return 0, fmt.Errorf("group 不能为空")
+	}
+
+	setting := operation_setting.GetChannelAffinitySetting()
+	if setting == nil {
+		return 0, fmt.Errorf("channel_affinity_setting 未初始化")
+	}
+
+	rules := make([]operation_setting.ChannelAffinityRule, 0, len(setting.Rules))
+	for _, r := range setting.Rules {
+		if strings.TrimSpace(r.Name) == "" || !r.IncludeRuleName || !r.IncludeUsingGroup {
+			continue
+		}
+		rules = append(rules, r)
+	}
+	if len(rules) == 0 {
+		return 0, nil
+	}
+
+	cache := getChannelAffinityCache()
+	keys, err := cache.Keys()
+	if err != nil {
+		return 0, err
+	}
+	prefix := channelAffinityCacheNamespace + ":"
+	matched := make([]string, 0, len(keys))
+	for _, k := range keys {
+		suffix, ok := strings.CutPrefix(k, prefix)
+		if !ok {
+			continue
+		}
+		for _, r := range rules {
+			if channelAffinityKeyInGroup(suffix, r, group) {
+				matched = append(matched, k)
+				break
+			}
+		}
+	}
+	if len(matched) == 0 {
+		return 0, nil
+	}
+
+	res, err := cache.DeleteMany(matched)
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, ok := range res {
+		if ok {
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// channelAffinityKeyInGroup 判断去掉命名空间的缓存键是否属于该规则在指定分组下的键（键结构见 buildChannelAffinityCacheKeySuffix）
+func channelAffinityKeyInGroup(suffix string, rule operation_setting.ChannelAffinityRule, group string) bool {
+	rest, ok := strings.CutPrefix(suffix, rule.Name+":")
+	if !ok {
+		return false
+	}
+	if strings.HasPrefix(rest, group+":") {
+		return true
+	}
+	// 键含模型名时分组段在模型之后，模型名本身可能带冒号，按中间段匹配
+	return rule.IncludeModelName && strings.Contains(rest, ":"+group+":")
+}
+
 func matchAnyRegexCached(patterns []string, s string) bool {
 	if len(patterns) == 0 || s == "" {
 		return false
@@ -814,11 +889,13 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 	if setting == nil || !setting.Enabled {
 		return
 	}
+	hadHome := false
 	if setting.HomeMode {
 		// 归属模式：已有归属则写回归属并刷新 TTL（绕行 / 请求内重试都不改写）；
 		// 首次落位记实际成功的渠道（刚失败过的渠道不该成为归属）
 		if homeChannelID := getChannelAffinityHomeChannel(c); homeChannelID > 0 {
 			channelID = homeChannelID
+			hadHome = true
 		} else if c != nil {
 			if successChannelID := c.GetInt("channel_id"); successChannelID > 0 {
 				channelID = successChannelID
@@ -840,6 +917,14 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 		ttlSeconds = 3600
 	}
 	cache := getChannelAffinityCache()
+	// 已有归属的请求只续期仍指向该归属的键：请求进行中归属被清除（编排页重新落位、渠道禁用即清、
+	// 手动删除）或已被新落位改写时不写回，否则在途请求结束会把旧归属复活
+	if hadHome {
+		current, found, err := cache.Get(cacheKey)
+		if err == nil && (!found || current != channelID) {
+			return
+		}
+	}
 	if err := cache.SetWithTTL(cacheKey, channelID, time.Duration(ttlSeconds)*time.Second); err != nil {
 		common.SysError(fmt.Sprintf("channel affinity cache set failed: key=%s, err=%v", cacheKey, err))
 	}

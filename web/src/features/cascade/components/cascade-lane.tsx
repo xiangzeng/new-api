@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, Trash2 } from 'lucide-react'
+import { ArrowRight, RotateCcw, Trash2 } from 'lucide-react'
 import { Fragment, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -42,7 +42,11 @@ import {
 import { channelsQueryKeys } from '@/features/channels/lib'
 import type { Channel } from '@/features/channels/types'
 
-import { purgeCascadeGroup, resetCascadeChannelHealth } from '../api'
+import {
+  purgeCascadeGroup,
+  resetCascadeChannelHealth,
+  resetCascadeGroupAffinity,
+} from '../api'
 import type { CascadeChannel, CascadeGroup } from '../types'
 import { ChannelCard } from './channel-card'
 
@@ -67,6 +71,7 @@ export function CascadeLane({
 
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [purgeOpen, setPurgeOpen] = useState(false)
+  const [resetAffinityOpen, setResetAffinityOpen] = useState(false)
   const dragIndexRef = useRef<number | null>(null)
 
   const channelsById = new Map<number, CascadeChannel>(
@@ -130,6 +135,33 @@ export function CascadeLane({
     },
   })
 
+  // 按当前顺序重新落位：归属只在首次落位时按编排选、活跃用户不过期，改顺序后已有归属不跟随，
+  // 清掉该组归属让下一条请求按当前顺序重新落位（每个活跃用户重建一次上游缓存）
+  const resetAffinityMutation = useMutation({
+    mutationFn: resetCascadeGroupAffinity,
+    onSuccess: (res) => {
+      if (!res.success) {
+        toast.error(res.message || t('Operation failed'))
+        return
+      }
+      toast.success(
+        t('Cleared channel bindings for {{count}} users', {
+          count: res.data?.deleted ?? 0,
+        })
+      )
+      setResetAffinityOpen(false)
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    },
+  })
+
+  // 页面上拖动过但还没保存：重新落位按已保存的顺序走，确认弹窗里提示
+  const orderUnsaved =
+    ids.join(',') !== group.channels.map((channel) => channel.id).join(',')
+
   // 只挂着这一个分组的渠道摘完会失去全部 ability，后端会跳过——提前在确认弹窗里点名
   const soleGroupChannels = group.channels.filter((channel) => {
     const full = fullChannelsById.get(channel.id)
@@ -181,6 +213,17 @@ export function CascadeLane({
             </Button>
           </>
         )}
+        {!group.orphan && (
+          <Button
+            variant='ghost'
+            size='sm'
+            className='ml-auto h-6 px-2 text-xs'
+            onClick={() => setResetAffinityOpen(true)}
+          >
+            <RotateCcw className='size-3' />
+            {t('Re-place by current order')}
+          </Button>
+        )}
       </div>
       <div className='flex items-stretch gap-2 overflow-x-auto pb-2'>
         {ids.map((id, index) => {
@@ -216,6 +259,44 @@ export function CascadeLane({
           )
         })}
       </div>
+
+      <AlertDialog open={resetAffinityOpen} onOpenChange={setResetAffinityOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('Re-place users in "{{name}}" by current order?', {
+                name: group.name,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                "Users keep the channel they were first placed on, so changing the order does not move them. This clears every user binding in this group; each user's next request is placed by the current order. Every active user rebuilds the upstream prompt cache once (billed as cache writes)."
+              )}
+              {orderUnsaved && (
+                <span className='text-destructive mt-2 block'>
+                  {t(
+                    'The order on this page is not saved yet. Users will be placed by the saved order.'
+                  )}
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetAffinityMutation.isPending}>
+              {t('Cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={resetAffinityMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault()
+                resetAffinityMutation.mutate(group.name)
+              }}
+            >
+              {t('Re-place by current order')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={purgeOpen} onOpenChange={setPurgeOpen}>
         <AlertDialogContent>

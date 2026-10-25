@@ -23,6 +23,7 @@ import type {
   CascadeHealthEventsResponse,
   CascadeOverviewResponse,
   CascadePurgeGroupResponse,
+  CascadeResetAffinityResponse,
 } from './types'
 
 export async function getCascadeOverview() {
@@ -68,6 +69,15 @@ export async function resetCascadeChannelHealth(channelId: number) {
 export async function purgeCascadeGroup(group: string) {
   const res = await api.post<CascadePurgeGroupResponse>(
     '/api/cascade/purge_group',
+    { group }
+  )
+  return res.data
+}
+
+// 按当前顺序重新落位：清除该分组全部用户的渠道归属，下一条请求按当前编排顺序重新落位
+export async function resetCascadeGroupAffinity(group: string) {
+  const res = await api.post<CascadeResetAffinityResponse>(
+    '/api/cascade/reset_affinity',
     { group }
   )
   return res.data

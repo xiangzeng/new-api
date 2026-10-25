@@ -399,6 +399,7 @@ func SetApiRouter(router *gin.Engine) {
 			cascadeRoute.POST("/watermark", controller.UpdateCascadeWatermark)
 			cascadeRoute.POST("/reset_health", controller.ResetCascadeChannelHealth)
 			cascadeRoute.POST("/purge_group", controller.PurgeCascadeGroup)
+			cascadeRoute.POST("/reset_affinity", controller.ResetCascadeGroupAffinity)
 		}
 
 		prefillGroupRoute := apiRouter.Group("/prefill_group")

@@ -55,6 +55,7 @@ func TestRecordChannelAffinityCapacityDetour_HomeChannelMarksDetourAndKeepsHome(
 	setChannelAffinityHomeModeForTest(t, true, true, true)
 	ctx, key := newHomeAffinityContextForTest(t, "claude user", "capacity-home")
 	cleanupCapacitySkipsForTest(t, ctx)
+	require.NoError(t, getChannelAffinityCache().SetWithTTL(key, 58, time.Minute))
 
 	// 归属 #58 命中 → 超出输入上限 → 请求内换到 #53 成功
 	MarkChannelAffinityUsed(ctx, "kiro-高缓", 58)

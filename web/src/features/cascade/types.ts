@@ -119,6 +119,14 @@ export type CascadePurgeGroupResponse = {
   }
 }
 
+export type CascadeResetAffinityResponse = {
+  success: boolean
+  message?: string
+  data?: {
+    deleted: number
+  }
+}
+
 export type CascadeHealthEventType = 'trip' | 'restore' | 'manual_reset'
 
 export type CascadeHealthEvent = {

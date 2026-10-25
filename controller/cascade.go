@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -389,6 +390,30 @@ func PurgeCascadeGroup(c *gin.Context) {
 		"skipped": len(result.Skipped),
 	})
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": result})
+}
+
+// ResetCascadeGroupAffinity 清除指定分组下全部用户的渠道归属（编排页「按当前顺序重新落位」）：
+// 归属只在首次落位时按编排顺序选、活跃用户 TTL 不过期，改编排顺序后已有归属不会跟随；
+// 清除后该分组用户的下一条请求按当前顺序重新落位，代价是每个活跃用户重建一次上游 prompt cache
+func ResetCascadeGroupAffinity(c *gin.Context) {
+	var req struct {
+		Group string `json:"group"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "参数错误: " + err.Error()})
+		return
+	}
+	group := strings.TrimSpace(req.Group)
+	if group == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "参数错误: 分组名为空"})
+		return
+	}
+	deleted, err := service.ClearChannelAffinityCacheByGroup(group)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"deleted": deleted}})
 }
 
 // ResetCascadeChannelHealth 手动清除指定渠道的熔断标记（编排页「立即恢复」）
