@@ -715,6 +715,22 @@ func getChannelAffinityHomeChannel(c *gin.Context) int {
 	return c.GetInt(ginKeyChannelAffinityHomeChannel)
 }
 
+// IsChannelAffinityFirstPlacement 本次请求是否是归属模式下的「首次落位」：
+// 命中了亲和规则（上下文里有亲和 meta）但尚无归属渠道——缓存 miss、TTL 过期、
+// 或归属永久失效被清除后重落位都算。命中归属（MarkChannelAffinityUsed）与绕行
+// （MarkChannelAffinityDetour）都已写入归属渠道，返回 false。
+// 首次落位的选路须与归属流量同用硬顶（home_hard_watermark_ratio），否则软水位线
+// 会把新落位用户永久分给备用渠道；重试循环里每次重选都沿用此判定。
+func IsChannelAffinityFirstPlacement(c *gin.Context) bool {
+	if c == nil || !ChannelAffinityHomeModeEnabled() {
+		return false
+	}
+	if _, ok := getChannelAffinityMeta(c); !ok {
+		return false
+	}
+	return getChannelAffinityHomeChannel(c) <= 0
+}
+
 // MarkChannelAffinityDetour 归属模式下，归属渠道临时不可用（熔断中 / 达硬顶）时标记本次请求绕行：
 // 归属保留在上下文里供 RecordChannelAffinity 写回刷新 TTL，日志信息带 detour 字段便于事后核对。
 // 绕行不算亲和命中，亲和的 skip-retry 语义不启用。

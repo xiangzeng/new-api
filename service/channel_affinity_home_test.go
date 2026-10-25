@@ -171,6 +171,30 @@ func TestChannelAffinityHomeModeEnabled_RequiresBothSwitches(t *testing.T) {
 	require.True(t, ChannelAffinityHomeModeEnabled())
 }
 
+// 首次落位判定：命中规则但无归属 → true；命中归属 / 绕行 → false；无规则 meta / 非归属模式 → false
+func TestIsChannelAffinityFirstPlacement(t *testing.T) {
+	setChannelAffinityHomeModeForTest(t, true, true, true)
+
+	ctx, _ := newHomeAffinityContextForTest(t, "claude user", "placement")
+	require.True(t, IsChannelAffinityFirstPlacement(ctx), "命中规则但缓存 miss = 首次落位")
+
+	usedCtx, _ := newHomeAffinityContextForTest(t, "claude user", "placement-used")
+	MarkChannelAffinityUsed(usedCtx, "default", 34)
+	require.False(t, IsChannelAffinityFirstPlacement(usedCtx), "已命中归属不是首次落位")
+
+	detourCtx, _ := newHomeAffinityContextForTest(t, "claude user", "placement-detour")
+	MarkChannelAffinityDetour(detourCtx, 34, "tripped")
+	require.False(t, IsChannelAffinityFirstPlacement(detourCtx), "绕行流量保留归属，不按首次落位选路")
+
+	gin.SetMode(gin.TestMode)
+	noRuleCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	require.False(t, IsChannelAffinityFirstPlacement(noRuleCtx), "未命中任何亲和规则")
+	require.False(t, IsChannelAffinityFirstPlacement(nil))
+
+	setChannelAffinityHomeModeForTest(t, true, false, true)
+	require.False(t, IsChannelAffinityFirstPlacement(ctx), "旧模式下不存在首次落位语义")
+}
+
 func TestGetChannelAffinityHomeHardWatermarkRatio(t *testing.T) {
 	setting := operation_setting.GetChannelAffinitySetting()
 	orig := setting.HomeHardWatermarkRatio

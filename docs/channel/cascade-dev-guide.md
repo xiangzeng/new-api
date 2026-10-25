@@ -459,9 +459,12 @@ if affinityUsable && channel != nil {
   选择器，`RecordChannelAffinity` 写回的仍是归属渠道（刷新 TTL）；恢复后自动回归。
   relay 里故障清亲和的调用点换成 `ClearCurrentChannelAffinityCacheOnFault`
   （归属模式下只重置 skip-retry，不删缓存条目）。
-- **水位线只管落位**：归属流量不受水位线约束——否则会在阈值附近逐请求来回弹，两边都在
+- **落位与留驻同一把尺**：归属流量不受软水位线约束——否则会在阈值附近逐请求来回弹，两边都在
   建缓存；用 `home_hard_watermark_ratio` 硬顶兜底（`IsChannelOverWatermarkRatio`，
-  RPM ≥ 水位线 × 倍数才绕行，防止归属流量把上游打到限流）。
+  RPM ≥ 水位线 × 倍数才绕行，防止归属流量把上游打到限流）。**首次落位也按同一硬顶**选路
+  （`IsChannelAffinityFirstPlacement` → 选择器 `watermarkRatio` 参数）：第一版曾让首次落位走
+  软水位线，结果主渠道稍忙就把 TTL 过期回来的用户落到顺位靠后的备用渠道，且此后每次请求都
+  刷新 TTL、永远不回——落位阈值比留驻阈值严，落位就等于判无期。软水位线只留给绕行等临时流量。
 
 配套地，`distributor.go` 的亲和判定拆成两类：渠道被禁用 / 删除 / 不在分组 = **永久失效**
 → 清除亲和重新落位；熔断中 / 达硬顶 = **临时不可用** → 绕行（旧模式下则维持让位即清除）。

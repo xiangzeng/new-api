@@ -96,9 +96,15 @@
 - 亲和缓存记录的是「归属渠道」。归属渠道熔断中 → 本次请求走级联选择器**临时绕行**
   （`MarkChannelAffinityDetour`），不清除、不改写归属；成功后仍写回归属并刷新 TTL，
   渠道恢复后自动回归——上游 prompt cache 大概率仍在有效期内，避免「搬家式」重建缓存。
-- 归属渠道达水位线**仍沿用**：水位线只约束新键的首次落位，否则会在阈值附近逐请求来回弹。
-  可配硬顶倍数 `home_hard_watermark_ratio`（>0 时 RPM ≥ 水位线 × 倍数才绕行，
-  `IsChannelOverWatermarkRatio`；0 = 不设硬顶）。
+- 归属渠道达水位线**仍沿用**，否则会在阈值附近逐请求来回弹。可配硬顶倍数
+  `home_hard_watermark_ratio`（>0 时 RPM ≥ 水位线 × 倍数才绕行，`IsChannelOverWatermarkRatio`；
+  0 = 不设硬顶）。
+- **首次落位与归属流量同用硬顶**：命中规则但尚无归属（缓存 miss / TTL 过期 / 永久失效后重落位，
+  `IsChannelAffinityFirstPlacement`）时，级联选择器正常轮按 `水位线 × 倍数` 判定
+  （`GetCascadeSatisfiedChannel` 的 `watermarkRatio` 参数），重试循环内每次重选同样沿用。
+  若落位用软水位线而留驻用硬顶，主渠道稍忙就会把新用户落到备用渠道并永久归属（生产实测：
+  老站用户被钉在无水位线的第三方渠道数小时）。倍数为 0 时首次落位退回软水位线（旧行为）。
+  软水位线只约束绕行等临时流量。
 - 故障类错误不再清亲和（`ClearCurrentChannelAffinityCacheOnFault` 在归属模式下只重置
   skip-retry）；仅渠道被禁用 / 删除 / 不在分组（永久失效）时清除并重新落位。
 - 请求内重试切到别的渠道成功也不改写归属；无归属时首次落位记实际成功的渠道。

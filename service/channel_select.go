@@ -195,9 +195,15 @@ func selectSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 // auto 分组：分组顺序即级联外层，组内耗尽或无候选时切换到下一个分组。
 func cacheGetCascadeChannel(param *RetryParam, userGroup string) (*model.Channel, string, error) {
 	tried := GetTriedChannelIds(param.Ctx, param.ExcludeChannelIDs)
+	// 归属模式首次落位：与归属流量同用硬顶倍数选路，软水位线只约束绕行等临时流量
+	// （否则主渠道稍忙就把新用户永久落到备用渠道，见 docs/channel/cascade-failover.md §2.4）
+	watermarkRatio := 0.0
+	if IsChannelAffinityFirstPlacement(param.Ctx) {
+		watermarkRatio = GetChannelAffinityHomeHardWatermarkRatio()
+	}
 
 	if param.TokenGroup != "auto" {
-		channel, err := model.GetCascadeSatisfiedChannel(param.TokenGroup, param.ModelName, param.RequestPath, tried)
+		channel, err := model.GetCascadeSatisfiedChannel(param.TokenGroup, param.ModelName, param.RequestPath, tried, watermarkRatio)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
@@ -220,7 +226,7 @@ func cacheGetCascadeChannel(param *RetryParam, userGroup string) (*model.Channel
 	selectGroup := param.TokenGroup
 	for i := startGroupIndex; i < len(autoGroups); i++ {
 		autoGroup := autoGroups[i]
-		channel, err := model.GetCascadeSatisfiedChannel(autoGroup, param.ModelName, param.RequestPath, tried)
+		channel, err := model.GetCascadeSatisfiedChannel(autoGroup, param.ModelName, param.RequestPath, tried, watermarkRatio)
 		if err != nil {
 			return nil, autoGroup, err
 		}

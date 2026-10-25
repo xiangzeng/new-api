@@ -13,12 +13,15 @@ import (
 // 分组、未入列的渠道按优先级降序、id 升序兜底（与旧版行为一致）。
 // 三轮兜底：正常轮（健康且未打满）→ 打满轮（健康渠道全达水位线时交负载率最低者接住）
 // → 熔断兜底轮（全部熔断时忽略健康标记与水位线按顺序选），保证服务可用性优先于标记。
+// watermarkRatio > 0 时正常轮改按「水位线 × 倍数」的硬顶判定：归属亲和的首次落位与
+// 归属流量同用硬顶，否则软水位线会把新落位用户永久分给备用渠道（见 cascade-failover.md §2.4）。
 // 详见 docs/channel/cascade-failover.md
 
 // GetCascadeSatisfiedChannel 级联模式下的渠道选择。
-// excludeIds 为本次请求已经尝试过的渠道 ID 集合。
+// excludeIds 为本次请求已经尝试过的渠道 ID 集合；
+// watermarkRatio <= 0 按软水位线，> 0 按硬顶倍数（仅影响正常轮）。
 // 返回 nil 表示该分组下已无可尝试的渠道。
-func GetCascadeSatisfiedChannel(group string, model string, requestPath string, excludeIds map[int]bool) (*Channel, error) {
+func GetCascadeSatisfiedChannel(group string, model string, requestPath string, excludeIds map[int]bool, watermarkRatio float64) (*Channel, error) {
 	candidates, err := cascadeCandidateChannels(group, model, requestPath)
 	if err != nil {
 		return nil, err
@@ -27,13 +30,13 @@ func GetCascadeSatisfiedChannel(group string, model string, requestPath string, 
 		return nil, nil
 	}
 
-	return selectCascadeChannel(candidates, excludeIds), nil
+	return selectCascadeChannel(candidates, excludeIds, watermarkRatio), nil
 }
 
 // selectCascadeChannel 在已按编排顺序排好的候选里三轮兜底选取渠道
-func selectCascadeChannel(candidates []*Channel, excludeIds map[int]bool) *Channel {
-	// 正常轮：健康、未试过、且 RPM 未达水位线
-	if channel := pickCascadeChannel(candidates, excludeIds, true); channel != nil {
+func selectCascadeChannel(candidates []*Channel, excludeIds map[int]bool, watermarkRatio float64) *Channel {
+	// 正常轮：健康、未试过、且 RPM 未达水位线（或硬顶）
+	if channel := pickCascadeChannel(candidates, excludeIds, true, watermarkRatio); channel != nil {
 		return channel
 	}
 	// 打满轮：健康渠道全部达到水位线，交给负载率最低的那个接住溢出
@@ -42,7 +45,7 @@ func selectCascadeChannel(candidates []*Channel, excludeIds map[int]bool) *Chann
 		return channel
 	}
 	// 熔断兜底轮：全部熔断时忽略健康标记与水位线，仍按顺序选一个未试过的渠道
-	return pickCascadeChannel(candidates, excludeIds, false)
+	return pickCascadeChannel(candidates, excludeIds, false, 0)
 }
 
 // CountCascadeCandidates 返回分组下候选渠道数量（级联模式的重试上限依据）
@@ -56,7 +59,8 @@ func CountCascadeCandidates(group string, model string, requestPath string) int 
 
 // pickCascadeChannel 按候选列表顺序（已按编排顺序排好）返回第一个可用渠道。
 // checkAvailable 为 false 时忽略健康标记与水位线（熔断兜底轮）。
-func pickCascadeChannel(candidates []*Channel, excludeIds map[int]bool, checkAvailable bool) *Channel {
+// watermarkRatio > 0 时用「水位线 × 倍数」硬顶代替软水位线（ratio=1 两者等价）。
+func pickCascadeChannel(candidates []*Channel, excludeIds map[int]bool, checkAvailable bool, watermarkRatio float64) *Channel {
 	for _, channel := range candidates {
 		if excludeIds[channel.Id] {
 			continue
@@ -65,13 +69,21 @@ func pickCascadeChannel(candidates []*Channel, excludeIds map[int]bool, checkAva
 			if !IsChannelHealthAvailable(channel.Id) {
 				continue
 			}
-			if IsChannelOverWatermark(channel.Id) {
+			if isChannelOverWatermarkOrRatio(channel.Id, watermarkRatio) {
 				continue
 			}
 		}
 		return channel
 	}
 	return nil
+}
+
+// isChannelOverWatermarkOrRatio ratio <= 0 走软水位线，> 0 走硬顶倍数
+func isChannelOverWatermarkOrRatio(channelId int, watermarkRatio float64) bool {
+	if watermarkRatio > 0 {
+		return IsChannelOverWatermarkRatio(channelId, watermarkRatio)
+	}
+	return IsChannelOverWatermark(channelId)
 }
 
 // pickLeastLoadedCascadeChannel 打满轮：在健康、未试过的渠道里挑负载率

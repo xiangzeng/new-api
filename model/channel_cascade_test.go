@@ -111,23 +111,23 @@ func TestPickCascadeChannelStrictOrder(t *testing.T) {
 		makeCascadeChannel(3, 1),
 	}
 
-	if got := pickCascadeChannel(candidates, map[int]bool{}, true); got == nil || got.Id != 1 {
+	if got := pickCascadeChannel(candidates, map[int]bool{}, true, 0); got == nil || got.Id != 1 {
 		t.Fatalf("pick = %v, want channel 1", got)
 	}
 	// 首位已试过：取下一个
-	if got := pickCascadeChannel(candidates, map[int]bool{1: true}, true); got == nil || got.Id != 2 {
+	if got := pickCascadeChannel(candidates, map[int]bool{1: true}, true, 0); got == nil || got.Id != 2 {
 		t.Fatalf("pick = %v, want channel 2", got)
 	}
 	// 首位熔断：健康轮跳过，兜底轮不跳
 	MarkChannelHealthFailure(1, "boom")
-	if got := pickCascadeChannel(candidates, map[int]bool{}, true); got == nil || got.Id != 2 {
+	if got := pickCascadeChannel(candidates, map[int]bool{}, true, 0); got == nil || got.Id != 2 {
 		t.Fatalf("pick = %v, want channel 2 (tripped skipped)", got)
 	}
-	if got := pickCascadeChannel(candidates, map[int]bool{}, false); got == nil || got.Id != 1 {
+	if got := pickCascadeChannel(candidates, map[int]bool{}, false, 0); got == nil || got.Id != 1 {
 		t.Fatalf("pick = %v, want channel 1 (health ignored in fallback round)", got)
 	}
 	// 全部试过：返回 nil
-	if got := pickCascadeChannel(candidates, map[int]bool{1: true, 2: true, 3: true}, false); got != nil {
+	if got := pickCascadeChannel(candidates, map[int]bool{1: true, 2: true, 3: true}, false, 0); got != nil {
 		t.Fatalf("pick = %v, want nil", got)
 	}
 }
@@ -168,19 +168,19 @@ func TestSelectCascadeChannelOverflowsOnWatermark(t *testing.T) {
 	}
 
 	fillChannelRpmForTest(1, 9)
-	picked := selectCascadeChannel(candidates, map[int]bool{})
+	picked := selectCascadeChannel(candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 1, picked.Id, "未达水位线应仍取顺序第一个")
 
 	// 再来一次记账正好压到水位线：自然溢出到下一个渠道
 	fillChannelRpmForTest(1, 1)
-	picked = selectCascadeChannel(candidates, map[int]bool{})
+	picked = selectCascadeChannel(candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 2, picked.Id, "渠道 1 压满应溢出到渠道 2")
 
 	// 渠道 2 也压满：溢出到未配置水位线（= 不限流）的渠道 3
 	fillChannelRpmForTest(2, 10)
-	picked = selectCascadeChannel(candidates, map[int]bool{})
+	picked = selectCascadeChannel(candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 3, picked.Id, "不限流渠道应兜住溢出")
 }
@@ -197,7 +197,7 @@ func TestSelectCascadeChannelDisabledWatermarkKeepsLegacyOrder(t *testing.T) {
 	}
 	fillChannelRpmForTest(1, 100)
 
-	picked := selectCascadeChannel(candidates, map[int]bool{})
+	picked := selectCascadeChannel(candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 1, picked.Id, "开关关闭时行为应与旧版一致")
 }
@@ -217,12 +217,12 @@ func TestSelectCascadeChannelAllFullPicksLeastLoaded(t *testing.T) {
 	fillChannelRpmForTest(2, 100)
 	fillChannelRpmForTest(3, 60)
 
-	picked := selectCascadeChannel(candidates, map[int]bool{})
+	picked := selectCascadeChannel(candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 2, picked.Id, "负载率最低者应接住溢出")
 
 	// 负载率最低者已试过：交给次低的渠道 3，而不是退回顺序第一个
-	picked = selectCascadeChannel(candidates, map[int]bool{2: true})
+	picked = selectCascadeChannel(candidates, map[int]bool{2: true}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 3, picked.Id)
 }
@@ -242,7 +242,7 @@ func TestSelectCascadeChannelAllTrippedIgnoresWatermark(t *testing.T) {
 	MarkChannelHealthFailure(2, "boom")
 
 	// 全部熔断 + 全部压满：兜底轮忽略两者，按编排顺序取首个
-	picked := selectCascadeChannel(candidates, map[int]bool{})
+	picked := selectCascadeChannel(candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 1, picked.Id, "兜底轮应忽略健康标记与水位线")
 }
@@ -259,9 +259,62 @@ func TestSelectCascadeChannelPrefersHealthyFullOverTripped(t *testing.T) {
 	fillChannelRpmForTest(1, 30)
 	MarkChannelHealthFailure(2, "boom")
 
-	picked := selectCascadeChannel(candidates, map[int]bool{})
+	picked := selectCascadeChannel(candidates, map[int]bool{}, 0)
 	require.NotNil(t, picked)
 	assert.Equal(t, 1, picked.Id, "健康压满应优先于熔断")
+}
+
+// 复现生产缺陷（docs/tasks/channel-affinity-home.md §3）：编排 [53,34,49]，53 熔断，
+// 34 水位线 20 但当前 25 RPM，49 无水位线。归属模式首次落位若按软水位线会落到 49
+// 并被永久归属；按硬顶倍数 2（40 RPM）应落回主渠道 34。
+func homePlacementScenarioForTest(t *testing.T, rpm34 int) []*Channel {
+	t.Helper()
+	resetCascadeHealthForTest(t)
+	resetChannelRpmRegistryForTest(t)
+	setCascadeWatermarkForTest(t, true, map[int]int{34: 20})
+
+	candidates := []*Channel{
+		makeCascadeChannel(53, 30),
+		makeCascadeChannel(34, 20),
+		makeCascadeChannel(49, 10),
+	}
+	MarkChannelHealthFailure(53, "boom")
+	fillChannelRpmForTest(34, rpm34)
+	return candidates
+}
+
+func TestSelectCascadeChannelSoftWatermarkOverflowsToBackup(t *testing.T) {
+	candidates := homePlacementScenarioForTest(t, 25)
+	// ratio 0 = 软水位线：34 已达 20 → 溢出到 49（旧行为，绕行等临时流量仍走这里）
+	picked := selectCascadeChannel(candidates, map[int]bool{}, 0)
+	require.NotNil(t, picked)
+	assert.Equal(t, 49, picked.Id, "软水位线溢出")
+}
+
+func TestSelectCascadeChannelHardRatioKeepsPrimary(t *testing.T) {
+	candidates := homePlacementScenarioForTest(t, 25)
+	// ratio 2 = 硬顶 40：34 的 25 RPM 未达硬顶 → 首次落位留在主渠道 34
+	picked := selectCascadeChannel(candidates, map[int]bool{}, 2)
+	require.NotNil(t, picked)
+	assert.Equal(t, 34, picked.Id, "硬顶未达，留在主渠道")
+	// ratio 1 与软水位线等价
+	picked = selectCascadeChannel(candidates, map[int]bool{}, 1)
+	require.NotNil(t, picked)
+	assert.Equal(t, 49, picked.Id, "ratio 1 等价软水位线")
+}
+
+func TestSelectCascadeChannelHardRatioStillOverflowsWhenHit(t *testing.T) {
+	candidates := homePlacementScenarioForTest(t, 45)
+	// 34 已达硬顶 40 → 仍溢出到 49，硬顶不是无限
+	picked := selectCascadeChannel(candidates, map[int]bool{}, 2)
+	require.NotNil(t, picked)
+	assert.Equal(t, 49, picked.Id, "达硬顶溢出")
+	// 熔断兜底轮忽略 ratio：全部熔断 / 已试过时按顺序取首个未试过的
+	MarkChannelHealthFailure(34, "boom")
+	MarkChannelHealthFailure(49, "boom")
+	picked = selectCascadeChannel(candidates, map[int]bool{53: true}, 2)
+	require.NotNil(t, picked)
+	assert.Equal(t, 34, picked.Id, "兜底轮忽略硬顶")
 }
 
 func TestIsChannelOverWatermarkZeroMeansUnlimited(t *testing.T) {
