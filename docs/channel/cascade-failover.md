@@ -82,11 +82,30 @@
 
 ### 2.4 渠道亲和耦合
 
+按 `channel_affinity_setting.home_mode` 分两种模式：
+
+**旧模式（home_mode 关闭，默认）**
+
 - 粘住的渠道报故障类错误时：清除该会话亲和缓存（`ClearCurrentChannelAffinityCache`，
   同时重置 skip-retry 标记），级联接管选下一个；成功后由现有逻辑自动重绑到新渠道。
-- 级联开启时，亲和的 `SkipRetryOnFailure` 不再阻断故障类错误的切换。
 - 粘住的渠道 RPM 达到水位线时同样让位（`IsChannelOverWatermark`）——否则长会话客户端
   会绕开级联选择器把水位线整个架空。
+
+**归属模式（home_mode 开启）**
+
+- 亲和缓存记录的是「归属渠道」。归属渠道熔断中 → 本次请求走级联选择器**临时绕行**
+  （`MarkChannelAffinityDetour`），不清除、不改写归属；成功后仍写回归属并刷新 TTL，
+  渠道恢复后自动回归——上游 prompt cache 大概率仍在有效期内，避免「搬家式」重建缓存。
+- 归属渠道达水位线**仍沿用**：水位线只约束新键的首次落位，否则会在阈值附近逐请求来回弹。
+  可配硬顶倍数 `home_hard_watermark_ratio`（>0 时 RPM ≥ 水位线 × 倍数才绕行，
+  `IsChannelOverWatermarkRatio`；0 = 不设硬顶）。
+- 故障类错误不再清亲和（`ClearCurrentChannelAffinityCacheOnFault` 在归属模式下只重置
+  skip-retry）；仅渠道被禁用 / 删除 / 不在分组（永久失效）时清除并重新落位。
+- 请求内重试切到别的渠道成功也不改写归属；无归属时首次落位记实际成功的渠道。
+- 日志 `admin_info.channel_affinity` 增加 `home_channel_id` / `detour` / `detour_reason`
+  供事后核对。
+
+两种模式通用：级联开启时，亲和的 `SkipRetryOnFailure` 不再阻断故障类错误的切换。
 
 ### 2.5 探活恢复（`controller/channel_health_probe.go`）
 

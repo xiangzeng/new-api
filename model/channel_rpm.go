@@ -1,6 +1,7 @@
 package model
 
 import (
+	"math"
 	"sync"
 	"time"
 
@@ -149,6 +150,24 @@ func IsChannelOverWatermark(channelId int) bool {
 		return false
 	}
 	return GetChannelRpm(channelId) >= int64(watermark)
+}
+
+// IsChannelOverWatermarkRatio 渠道近 60 秒请求数是否已达「水位线 × ratio」的硬顶。
+// 供归属亲和使用：归属流量不受水位线约束，但可设硬顶倍数兜底。
+// ratio <= 0（不设硬顶）、水位线未配置 / 为 0 / 总开关关闭时恒为 false。
+func IsChannelOverWatermarkRatio(channelId int, ratio float64) bool {
+	if ratio <= 0 {
+		return false
+	}
+	watermark := channelRpmWatermark(channelId)
+	if watermark <= 0 {
+		return false
+	}
+	limit := int64(math.Ceil(float64(watermark) * ratio))
+	if limit < 1 {
+		limit = 1
+	}
+	return GetChannelRpm(channelId) >= limit
 }
 
 // channelRpmLoadRatio 渠道负载率 = 当前 RPM / 水位线，供「全员打满」时挑接盘渠道。

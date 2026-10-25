@@ -262,7 +262,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 						model.AppendChannelHealthEvent(channel.Id, model.ChannelHealthEventTrip, faultReason)
 						logger.LogWarn(c, fmt.Sprintf("级联：渠道 #%d（%s）触发熔断，进入冷却", channel.Id, channel.Name))
 					}
-					service.ClearCurrentChannelAffinityCache(c)
+					service.ClearCurrentChannelAffinityCacheOnFault(c)
 				case service.StreamOutcomeSuccess:
 					latencyMs := time.Since(attemptStart).Milliseconds()
 					hasTtft := relayInfo.IsStream && relayInfo.HasSendResponse()
@@ -448,8 +448,8 @@ func cascadeShouldRetry(c *gin.Context, info *relaycommon.RelayInfo, openaiErr *
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
-	// 级联模式：故障类错误记入健康注册表（可能触发熔断），并解除当前会话的渠道亲和，
-	// 让级联选择器接管后续切换；成功后由现有逻辑自动重绑到新渠道。
+	// 级联模式：故障类错误记入健康注册表（可能触发熔断），并处理当前会话的渠道亲和：
+	// 旧模式清除亲和、成功后重绑到新渠道；归属模式保留归属、本次绕行、恢复后回归。
 	if service.CascadeEnabled() {
 		if service.IsChannelFaultError(err) {
 			model.RecordChannelAttempt(channelError.ChannelId, model.ChannelAttemptFault, 0, 0, false)
@@ -461,7 +461,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			if !model.IsChannelHealthAvailable(channelError.ChannelId) {
 				common.SetContextKey(c, constant.ContextKeyCascadeRetryHint, true)
 			}
-			service.ClearCurrentChannelAffinityCache(c)
+			service.ClearCurrentChannelAffinityCacheOnFault(c)
 		} else {
 			// 非故障类错误（如 400）：计 attempt 不计 fault，错误率反映的是渠道质量
 			model.RecordChannelAttempt(channelError.ChannelId, model.ChannelAttemptOther, 0, 0, false)

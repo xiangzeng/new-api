@@ -135,6 +135,12 @@ export function ChannelAffinitySection(props: Props) {
   const [keepOnChannelDisabled, setKeepOnChannelDisabled] = useState(
     props.defaultValues['channel_affinity_setting.keep_on_channel_disabled']
   )
+  const [homeMode, setHomeMode] = useState(
+    props.defaultValues['channel_affinity_setting.home_mode']
+  )
+  const [homeHardWatermarkRatio, setHomeHardWatermarkRatio] = useState(
+    props.defaultValues['channel_affinity_setting.home_hard_watermark_ratio']
+  )
   const [maxEntries, setMaxEntries] = useState(
     props.defaultValues['channel_affinity_setting.max_entries']
   )
@@ -173,6 +179,10 @@ export function ChannelAffinitySection(props: Props) {
     )
     setKeepOnChannelDisabled(
       props.defaultValues['channel_affinity_setting.keep_on_channel_disabled']
+    )
+    setHomeMode(props.defaultValues['channel_affinity_setting.home_mode'])
+    setHomeHardWatermarkRatio(
+      props.defaultValues['channel_affinity_setting.home_hard_watermark_ratio']
     )
     setMaxEntries(props.defaultValues['channel_affinity_setting.max_entries'])
     setDefaultTtl(
@@ -278,6 +288,21 @@ export function ChannelAffinitySection(props: Props) {
         updates.push({
           key: 'channel_affinity_setting.keep_on_channel_disabled',
           value: String(keepOnChannelDisabled),
+        })
+      }
+      if (homeMode !== props.defaultValues['channel_affinity_setting.home_mode']) {
+        updates.push({
+          key: 'channel_affinity_setting.home_mode',
+          value: String(homeMode),
+        })
+      }
+      if (
+        homeHardWatermarkRatio !==
+        props.defaultValues['channel_affinity_setting.home_hard_watermark_ratio']
+      ) {
+        updates.push({
+          key: 'channel_affinity_setting.home_hard_watermark_ratio',
+          value: String(homeHardWatermarkRatio),
         })
       }
       if (
@@ -456,6 +481,33 @@ export function ChannelAffinitySection(props: Props) {
             'When enabled, keep the affinity entry even if the affinity channel is disabled or no longer usable for the current group/model. Leave it off to delete the entry and select another channel.'
           )}
         />
+        <SettingsSwitchField
+          checked={homeMode}
+          onCheckedChange={setHomeMode}
+          label={t('Home mode')}
+          description={t(
+            'Affinity records a home channel: when the home channel is tripped, requests temporarily detour without rewriting affinity and return automatically after recovery; reaching the RPM watermark no longer evicts sticky traffic (the watermark only constrains first placement). When off, failover rewrites affinity to the new channel (legacy behavior).'
+          )}
+        />
+        {homeMode && (
+          <div className='grid gap-1.5 md:max-w-xs'>
+            <Label>{t('Home hard watermark ratio')}</Label>
+            <Input
+              type='number'
+              min={0}
+              step={0.1}
+              value={homeHardWatermarkRatio}
+              onChange={(e) =>
+                setHomeHardWatermarkRatio(Number(e.target.value))
+              }
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'When greater than 0, requests detour once the home channel RPM reaches watermark x ratio, protecting the upstream from overload; 0 disables the hard cap.'
+              )}
+            </p>
+          </div>
+        )}
 
         <Separator />
 
@@ -508,6 +560,15 @@ export function ChannelAffinitySection(props: Props) {
                 }}
               >
                 Claude CLI
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setEditingRule(null)
+                  setRuleTemplateKey('claudeChat')
+                  setRuleEditorOpen(true)
+                }}
+              >
+                Claude Chat
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

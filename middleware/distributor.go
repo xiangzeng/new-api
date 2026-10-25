@@ -106,37 +106,59 @@ func Distribute() func(c *gin.Context) {
 				}
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-					affinityUsable := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
+					// 永久有效性：渠道存在、已启用、支持该路径、且在（某个）分组下对该模型启用
+					preferredGroup := ""
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) &&
-						// 级联模式：粘住的渠道熔断中、或 RPM 已达水位线，则亲和让位走级联选择
-						(!service.CascadeEnabled() ||
-							(model.IsChannelHealthAvailable(preferred.Id) && !model.IsChannelOverWatermark(preferred.Id))) {
+						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
 						if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetRequestAutoGroups(c, userGroup)
 							for _, g := range autoGroups {
 								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									affinityUsable = true
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
+									preferredGroup = g
 									break
 								}
 							}
 						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							channel = preferred
-							selectGroup = usingGroup
-							affinityUsable = true
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+							preferredGroup = usingGroup
 						}
 					}
-					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
-						service.ClearCurrentChannelAffinityCache(c)
+					// 临时不可用（仅级联模式有健康 / 水位线信号）：熔断中一律不用；
+					// 旧模式下达水位线即让位；归属模式下水位线只约束首次落位，仅达硬顶才绕行
+					detourReason := ""
+					if preferredGroup != "" && service.CascadeEnabled() {
+						if !model.IsChannelHealthAvailable(preferred.Id) {
+							detourReason = "tripped"
+						} else if service.ChannelAffinityHomeModeEnabled() {
+							if model.IsChannelOverWatermarkRatio(preferred.Id, service.GetChannelAffinityHomeHardWatermarkRatio()) {
+								detourReason = "over_hard_watermark"
+							}
+						} else if model.IsChannelOverWatermark(preferred.Id) {
+							detourReason = "over_watermark"
+						}
 					}
-					if affinityUsable && channel != nil {
+					switch {
+					case preferredGroup == "":
+						// 永久失效（禁用 / 删除 / 不在分组）：清除亲和，重新落位
+						if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+							service.ClearCurrentChannelAffinityCache(c)
+						}
+					case detourReason != "":
+						if service.ChannelAffinityHomeModeEnabled() {
+							// 归属模式：保留归属，本次绕行级联选择器，恢复后自动回归
+							service.MarkChannelAffinityDetour(c, preferred.Id, detourReason)
+						} else if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+							// 旧模式：让位即清除，成功后重绑到新渠道
+							service.ClearCurrentChannelAffinityCache(c)
+						}
+					default:
+						channel = preferred
+						selectGroup = preferredGroup
+						if usingGroup == "auto" {
+							common.SetContextKey(c, constant.ContextKeyAutoGroup, preferredGroup)
+						}
+						service.MarkChannelAffinityUsed(c, preferredGroup, preferred.Id)
 						// 亲和命中绕开了级联选择器，须在此单独记账，
 						// 否则粘住的渠道 RPM 恒为 0、水位线形同虚设
 						model.RecordChannelRequest(channel.Id)

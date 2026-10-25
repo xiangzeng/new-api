@@ -249,6 +249,8 @@ export type ModelSettings = {
   'channel_affinity_setting.enabled': boolean
   'channel_affinity_setting.switch_on_success': boolean
   'channel_affinity_setting.keep_on_channel_disabled': boolean
+  'channel_affinity_setting.home_mode': boolean
+  'channel_affinity_setting.home_hard_watermark_ratio': number
   'channel_affinity_setting.max_entries': number
   'channel_affinity_setting.default_ttl_seconds': number
   'channel_affinity_setting.rules': string

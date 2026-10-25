@@ -157,6 +157,10 @@ const MODELS_SECTIONS = [
             settings['channel_affinity_setting.switch_on_success'],
           'channel_affinity_setting.keep_on_channel_disabled':
             settings['channel_affinity_setting.keep_on_channel_disabled'],
+          'channel_affinity_setting.home_mode':
+            settings['channel_affinity_setting.home_mode'],
+          'channel_affinity_setting.home_hard_watermark_ratio':
+            settings['channel_affinity_setting.home_hard_watermark_ratio'],
           'channel_affinity_setting.max_entries':
             settings['channel_affinity_setting.max_entries'],
           'channel_affinity_setting.default_ttl_seconds':
