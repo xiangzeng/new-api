@@ -114,29 +114,41 @@ func Distribute() func(c *gin.Context) {
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
-					// 永久有效性：渠道存在、已启用、支持该路径、且在（某个）分组下对该模型启用
+					// 可用性：渠道存在、已启用、支持该路径、且在（某个）分组下对本次模型启用
 					preferredGroup := ""
 					// 归属渠道只在用户被封的分组下可用时记下该分组：分组限制是临时的，按绕行处理而非失效
 					blockedGroup := ""
-					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
-						if usingGroup == "auto" {
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetRequestAutoGroups(c, userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									if _, blocked := service.GetUserGroupBlock(c, g); blocked {
-										if blockedGroup == "" {
-											blockedGroup = g
+					// 归属模式下归属渠道仍挂在候选分组里、只是接不了本次请求的模型 / 路径：
+					// 亲和键是用户级（不含模型），能力缺口是请求级的，按绕行处理而非失效，
+					// 否则用户换一次模型就会被搬到唯一支持该模型的渠道并永久归属过去
+					modelUnsupported := false
+					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled {
+						if channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
+							if usingGroup == "auto" {
+								userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+								autoGroups := service.GetRequestAutoGroups(c, userGroup)
+								for _, g := range autoGroups {
+									if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+										if _, blocked := service.GetUserGroupBlock(c, g); blocked {
+											if blockedGroup == "" {
+												blockedGroup = g
+											}
+											continue
 										}
-										continue
+										preferredGroup = g
+										break
 									}
-									preferredGroup = g
-									break
 								}
+							} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+								preferredGroup = usingGroup
 							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							preferredGroup = usingGroup
+						}
+						if preferredGroup == "" && blockedGroup == "" && service.ChannelAffinityHomeModeEnabled() {
+							candidateGroups := []string{usingGroup}
+							if usingGroup == "auto" {
+								candidateGroups = service.GetRequestAutoGroups(c, common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+							}
+							modelUnsupported = channelInAnyGroup(preferred, candidateGroups)
 						}
 					}
 					// 临时不可用（仅级联模式有健康 / 水位线 / 额度信号）：熔断中、今日额度已满一律不用
@@ -145,6 +157,8 @@ func Distribute() func(c *gin.Context) {
 					detourReason := ""
 					if preferredGroup == "" && blockedGroup != "" {
 						detourReason = "user_group_blocked"
+					} else if modelUnsupported {
+						detourReason = "model_unsupported"
 					} else if preferredGroup != "" && service.CascadeEnabled() {
 						if !model.IsChannelHealthAvailable(preferred.Id) {
 							detourReason = "tripped"
@@ -168,7 +182,7 @@ func Distribute() func(c *gin.Context) {
 							service.ClearCurrentChannelAffinityCache(c)
 						}
 					case preferredGroup == "":
-						// 永久失效（禁用 / 删除 / 不在分组）：清除亲和，重新落位
+						// 永久失效（禁用 / 删除 / 移出分组；旧模式下也含不支持本次模型）：清除亲和，重新落位
 						if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
 							service.ClearCurrentChannelAffinityCache(c)
 						}
@@ -236,6 +250,19 @@ func userGroupBlockedMessage(c *gin.Context, group string, expiresAt int64) stri
 	}
 	until := time.Unix(expiresAt, 0).Format("2006-01-02 15:04 (UTC-07:00)")
 	return i18n.T(c, i18n.MsgDistributorUserGroupBlocked, map[string]any{"Group": group, "Until": until})
+}
+
+// channelInAnyGroup 渠道配置的分组里是否含任一候选分组（只看渠道分组配置，不看模型能力）
+func channelInAnyGroup(channel *model.Channel, groups []string) bool {
+	if channel == nil {
+		return false
+	}
+	for _, g := range channel.GetGroups() {
+		if g != "" && slices.Contains(groups, g) {
+			return true
+		}
+	}
+	return false
 }
 
 // channelSupportsRequestPath reports whether a channel can serve the request path.
