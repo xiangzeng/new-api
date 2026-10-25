@@ -116,7 +116,7 @@ func selectSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 	}
 
 	if param.TokenGroup == "auto" {
-		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+		autoGroups := GetRequestUserAutoGroup(param.Ctx, userGroup)
 		if len(autoGroups) == 0 {
 			return nil, selectGroup, errors.New("auto groups is not enabled")
 		}
@@ -210,7 +210,7 @@ func cacheGetCascadeChannel(param *RetryParam, userGroup string) (*model.Channel
 		return channel, param.TokenGroup, nil
 	}
 
-	autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+	autoGroups := GetRequestUserAutoGroup(param.Ctx, userGroup)
 	if len(autoGroups) == 0 {
 		return nil, param.TokenGroup, errors.New("auto groups is not enabled")
 	}

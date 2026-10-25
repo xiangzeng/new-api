@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Activity,
+  Ban,
   Box,
   CreditCard,
   BadgeDollarSign,
@@ -157,6 +158,11 @@ export function useSidebarData(): SidebarData {
             title: t('Custom Pricing'),
             url: '/custom-pricing',
             icon: SlidersHorizontal,
+          },
+          {
+            title: t('Group Restrictions'),
+            url: '/group-blocks',
+            icon: Ban,
           },
           {
             title: t('Redemption Codes'),

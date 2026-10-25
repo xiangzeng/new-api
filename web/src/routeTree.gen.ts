@@ -42,6 +42,7 @@ import { Route as AuthenticatedCustomPricingIndexRouteImport } from './routes/_a
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
+import { Route as AuthenticatedGroupBlocksIndexRouteImport } from './routes/_authenticated/group-blocks/index'
 import { Route as AuthenticatedInvitationsIndexRouteImport } from './routes/_authenticated/invitations/index'
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
 import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenticated/models/index'
@@ -243,6 +244,12 @@ const AuthenticatedErrorsErrorRoute =
   AuthenticatedErrorsErrorRouteImport.update({
     id: '/errors/$error',
     path: '/errors/$error',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedGroupBlocksIndexRoute =
+  AuthenticatedGroupBlocksIndexRouteImport.update({
+    id: '/group-blocks/',
+    path: '/group-blocks/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedInvitationsIndexRoute =
@@ -470,6 +477,7 @@ export interface FileRoutesByFullPath {
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/custom-pricing/': typeof AuthenticatedCustomPricingIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
+  '/group-blocks/': typeof AuthenticatedGroupBlocksIndexRoute
   '/invitations/': typeof AuthenticatedInvitationsIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
   '/models/': typeof AuthenticatedModelsIndexRoute
@@ -534,6 +542,7 @@ export interface FileRoutesByTo {
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/custom-pricing': typeof AuthenticatedCustomPricingIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
+  '/group-blocks': typeof AuthenticatedGroupBlocksIndexRoute
   '/invitations': typeof AuthenticatedInvitationsIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
   '/models': typeof AuthenticatedModelsIndexRoute
@@ -602,6 +611,7 @@ export interface FileRoutesById {
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/custom-pricing/': typeof AuthenticatedCustomPricingIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
+  '/_authenticated/group-blocks/': typeof AuthenticatedGroupBlocksIndexRoute
   '/_authenticated/invitations/': typeof AuthenticatedInvitationsIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
   '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
@@ -669,6 +679,7 @@ export interface FileRouteTypes {
     | '/channels/'
     | '/custom-pricing/'
     | '/dashboard/'
+    | '/group-blocks/'
     | '/invitations/'
     | '/keys/'
     | '/models/'
@@ -733,6 +744,7 @@ export interface FileRouteTypes {
     | '/channels'
     | '/custom-pricing'
     | '/dashboard'
+    | '/group-blocks'
     | '/invitations'
     | '/keys'
     | '/models'
@@ -800,6 +812,7 @@ export interface FileRouteTypes {
     | '/_authenticated/channels/'
     | '/_authenticated/custom-pricing/'
     | '/_authenticated/dashboard/'
+    | '/_authenticated/group-blocks/'
     | '/_authenticated/invitations/'
     | '/_authenticated/keys/'
     | '/_authenticated/models/'
@@ -1082,6 +1095,13 @@ declare module '@tanstack/react-router' {
       path: '/errors/$error'
       fullPath: '/errors/$error'
       preLoaderRoute: typeof AuthenticatedErrorsErrorRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/group-blocks/': {
+      id: '/_authenticated/group-blocks/'
+      path: '/group-blocks'
+      fullPath: '/group-blocks/'
+      preLoaderRoute: typeof AuthenticatedGroupBlocksIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/invitations/': {
@@ -1407,6 +1427,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedCustomPricingIndexRoute: typeof AuthenticatedCustomPricingIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
+  AuthenticatedGroupBlocksIndexRoute: typeof AuthenticatedGroupBlocksIndexRoute
   AuthenticatedInvitationsIndexRoute: typeof AuthenticatedInvitationsIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
   AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
@@ -1436,6 +1457,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedCustomPricingIndexRoute: AuthenticatedCustomPricingIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
+  AuthenticatedGroupBlocksIndexRoute: AuthenticatedGroupBlocksIndexRoute,
   AuthenticatedInvitationsIndexRoute: AuthenticatedInvitationsIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
   AuthenticatedModelsIndexRoute: AuthenticatedModelsIndexRoute,

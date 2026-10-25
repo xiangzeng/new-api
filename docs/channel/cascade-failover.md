@@ -117,6 +117,8 @@
 归属渠道**今日额度已满**（见 2.11）按临时不可用处理（`detour_reason=over_daily_quota`，
 判定顺序在熔断之后、水位线之前）：旧模式让位即清除，归属模式保留归属本次绕行——
 次日额度重置后归属用户自动回到它，便宜渠道仍能优先吃满当天额度。
+归属渠道只在该用户**被封的分组**下可用时同样按临时不可用处理（`detour_reason=user_group_blocked`），
+解封后回归；见 [user-group-block.md](user-group-block.md)。
 
 ### 2.5 探活恢复（`controller/channel_health_probe.go`）
 

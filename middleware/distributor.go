@@ -105,10 +105,19 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
+				// 用户分组限制（防蒸馏临时封禁）：指定分组被封、或 auto 下全部分组被封时明示拒绝；
+				// auto 只封了部分分组时由选路跳过被封分组顺延
+				if blocked, expiresAt := service.CheckUserGroupBlocked(c, usingGroup); blocked {
+					abortWithOpenAiMessage(c, http.StatusForbidden, userGroupBlockedMessage(c, usingGroup, expiresAt))
+					return
+				}
+
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					// 永久有效性：渠道存在、已启用、支持该路径、且在（某个）分组下对该模型启用
 					preferredGroup := ""
+					// 归属渠道只在用户被封的分组下可用时记下该分组：分组限制是临时的，按绕行处理而非失效
+					blockedGroup := ""
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
 						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
 						if usingGroup == "auto" {
@@ -116,6 +125,12 @@ func Distribute() func(c *gin.Context) {
 							autoGroups := service.GetRequestAutoGroups(c, userGroup)
 							for _, g := range autoGroups {
 								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+									if _, blocked := service.GetUserGroupBlock(c, g); blocked {
+										if blockedGroup == "" {
+											blockedGroup = g
+										}
+										continue
+									}
 									preferredGroup = g
 									break
 								}
@@ -128,7 +143,9 @@ func Distribute() func(c *gin.Context) {
 					// （额度满等同禁用到次日，但归属保留，次日自动回归）；
 					// 旧模式下达水位线即让位；归属模式下水位线只约束首次落位，仅达硬顶才绕行
 					detourReason := ""
-					if preferredGroup != "" && service.CascadeEnabled() {
+					if preferredGroup == "" && blockedGroup != "" {
+						detourReason = "user_group_blocked"
+					} else if preferredGroup != "" && service.CascadeEnabled() {
 						if !model.IsChannelHealthAvailable(preferred.Id) {
 							detourReason = "tripped"
 						} else if model.IsChannelOverDailyQuota(preferred.Id) {
@@ -142,17 +159,17 @@ func Distribute() func(c *gin.Context) {
 						}
 					}
 					switch {
-					case preferredGroup == "":
-						// 永久失效（禁用 / 删除 / 不在分组）：清除亲和，重新落位
-						if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
-							service.ClearCurrentChannelAffinityCache(c)
-						}
 					case detourReason != "":
 						if service.ChannelAffinityHomeModeEnabled() {
 							// 归属模式：保留归属，本次绕行级联选择器，恢复后自动回归
 							service.MarkChannelAffinityDetour(c, preferred.Id, detourReason)
 						} else if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
 							// 旧模式：让位即清除，成功后重绑到新渠道
+							service.ClearCurrentChannelAffinityCache(c)
+						}
+					case preferredGroup == "":
+						// 永久失效（禁用 / 删除 / 不在分组）：清除亲和，重新落位
+						if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
 							service.ClearCurrentChannelAffinityCache(c)
 						}
 					default:
@@ -210,6 +227,15 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+// userGroupBlockedMessage 分组限制的明示提示：带预计恢复时间（服务器本地时区），永久封禁不带
+func userGroupBlockedMessage(c *gin.Context, group string, expiresAt int64) string {
+	if expiresAt <= 0 {
+		return i18n.T(c, i18n.MsgDistributorUserGroupBlockedPermanent, map[string]any{"Group": group})
+	}
+	until := time.Unix(expiresAt, 0).Format("2006-01-02 15:04 (UTC-07:00)")
+	return i18n.T(c, i18n.MsgDistributorUserGroupBlocked, map[string]any{"Group": group, "Until": until})
 }
 
 // channelSupportsRequestPath reports whether a channel can serve the request path.

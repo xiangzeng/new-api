@@ -42,7 +42,7 @@ func GetCascadeMaxRetryTimes(c *gin.Context, tokenGroup string, modelName string
 	candidates := 0
 	if tokenGroup == "auto" {
 		userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-		for _, autoGroup := range GetRequestAutoGroups(c, userGroup) {
+		for _, autoGroup := range GetRequestUserAutoGroup(c, userGroup) {
 			candidates += model.CountCascadeCandidates(autoGroup, modelName, requestPath)
 		}
 	} else {

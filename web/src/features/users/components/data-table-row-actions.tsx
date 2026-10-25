@@ -30,6 +30,7 @@ import {
   CreditCard,
   SlidersHorizontal,
   Store,
+  Ban,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -62,6 +63,7 @@ import type { User, ManageUserAction } from '../types'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { UserCustomPricingDialog } from './dialogs/user-custom-pricing-dialog'
 import { UserResellerBindingDialog } from './dialogs/user-reseller-binding-dialog'
+import { UserGroupBlocksDialog } from './dialogs/user-group-blocks-dialog'
 import { useUsers } from './users-provider'
 
 interface DataTableRowActionsProps {
@@ -79,6 +81,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [customPricingDialogOpen, setCustomPricingDialogOpen] = useState(false)
   const [resellerBindingDialogOpen, setResellerBindingDialogOpen] =
     useState(false)
+  const [groupBlocksDialogOpen, setGroupBlocksDialogOpen] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -255,6 +258,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuShortcut>
         </DropdownMenuItem>
 
+        <DropdownMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            setGroupBlocksDialogOpen(true)
+          }}
+        >
+          {t('Group Restrictions')}
+          <DropdownMenuShortcut>
+            <Ban size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
@@ -351,6 +366,16 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           display_name: user.display_name,
         }}
         onSuccess={triggerRefresh}
+      />
+
+      <UserGroupBlocksDialog
+        open={groupBlocksDialogOpen}
+        onOpenChange={setGroupBlocksDialogOpen}
+        user={{
+          id: user.id,
+          username: user.username,
+          display_name: user.display_name,
+        }}
       />
     </div>
   )

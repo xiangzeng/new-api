@@ -28,6 +28,7 @@ type UserBase struct {
 	CustomPricing string `json:"custom_pricing"`
 	AuthVersion   int64  `json:"-"`
 	CacheSchema   int    `json:"-"`
+	GroupBlocks   string `json:"group_blocks"`
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -38,6 +39,7 @@ func (user *UserBase) WriteContext(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyUserName, user.Username)
 	common.SetContextKey(c, constant.ContextKeyUserSetting, user.GetSetting())
 	common.SetContextKey(c, constant.ContextKeyUserCustomPricing, user.GetCustomPricing())
+	common.SetContextKey(c, constant.ContextKeyUserGroupBlocks, user.GetGroupBlocks())
 }
 
 func (user *UserBase) GetSetting() dto.UserSetting {
@@ -60,6 +62,17 @@ func (user *UserBase) GetCustomPricing() rootdto.UserCustomPricing {
 		}
 	}
 	return pricing
+}
+
+func (user *UserBase) GetGroupBlocks() rootdto.UserGroupBlocks {
+	blocks := rootdto.UserGroupBlocks{}
+	if user.GroupBlocks != "" {
+		err := common.Unmarshal([]byte(user.GroupBlocks), &blocks)
+		if err != nil {
+			common.SysLog("failed to unmarshal group_blocks: " + err.Error())
+		}
+	}
+	return blocks
 }
 
 // getUserCacheKey returns the key for user cache
