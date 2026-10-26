@@ -124,7 +124,12 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "admin_info")
 			// Remove operation-audit details (operator/route info), admin-only.
 			delete(otherMap, "audit_info")
-			// delete(otherMap, "reject_reason")
+			// Remove legacy top-level fields that name the serving channel or carry
+			// the admin reject reason (the same set upstream strips from user views).
+			delete(otherMap, "channel_id")
+			delete(otherMap, "channel_name")
+			delete(otherMap, "channel_type")
+			delete(otherMap, "reject_reason")
 			// delete(otherMap, "stream_status")
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
