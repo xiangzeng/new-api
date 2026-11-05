@@ -39,35 +39,18 @@ func ResolveActiveResellerPricing(customerId int, groupName string, now int64) (
 		return nil, nil
 	}
 
-	var binding ResellerCustomer
-	if err := DB.Where("customer_id = ?", customerId).First(&binding).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var profile ResellerProfile
-	if err := DB.Where("user_id = ? AND status = ?", binding.ResellerId, ResellerStatusActive).First(&profile).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	defaultRules, err := GetResellerPricingRules(ResellerPricingOwnerDefault, profile.Id)
+	snapshot, err := getResellerPricingSnapshot(customerId)
 	if err != nil {
 		return nil, err
 	}
-	customerRules, err := GetResellerPricingRules(ResellerPricingOwnerCustomer, binding.Id)
-	if err != nil {
-		return nil, err
+	if !snapshot.Bound {
+		return nil, nil
 	}
-	resolved := ResolveResellerMultiplier(defaultRules, customerRules, groupName, now)
+	resolved := ResolveResellerMultiplier(snapshot.DefaultRules, snapshot.CustomerRules, groupName, now)
 	return &ResellerActivePricing{
-		ResellerId:        binding.ResellerId,
-		CustomerId:        binding.CustomerId,
-		CustomerBindingId: binding.Id,
+		ResellerId:        snapshot.ResellerId,
+		CustomerId:        snapshot.CustomerId,
+		CustomerBindingId: snapshot.CustomerBindingId,
 		MultiplierBps:     resolved.MultiplierBps,
 		MultiplierSource:  resolved.Source,
 	}, nil

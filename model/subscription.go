@@ -630,6 +630,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 	if err != nil {
 		return err
 	}
+	invalidateNoActiveSubscriptionCache(logUserId)
 	if upgradeGroup != "" && logUserId > 0 {
 		refreshSubscriptionUserGroupCache(logUserId, "subscription payment completion")
 	}
@@ -721,6 +722,7 @@ func AdminBindSubscription(userId int, planId int, sourceNote string) (string, e
 	if err != nil {
 		return "", err
 	}
+	invalidateNoActiveSubscriptionCache(userId)
 	if groupChanged {
 		refreshSubscriptionUserGroupCache(userId, "admin subscription creation")
 		return fmt.Sprintf("用户分组将升级到 %s", plan.UpgradeGroup), nil
@@ -820,6 +822,7 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	if err != nil {
 		return err
 	}
+	invalidateNoActiveSubscriptionCache(userId)
 
 	if chargedQuota > 0 {
 		if err := cacheDecrUserQuota(userId, int64(chargedQuota)); err != nil {
@@ -856,12 +859,18 @@ func HasActiveUserSubscription(userId int) (bool, error) {
 	if userId <= 0 {
 		return false, errors.New("invalid userId")
 	}
+	if cachedNoActiveSubscription(userId) {
+		return false, nil
+	}
 	now := common.GetTimestamp()
 	var count int64
 	if err := DB.Model(&UserSubscription{}).
 		Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
 		Count(&count).Error; err != nil {
 		return false, err
+	}
+	if count == 0 {
+		rememberNoActiveSubscription(userId)
 	}
 	return count > 0, nil
 }

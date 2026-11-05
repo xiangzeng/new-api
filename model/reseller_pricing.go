@@ -204,6 +204,7 @@ func UpdateResellerPricingRule(
 	if err != nil {
 		return nil, 0, err
 	}
+	invalidateResellerPricingCacheForOwner(ownerType, ownerId)
 	return &result, newVersion, nil
 }
 
@@ -295,6 +296,7 @@ func UpdateResellerPricingRules(
 	if err != nil {
 		return nil, 0, err
 	}
+	invalidateResellerPricingCacheForOwner(ownerType, ownerId)
 	return result, newVersion, nil
 }
 
@@ -342,5 +344,6 @@ func DeleteResellerPricingRule(ownerType string, ownerId int64, groupName string
 	if err != nil {
 		return 0, err
 	}
+	invalidateResellerPricingCacheForOwner(ownerType, ownerId)
 	return newVersion, nil
 }
