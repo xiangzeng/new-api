@@ -212,6 +212,7 @@ func AdminBindResellerCustomer(resellerId int, resellerUsername string, customer
 	if err != nil {
 		return nil, err
 	}
+	InvalidateResellerPricingCache(customerId)
 	return binding, nil
 }
 
@@ -222,7 +223,7 @@ func AdminUnbindResellerCustomer(customerId int) error {
 	if customerId <= 0 {
 		return gorm.ErrRecordNotFound
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		var binding ResellerCustomer
 		if err := lockForUpdate(tx).Where("customer_id = ?", customerId).First(&binding).Error; err != nil {
 			return err
@@ -237,4 +238,9 @@ func AdminUnbindResellerCustomer(customerId int) error {
 		return tx.Model(&User{}).Where("id = ? AND inviter_id = ?", customerId, binding.ResellerId).
 			Update("inviter_id", 0).Error
 	})
+	if err != nil {
+		return err
+	}
+	InvalidateResellerPricingCache(customerId)
+	return nil
 }
