@@ -244,6 +244,11 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
 	}
+	// 异步消费日志：HTTP 已停止收新请求，把队列里的日志写完再退出。
+	// 20 秒 + SHUTDOWN_TIMEOUT_SECONDS 需小于 compose stop_grace_period，否则会被 docker 强杀。
+	if common.ConsumeLogAsync && !model.FlushConsumeLogs(20*time.Second) {
+		common.SysError("consume log queue not fully flushed before exit; some consume logs may be lost")
+	}
 	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
 	if common.DataExportEnabled {
 		model.SaveQuotaDataCache()

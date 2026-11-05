@@ -159,6 +159,10 @@ var SyncFrequency int // unit is second
 var BatchUpdateEnabled = false
 var BatchUpdateInterval int
 
+// ConsumeLogAsync 让消费日志在后台写入，请求不再等这次 INSERT。
+// 只适合离数据库远的节点（如美国从节点到香港库单次往返约 166ms），默认关闭。
+var ConsumeLogAsync = false
+
 var RelayTimeout int // unit is second
 
 var RelayIdleConnTimeout int // unit is second
