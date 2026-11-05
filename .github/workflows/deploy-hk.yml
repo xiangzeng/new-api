@@ -64,3 +64,39 @@ jobs:
           set -euo pipefail
           /root/new-api/deploy-bluegreen.sh
           REMOTE
+
+  # 美国从节点（us.relayaicheap.com）：两个实例都是 NODE_TYPE=slave，数据库迁移由香港主节点完成，
+  # 所以必须等香港部署成功后再部署。部署密钥在美国机 authorized_keys 里绑定了
+  # command="/root/new-api/deploy-bluegreen.sh",restrict，只能触发这一个脚本。
+  deploy-us:
+    name: Blue-green deploy US slave node (zero-downtime)
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      DEPLOY_HOST: ${{ secrets.NEW_API_US_HOST }}
+      DEPLOY_PORT: ${{ secrets.NEW_API_US_PORT }}
+      DEPLOY_USER: ${{ secrets.NEW_API_US_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.NEW_API_US_SSH_KEY }}
+
+    steps:
+      - name: Check deploy secrets
+        run: |
+          : "${DEPLOY_HOST:?Missing NEW_API_US_HOST secret}"
+          : "${DEPLOY_PORT:?Missing NEW_API_US_PORT secret}"
+          : "${DEPLOY_USER:?Missing NEW_API_US_USER secret}"
+          : "${DEPLOY_SSH_KEY:?Missing NEW_API_US_SSH_KEY secret}"
+
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/new-api-us
+          chmod 600 ~/.ssh/new-api-us
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      # 服务器端的强制命令会执行部署脚本，这里不需要再传命令
+      - name: Blue-green deploy new-api (US)
+        run: |
+          ssh -i ~/.ssh/new-api-us -o IdentitiesOnly=yes -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST"
