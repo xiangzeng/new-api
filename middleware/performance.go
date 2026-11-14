@@ -15,25 +15,22 @@ func SystemPerformanceCheck() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 仅检查 Relay 接口 (/v1, /v1beta 等)
 		// 这里简单判断路径前缀，可以根据实际路由调整
-		path := c.Request.URL.Path
-		if strings.HasPrefix(path, "/v1/messages") {
-			if err := checkSystemPerformance(); err != nil {
-				c.JSON(err.StatusCode, gin.H{
-					"error": err.ToClaudeError(),
-				})
-				c.Abort()
-				return
-			}
-		} else {
-			if err := checkSystemPerformance(); err != nil {
-				c.JSON(err.StatusCode, gin.H{
-					"error": err.ToOpenAIError(),
-				})
-				c.Abort()
-				return
-			}
+		err := checkSystemPerformance()
+		if err == nil {
+			c.Next()
+			return
 		}
-		c.Next()
+		if strings.HasPrefix(c.Request.URL.Path, "/v1/messages") {
+			c.JSON(err.StatusCode, gin.H{
+				"error": err.ToClaudeError(),
+			})
+		} else {
+			c.JSON(err.StatusCode, gin.H{
+				"error": err.ToOpenAIError(),
+			})
+		}
+		c.Abort()
+		recordPreRelayErrorLog(c, err.StatusCode, err.Error(), string(err.GetErrorCode()))
 	}
 }
 

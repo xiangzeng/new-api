@@ -411,6 +411,9 @@ func TokenAuth() func(c *gin.Context) {
 			if id == 0 {
 				c.Set("id", token.UserId)
 			}
+			// 令牌失效 / 额度用尽等在此之后被拒的请求也要能记进错误日志，提前带上令牌信息
+			c.Set("token_id", token.Id)
+			c.Set("token_name", token.Name)
 		}
 		if err != nil {
 			if errors.Is(err, model.ErrTokenDailyQuotaExhausted) {
