@@ -302,7 +302,12 @@ function CascadeContent() {
             />
           ))}
 
-          {setting && <CascadeSettingsCard setting={setting} />}
+          {setting && (
+            <CascadeSettingsCard
+              setting={setting}
+              sharedRpmPeers={overview?.shared_rpm_peers ?? 0}
+            />
+          )}
 
           {!isLoading && !error && (
             <GroupOrderCard

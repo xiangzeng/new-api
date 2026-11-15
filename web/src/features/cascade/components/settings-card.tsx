@@ -43,6 +43,7 @@ type SettingsForm = {
   enabled: boolean
   probe_enabled: boolean
   watermark_enabled: boolean
+  shared_rpm_enabled: boolean
   incomplete_stream_as_fault: boolean
   failure_threshold: string
   cooldown_seconds: string
@@ -60,6 +61,7 @@ function toForm(setting: CascadeSetting): SettingsForm {
     enabled: setting.enabled,
     probe_enabled: setting.probe_enabled,
     watermark_enabled: setting.watermark_enabled,
+    shared_rpm_enabled: setting.shared_rpm_enabled ?? false,
     incomplete_stream_as_fault: setting.incomplete_stream_as_fault,
     failure_threshold: String(setting.failure_threshold),
     cooldown_seconds: String(setting.cooldown_seconds),
@@ -84,7 +86,14 @@ function parseKeywords(text: string): string[] {
     .filter(Boolean)
 }
 
-export function CascadeSettingsCard({ setting }: { setting: CascadeSetting }) {
+export function CascadeSettingsCard({
+  setting,
+  sharedRpmPeers = 0,
+}: {
+  setting: CascadeSetting
+  /** 当前计入全站 RPM 的其他进程数 */
+  sharedRpmPeers?: number
+}) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { auth } = useAuthStore()
@@ -105,6 +114,7 @@ export function CascadeSettingsCard({ setting }: { setting: CascadeSetting }) {
         { key: 'enabled', value: form.enabled },
         { key: 'probe_enabled', value: form.probe_enabled },
         { key: 'watermark_enabled', value: form.watermark_enabled },
+        { key: 'shared_rpm_enabled', value: form.shared_rpm_enabled },
         {
           key: 'incomplete_stream_as_fault',
           value: form.incomplete_stream_as_fault,
@@ -229,6 +239,25 @@ export function CascadeSettingsCard({ setting }: { setting: CascadeSetting }) {
             <Label htmlFor='cascade-watermark'>
               {t('Enable RPM watermark')}
             </Label>
+          </div>
+          <div className='flex items-center gap-2'>
+            <Switch
+              id='cascade-shared-rpm'
+              checked={form.shared_rpm_enabled}
+              onCheckedChange={(checked) =>
+                setForm((prev) => ({ ...prev, shared_rpm_enabled: checked }))
+              }
+            />
+            <Label htmlFor='cascade-shared-rpm'>
+              {t('Share RPM across nodes')}
+            </Label>
+            {setting.shared_rpm_enabled && (
+              <span className='text-muted-foreground text-xs'>
+                {t('{{peers}} other instances counted', {
+                  peers: sharedRpmPeers,
+                })}
+              </span>
+            )}
           </div>
           <div className='flex items-center gap-2'>
             <Switch

@@ -121,6 +121,9 @@ func main() {
 	model.SyncChannelTodayQuota()
 	go model.StartChannelTodayQuotaSyncLoop()
 
+	// 跨节点共享渠道 RPM：定时上报本进程计数并拉取其他进程的（开关关闭时空转，不访问数据库）
+	go model.StartChannelRpmSharedSyncLoop()
+
 	// 渠道日用量清理任务（保留 30 天，仅主节点执行）
 	model.StartChannelDataCleanupTask()
 

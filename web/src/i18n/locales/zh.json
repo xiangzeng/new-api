@@ -1613,6 +1613,8 @@
     "Enable rate limiting": "启用速率限制",
     "Enable Request Passthrough": "启用请求透传",
     "Enable RPM watermark": "启用 RPM 水位线",
+    "Share RPM across nodes": "跨节点共享 RPM（水位线按全站合计）",
+    "{{peers}} other instances counted": "已计入其他 {{peers}} 个实例",
     "Enable selected channels": "启用选定的渠道",
     "Enable selected models": "启用选定的模型",
     "Enable SSL/TLS": "启用 SSL/TLS",

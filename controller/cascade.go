@@ -27,7 +27,8 @@ type cascadeChannelItem struct {
 	Weight   int                       `json:"weight"`
 	Health   *model.ChannelHealthInfo  `json:"health,omitempty"`
 	Metrics  *model.ChannelMetricsInfo `json:"metrics,omitempty"`
-	// Rpm 近 60 秒在本分组被选中的次数（滚动窗口，选中即记账，各分组独立计数）
+	// Rpm 近 60 秒在本分组被选中的次数（滚动窗口，选中即记账，各分组独立计数；
+	// 开启跨节点共享 RPM 后为全部节点合计）
 	Rpm int64 `json:"rpm"`
 	// RpmTotal 近 60 秒在全部分组被选中的次数合计（上游实际承受的总压力）
 	RpmTotal int64 `json:"rpm_total"`
@@ -149,6 +150,8 @@ func GetCascadeOverview(c *gin.Context) {
 		"data": gin.H{
 			"groups":  groups,
 			"setting": operation_setting.GetCascadeSetting(),
+			// 当前计入全站 RPM 的其他进程数（未开启跨节点共享时为 0）
+			"shared_rpm_peers": model.GetChannelRpmSharedPeerCount(),
 		},
 	})
 }

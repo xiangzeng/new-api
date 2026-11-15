@@ -15,6 +15,9 @@ type CascadeSetting struct {
 	// RPM 水位线总开关：关闭时 RPM 照常统计（编排页可见），但不参与选路，
 	// 便于先观察真实 RPM 再决定水位线数值。水位线配置见 cascade_watermark。
 	WatermarkEnabled bool `json:"watermark_enabled"`
+	// 跨节点共享 RPM：开启后各进程经数据库定时交换计数，编排页 RPM 与水位线判定
+	// 都按全站（所有节点合计）口径；关闭时只算本进程。
+	SharedRpmEnabled bool `json:"shared_rpm_enabled"`
 	// 流以 EOF 结束但未收到协议完成标记（上游安静断流）时是否计入渠道故障。
 	// 仅对支持完成标记跟踪的适配器生效（当前为 Claude SSE）。
 	IncompleteStreamAsFault bool `json:"incomplete_stream_as_fault"`
@@ -38,6 +41,7 @@ var cascadeSetting = CascadeSetting{
 	RecoverySuccessCount:    3,
 	MaxAttemptsPerRequest:   0,
 	WatermarkEnabled:        false,
+	SharedRpmEnabled:        false,
 	IncompleteStreamAsFault: true,
 	ExtraFaultStatusCodes:   []int{},
 	ExtraFaultKeywords:      []string{},

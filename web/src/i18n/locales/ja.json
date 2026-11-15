@@ -1613,6 +1613,8 @@
     "Enable rate limiting": "レート制限を有効にする",
     "Enable Request Passthrough": "リクエストパススルーを有効にする",
     "Enable RPM watermark": "RPM 上限を有効化",
+    "Share RPM across nodes": "ノード間で RPM を共有",
+    "{{peers}} other instances counted": "他の {{peers}} インスタンスを集計中",
     "Enable selected channels": "選択したチャネルを有効にする",
     "Enable selected models": "選択したモデルを有効にする",
     "Enable SSL/TLS": "SSL/TLSを有効にする",
