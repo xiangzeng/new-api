@@ -1613,6 +1613,8 @@
     "Enable rate limiting": "Activer la limitation de débit",
     "Enable Request Passthrough": "Activer le Passthrough de requêtes",
     "Enable RPM watermark": "Activer le seuil RPM",
+    "Share RPM across nodes": "Partager le RPM entre les nœuds",
+    "{{peers}} other instances counted": "{{peers}} autres instances comptées",
     "Enable selected channels": "Activer les canaux sélectionnés",
     "Enable selected models": "Activer les modèles sélectionnés",
     "Enable SSL/TLS": "Activer SSL/TLS",

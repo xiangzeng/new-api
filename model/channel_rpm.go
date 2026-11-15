@@ -12,6 +12,8 @@ import (
 // 按「分组 + 渠道」分别计数：同一渠道挂在多个分组时各组独立计数、独立对照本组水位线，
 // 互不挤占；渠道合计 RPM 由编排页把各组相加得出。
 // 纯内存环形数组：每个「分组 + 渠道」60 个 1 秒桶，进程重启清零，与健康注册表同语义。
+// 开启「跨节点共享 RPM」后，读到的 RPM = 本进程实时计数 + 其他进程最近一次上报
+// （见 channel_rpm_shared.go），水位线随之变为全站口径；未开启时只算本进程。
 // 记账口径为「选中即记账」——service 层选出渠道、亲和命中时各 +1，等于实际发往上游的
 // attempt 数（一次请求溢出 N 个渠道，则这 N 个渠道各 +1）；探活与渠道测试不走选择器，
 // 天然不计入。与仪表盘 RPM（model/log.go 近 60s 消费日志数）不是同一口径。
@@ -99,19 +101,37 @@ func getChannelRpmAt(group string, channelId int, now time.Time) int64 {
 	channelRpmLock.RLock()
 	defer channelRpmLock.RUnlock()
 
+	remote := getRemoteChannelRpm(group, channelId)
 	ring, ok := channelRpmRegistry[channelRpmKey{group: group, channelId: channelId}]
 	if !ok {
-		return 0
+		return remote
 	}
-	return ring.sum(now.Unix())
+	return ring.sum(now.Unix()) + remote
 }
 
-// GetChannelRpmSnapshot 返回全部有流量的「分组 → 渠道 → 近 60 秒 RPM」，并惰性剔除长期无流量的环
+// GetChannelRpmSnapshot 返回全部有流量的「分组 → 渠道 → 近 60 秒 RPM」（含其他进程的上报），
+// 并惰性剔除长期无流量的环
 func GetChannelRpmSnapshot() map[string]map[int]int64 {
 	return getChannelRpmSnapshotAt(time.Now())
 }
 
 func getChannelRpmSnapshotAt(now time.Time) map[string]map[int]int64 {
+	snapshot := getLocalChannelRpmSnapshotAt(now)
+	if remote := channelRpmRemote.Load(); remote != nil {
+		for group, channels := range *remote {
+			if snapshot[group] == nil {
+				snapshot[group] = make(map[int]int64, len(channels))
+			}
+			for channelId, rpm := range channels {
+				snapshot[group][channelId] += rpm
+			}
+		}
+	}
+	return snapshot
+}
+
+// getLocalChannelRpmSnapshotAt 只含本进程计数的快照（上报给其他进程用）
+func getLocalChannelRpmSnapshotAt(now time.Time) map[string]map[int]int64 {
 	nowTs := now.Unix()
 	idleBefore := nowTs - channelRpmIdleSeconds
 

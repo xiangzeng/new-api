@@ -91,6 +91,8 @@ export type CascadeSetting = {
   recovery_success_count: number
   max_attempts_per_request: number
   watermark_enabled: boolean
+  /** 跨节点共享 RPM：开启后 RPM 与水位线按全部节点合计 */
+  shared_rpm_enabled?: boolean
   incomplete_stream_as_fault: boolean
   extra_fault_status_codes: number[]
   extra_fault_keywords: string[]
@@ -104,6 +106,8 @@ export type CascadeOverviewResponse = {
   data?: {
     groups: CascadeGroup[]
     setting: CascadeSetting
+    /** 当前计入全站 RPM 的其他进程数（未开启跨节点共享时为 0） */
+    shared_rpm_peers?: number
   }
 }
 

@@ -1613,6 +1613,8 @@
     "Enable rate limiting": "Bật giới hạn tốc độ",
     "Enable Request Passthrough": "Bật Truyền qua Yêu cầu",
     "Enable RPM watermark": "Bật ngưỡng RPM",
+    "Share RPM across nodes": "Chia sẻ RPM giữa các nút",
+    "{{peers}} other instances counted": "Đã tính {{peers}} phiên bản khác",
     "Enable selected channels": "Kích hoạt các kênh đã chọn",
     "Enable selected models": "Kích hoạt các mô hình đã chọn",
     "Enable SSL/TLS": "Bật SSL/TLS",

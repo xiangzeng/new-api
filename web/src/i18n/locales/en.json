@@ -1613,6 +1613,8 @@
     "Enable rate limiting": "Enable rate limiting",
     "Enable Request Passthrough": "Enable Request Passthrough",
     "Enable RPM watermark": "Enable RPM watermark",
+    "Share RPM across nodes": "Share RPM across nodes",
+    "{{peers}} other instances counted": "{{peers}} other instances counted",
     "Enable selected channels": "Enable selected channels",
     "Enable selected models": "Enable selected models",
     "Enable SSL/TLS": "Enable SSL/TLS",

@@ -1613,6 +1613,8 @@
     "Enable rate limiting": "Включить ограничение скорости",
     "Enable Request Passthrough": "Включить сквозную передачу запросов",
     "Enable RPM watermark": "Включить порог RPM",
+    "Share RPM across nodes": "Общий RPM между узлами",
+    "{{peers}} other instances counted": "Учтено других экземпляров: {{peers}}",
     "Enable selected channels": "Включить выбранные каналы",
     "Enable selected models": "Включить выбранные модели",
     "Enable SSL/TLS": "Включить SSL/TLS",
