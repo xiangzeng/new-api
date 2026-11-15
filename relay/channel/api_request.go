@@ -556,7 +556,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		))
 	}
 
-	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
+	// 上游请求 ID：除 new-api 系的 X-Oneapi-Request-Id 外，也认 sub2api 的 X-Request-Id
+	// 与 Anthropic 官方的 Request-Id，排障时可以直接报给上游。
+	if upID := service.ExtractUpstreamRequestId(resp.Header); upID != "" {
 		c.Set(common2.UpstreamRequestIdKey, upID)
 	}
 

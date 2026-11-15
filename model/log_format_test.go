@@ -62,3 +62,14 @@ func TestFormatUserLogsStripsChannelIdentity(t *testing.T) {
 	assert.EqualValues(t, 502, parsed["status_code"])
 	assert.Empty(t, logs[0].ChannelName)
 }
+
+// TestFormatUserLogsHidesUpstreamRequestId verifies that the upstream's request
+// ID (which reveals what kind of system the upstream is) is only visible to admins.
+func TestFormatUserLogsHidesUpstreamRequestId(t *testing.T) {
+	logs := []*Log{{RequestId: "local-request-id", UpstreamRequestId: "req_011CabcDEF"}}
+
+	formatUserLogs(logs, 0)
+
+	assert.Empty(t, logs[0].UpstreamRequestId)
+	assert.Equal(t, "local-request-id", logs[0].RequestId)
+}

@@ -23,6 +23,30 @@ func CloseResponseBodyGracefully(httpResponse *http.Response) {
 	}
 }
 
+// upstreamRequestIdHeaders 上游响应里可能携带「上游请求 ID」的响应头，按优先级排列：
+// new-api 系上游回 X-Oneapi-Request-Id，sub2api 等网关回 X-Request-Id，
+// Anthropic 官方回 Request-Id。
+var upstreamRequestIdHeaders = []string{common.RequestIdKey, "X-Request-Id", "Request-Id"}
+
+// upstreamRequestIdMaxLen 与 logs.upstream_request_id 的列宽（varchar(128)）一致。
+const upstreamRequestIdMaxLen = 128
+
+// ExtractUpstreamRequestId 从上游响应头里取出上游的请求 ID，供日志记录与排障时向上游反馈。
+// 取不到返回空串；超过列宽的值会被截断，避免个别上游的超长值导致整条日志写入失败。
+func ExtractUpstreamRequestId(header http.Header) string {
+	for _, name := range upstreamRequestIdHeaders {
+		id := strings.TrimSpace(header.Get(name))
+		if id == "" {
+			continue
+		}
+		if len(id) > upstreamRequestIdMaxLen {
+			id = strings.ToValidUTF8(id[:upstreamRequestIdMaxLen], "")
+		}
+		return id
+	}
+	return ""
+}
+
 // ShouldCopyUpstreamHeader checks whether a given upstream response header
 // should be copied to the client response. It returns false for Content-Length
 // (managed separately) and X-Oneapi-Request-Id (to preserve the local instance
