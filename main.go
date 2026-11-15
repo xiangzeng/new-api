@@ -124,6 +124,9 @@ func main() {
 	// 跨节点共享渠道 RPM：定时上报本进程计数并拉取其他进程的（开关关闭时空转，不访问数据库）
 	go model.StartChannelRpmSharedSyncLoop()
 
+	// 渠道指标全站口径：定时把本进程的分钟桶增量累加到共用数据库（无流量时不写库）
+	go model.StartChannelMetricsSharedSyncLoop()
+
 	// 渠道日用量清理任务（保留 30 天，仅主节点执行）
 	model.StartChannelDataCleanupTask()
 
@@ -258,6 +261,8 @@ func main() {
 	}
 	// 渠道日用量内存增量落库，同样避免重启丢数
 	model.SaveChannelDailyUsageCache()
+	// 渠道指标尚未上报的分钟桶增量落库，蓝绿切换不丢最后一段数据
+	model.FlushChannelMetricsShared()
 	common.SysLog("server exited")
 }
 

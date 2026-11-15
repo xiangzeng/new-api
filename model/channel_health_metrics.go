@@ -7,7 +7,9 @@ import (
 )
 
 // 渠道级分钟桶指标（错误率/熔断次数/耗时/首字/缓存命中），级联编排页可视化用。
-// 纯内存环形数组：每渠道 1440 个分钟桶（24h），进程重启清零，与健康注册表同语义。
+// 本进程一份内存环形数组：每渠道 1440 个分钟桶（24h）。同时每笔记账都累加进「待上报增量」，
+// 由后台定时写入共用数据库，编排页读到的是全站合计（多节点、蓝绿双容器、重启前后都算），
+// 见 channel_metrics_shared.go；数据库不可用时退回只看本进程内存。
 // 口径与级联熔断判定一致（IsChannelFaultError + ClassifyStreamEnd），探活流量不计入。
 // 缓存三项（总输入/命中/写入）在消费结算时按 token 记账，只收聊天类请求，口径见
 // service/text_quota.go 的 recordChannelCacheUsage。
@@ -100,6 +102,37 @@ func channelMetricsBucket(channelId int, now time.Time) *channelMinuteBucket {
 	return ring.bucketFor(now)
 }
 
+// mutateChannelMetrics 把同一笔记账同时落到本进程内存环与待上报增量（一次加锁）。
+func mutateChannelMetrics(channelId int, now time.Time, apply func(bucket *channelMinuteBucket)) {
+	channelMetricsLock.Lock()
+	defer channelMetricsLock.Unlock()
+
+	apply(channelMetricsBucket(channelId, now))
+	if pending := channelMetricsPendingBucketLocked(channelId, now); pending != nil {
+		apply(pending)
+	}
+}
+
+// add 把另一个桶的计数累加进来（minuteTs 不动）
+func (b *channelMinuteBucket) add(o *channelMinuteBucket) {
+	b.attempts += o.attempts
+	b.faults += o.faults
+	b.trips += o.trips
+	b.restores += o.restores
+	b.latencySumMs += o.latencySumMs
+	b.latencyCount += o.latencyCount
+	b.ttftSumMs += o.ttftSumMs
+	b.ttftCount += o.ttftCount
+	b.cacheSamples += o.cacheSamples
+	b.cacheInputTokens += o.cacheInputTokens
+	b.cacheReadTokens += o.cacheReadTokens
+	b.cacheWriteTokens += o.cacheWriteTokens
+}
+
+func (b *channelMinuteBucket) isZero() bool {
+	return b.attempts == 0 && b.trips == 0 && b.restores == 0 && b.cacheSamples == 0
+}
+
 // RecordChannelAttempt 记录一次真实流量 attempt（探活不要调）。
 // 仅成功 attempt 记耗时；首字仅流式且已吐字时有效。
 func RecordChannelAttempt(channelId int, outcome ChannelAttemptOutcome, latencyMs int64, ttftMs int64, hasTtft bool) {
@@ -110,24 +143,22 @@ func recordChannelAttemptAt(channelId int, outcome ChannelAttemptOutcome, latenc
 	if channelId <= 0 {
 		return
 	}
-	channelMetricsLock.Lock()
-	defer channelMetricsLock.Unlock()
-
-	bucket := channelMetricsBucket(channelId, now)
-	bucket.attempts++
-	switch outcome {
-	case ChannelAttemptFault:
-		bucket.faults++
-	case ChannelAttemptSuccess:
-		if latencyMs >= 0 {
-			bucket.latencySumMs += latencyMs
-			bucket.latencyCount++
+	mutateChannelMetrics(channelId, now, func(bucket *channelMinuteBucket) {
+		bucket.attempts++
+		switch outcome {
+		case ChannelAttemptFault:
+			bucket.faults++
+		case ChannelAttemptSuccess:
+			if latencyMs >= 0 {
+				bucket.latencySumMs += latencyMs
+				bucket.latencyCount++
+			}
+			if hasTtft && ttftMs >= 0 {
+				bucket.ttftSumMs += ttftMs
+				bucket.ttftCount++
+			}
 		}
-		if hasTtft && ttftMs >= 0 {
-			bucket.ttftSumMs += ttftMs
-			bucket.ttftCount++
-		}
-	}
+	})
 }
 
 // RecordChannelTrip 记录一次熔断触发（MarkChannelHealthFailure 返回 true 时调用）
@@ -144,15 +175,13 @@ func recordChannelTransitionAt(channelId int, trip bool, now time.Time) {
 	if channelId <= 0 {
 		return
 	}
-	channelMetricsLock.Lock()
-	defer channelMetricsLock.Unlock()
-
-	bucket := channelMetricsBucket(channelId, now)
-	if trip {
-		bucket.trips++
-	} else {
-		bucket.restores++
-	}
+	mutateChannelMetrics(channelId, now, func(bucket *channelMinuteBucket) {
+		if trip {
+			bucket.trips++
+		} else {
+			bucket.restores++
+		}
+	})
 }
 
 // RecordChannelCacheUsage 记录一次成功结算请求的缓存 token 口径（探活、渠道测试不要调）。
@@ -166,14 +195,12 @@ func recordChannelCacheUsageAt(channelId int, inputTokens, readTokens, writeToke
 	if channelId <= 0 || inputTokens <= 0 {
 		return
 	}
-	channelMetricsLock.Lock()
-	defer channelMetricsLock.Unlock()
-
-	bucket := channelMetricsBucket(channelId, now)
-	bucket.cacheSamples++
-	bucket.cacheInputTokens += inputTokens
-	bucket.cacheReadTokens += max(readTokens, 0)
-	bucket.cacheWriteTokens += max(writeTokens, 0)
+	mutateChannelMetrics(channelId, now, func(bucket *channelMinuteBucket) {
+		bucket.cacheSamples++
+		bucket.cacheInputTokens += inputTokens
+		bucket.cacheReadTokens += max(readTokens, 0)
+		bucket.cacheWriteTokens += max(writeTokens, 0)
+	})
 }
 
 func (b *channelMinuteBucket) mergeInto(w *ChannelMetricsWindow) {
@@ -209,11 +236,18 @@ func finalizeChannelMetricsWindow(w *ChannelMetricsWindow, latencyCount, ttftCou
 	}
 }
 
-// GetChannelMetricsSnapshot 返回全部有数据渠道的 1h/24h 聚合快照，并惰性剔除 24h 无活动的环
+// GetChannelMetricsSnapshot 返回全部有数据渠道的 1h/24h 聚合快照。
+// 默认全站口径（共用数据库里各进程累加的分钟桶 + 本进程尚未上报的增量）；
+// 数据库不可用时退回只看本进程内存。
 func GetChannelMetricsSnapshot() map[int]ChannelMetricsInfo {
-	return getChannelMetricsSnapshotAt(time.Now())
+	now := time.Now()
+	if snapshot, ok := getSharedChannelMetricsSnapshotAt(now); ok {
+		return snapshot
+	}
+	return getChannelMetricsSnapshotAt(now)
 }
 
+// getChannelMetricsSnapshotAt 只看本进程内存环的快照，并惰性剔除 24h 无活动的环
 func getChannelMetricsSnapshotAt(now time.Time) map[int]ChannelMetricsInfo {
 	nowTs := now.Unix()
 	hourStart := nowTs - 3600

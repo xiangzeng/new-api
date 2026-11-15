@@ -11,15 +11,24 @@ import (
 
 func resetChannelMetricsForTest(t *testing.T) {
 	t.Helper()
-	channelMetricsLock.Lock()
-	channelMetricsRegistry = make(map[int]*channelMetricsRing)
-	channelMetricsLock.Unlock()
-
-	t.Cleanup(func() {
+	reset := func() {
 		channelMetricsLock.Lock()
 		channelMetricsRegistry = make(map[int]*channelMetricsRing)
+		channelMetricsPending = make(map[channelMetricsPendingKey]*channelMinuteBucket)
 		channelMetricsLock.Unlock()
-	})
+
+		channelMetricsSharedLock.Lock()
+		channelMetricsSharedCache = nil
+		channelMetricsSharedCacheAt = time.Time{}
+		channelMetricsSharedLastLogTime = time.Time{}
+		channelMetricsSharedLastCleanup = time.Time{}
+		channelMetricsSharedLock.Unlock()
+
+		DB.Where("1 = 1").Delete(&ChannelMetricBucket{})
+	}
+	require.NoError(t, DB.AutoMigrate(&ChannelMetricBucket{}))
+	reset()
+	t.Cleanup(reset)
 }
 
 func TestChannelMetricsWindowAggregation(t *testing.T) {
