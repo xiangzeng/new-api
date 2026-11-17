@@ -140,3 +140,56 @@ func TestTaskDurationBounds(t *testing.T) {
 		})
 	}
 }
+
+// seconds 既可能是字符串（OpenAI 规范）也可能是数字（不少客户端和上游文档的写法），
+// 两种都要解析成同一个字符串字段，否则时长校验和计费读不到。
+func TestTaskSubmitReqSecondsAcceptsStringAndNumber(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		want    string
+		wantErr bool
+	}{
+		{name: "string", body: `{"prompt":"a cat","seconds":"8"}`, want: "8"},
+		{name: "integer number", body: `{"prompt":"a cat","seconds":8}`, want: "8"},
+		{name: "integral float", body: `{"prompt":"a cat","seconds":8.0}`, want: "8"},
+		{name: "absent", body: `{"prompt":"a cat"}`, want: ""},
+		{name: "null", body: `{"prompt":"a cat","seconds":null}`, want: ""},
+		{name: "fractional number is rejected", body: `{"prompt":"a cat","seconds":3.5}`, wantErr: true},
+		{name: "number too large for int is rejected", body: `{"prompt":"a cat","seconds":1e30}`, wantErr: true},
+		{name: "non scalar is rejected", body: `{"prompt":"a cat","seconds":[8]}`, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req TaskSubmitReq
+			err := req.UnmarshalJSON([]byte(tt.body))
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, req.Seconds)
+		})
+	}
+}
+
+// 数字写法的 seconds 必须走和字符串一样的时长上限校验。
+func TestValidateTaskRequestBoundsNumericSeconds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newContext := func(body string) (*gin.Context, *RelayInfo) {
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+		context.Request.Header.Set("Content-Type", "application/json")
+		return context, &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+	}
+
+	context, info := newContext(`{"model":"sora-2","prompt":"a cat","seconds":8}`)
+	require.Nil(t, ValidateMultipartDirect(context, info))
+
+	context, info = newContext(`{"model":"sora-2","prompt":"a cat","seconds":3601}`)
+	taskErr := ValidateMultipartDirect(context, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_seconds", taskErr.Code)
+}
