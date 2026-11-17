@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -901,6 +902,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Metadata json.RawMessage `json:"metadata,omitempty"`
 		Duration json.RawMessage `json:"duration,omitempty"`
+		Seconds  json.RawMessage `json:"seconds,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -908,6 +910,27 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	if err := common.Unmarshal(data, &aux); err != nil {
 		return err
+	}
+
+	// seconds 按 OpenAI 规范是字符串，但不少客户端和上游文档用数字，这里两种都收，
+	// 统一存成字符串，后面的时长校验和计费只读这一个字段。
+	if len(aux.Seconds) > 0 && string(aux.Seconds) != "null" {
+		var secondsStr string
+		if err := common.Unmarshal(aux.Seconds, &secondsStr); err == nil {
+			t.Seconds = secondsStr
+		} else {
+			var secondsNum float64
+			if err := common.Unmarshal(aux.Seconds, &secondsNum); err != nil {
+				return errors.New("seconds must be a string or an integer")
+			}
+			// 小数不取整：计费按秒数相乘，取整会让计费秒数和上游实际时长对不上。
+			// 这里只挡住转不成 int 的离谱数值，1..MaxTaskDurationSeconds 的范围仍由
+			// validateTaskDurationBounds 统一判定，数字和字符串报同一个错误码。
+			if secondsNum != math.Trunc(secondsNum) || math.Abs(secondsNum) > math.MaxInt32 {
+				return errors.New("seconds must be an integer")
+			}
+			t.Seconds = strconv.Itoa(int(secondsNum))
+		}
 	}
 
 	if len(aux.Duration) > 0 {
